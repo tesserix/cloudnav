@@ -152,6 +152,9 @@ type model struct {
 	pimCursor    int
 	pimActivate  bool
 	pimInput     textinput.Model
+	pimFilter    string
+	pimFilterOn  bool
+	pimFilterIn  textinput.Model
 	pimDuration  int
 	width        int
 	height       int
@@ -198,6 +201,12 @@ func newModel() *model {
 	pimIn.CharLimit = 200
 	pimIn.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	pimFilt := textinput.New()
+	pimFilt.Prompt = "filter PIM: "
+	pimFilt.Placeholder = "tenant, subscription, or role..."
+	pimFilt.CharLimit = 120
+	pimFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
+
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle()
 
@@ -213,6 +222,7 @@ func newModel() *model {
 		search:       ti,
 		paletteInput: pi,
 		pimInput:     pimIn,
+		pimFilterIn:  pimFilt,
 		pimDuration:  1,
 		detail:       vp,
 		cfg:          cfg,
@@ -1157,23 +1167,31 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pimActivate {
 		return m.updatePIMActivate(msg)
 	}
+	if m.pimFilterOn {
+		return m.updatePIMFilter(msg)
+	}
 	switch msg.String() {
 	case keyEsc, "q":
 		m.pimMode = false
 		m.status = ""
 		return m, nil
-	case "up", "k":
+	case keyUp, "k":
 		if m.pimCursor > 0 {
 			m.pimCursor--
 		}
 		return m, nil
-	case "down", "j":
-		if m.pimCursor < len(m.pimRoles)-1 {
+	case keyDown, "j":
+		if m.pimCursor < len(m.filteredPIM())-1 {
 			m.pimCursor++
 		}
 		return m, nil
-	case "a", "enter":
-		if len(m.pimRoles) == 0 {
+	case "/":
+		m.pimFilterOn = true
+		m.pimFilterIn.SetValue(m.pimFilter)
+		m.pimFilterIn.Focus()
+		return m, nil
+	case "a", keyEnter:
+		if len(m.filteredPIM()) == 0 {
 			return m, nil
 		}
 		m.pimActivate = true
@@ -1192,6 +1210,54 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m *model) updatePIMFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		m.pimFilterOn = false
+		m.pimFilter = ""
+		m.pimFilterIn.SetValue("")
+		m.pimFilterIn.Blur()
+		m.pimCursor = 0
+		return m, nil
+	case keyEnter:
+		m.pimFilterOn = false
+		m.pimFilterIn.Blur()
+		return m, nil
+	case keyUp, keyDown:
+		if msg.String() == keyUp && m.pimCursor > 0 {
+			m.pimCursor--
+		}
+		if msg.String() == keyDown && m.pimCursor < len(m.filteredPIM())-1 {
+			m.pimCursor++
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.pimFilterIn, cmd = m.pimFilterIn.Update(msg)
+	m.pimFilter = m.pimFilterIn.Value()
+	if m.pimCursor >= len(m.filteredPIM()) {
+		m.pimCursor = 0
+	}
+	return m, cmd
+}
+
+func (m *model) filteredPIM() []provider.PIMRole {
+	if m.pimFilter == "" {
+		return m.pimRoles
+	}
+	q := strings.ToLower(m.pimFilter)
+	out := make([]provider.PIMRole, 0, len(m.pimRoles))
+	for _, r := range m.pimRoles {
+		if strings.Contains(strings.ToLower(r.RoleName), q) ||
+			strings.Contains(strings.ToLower(r.ScopeName), q) ||
+			strings.Contains(strings.ToLower(r.Scope), q) ||
+			strings.Contains(strings.ToLower(r.TenantID), q) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1685,31 +1751,74 @@ func (m *model) View() string {
 }
 
 func (m *model) pimView() string {
+	filt := m.filteredPIM()
+	headerCount := fmt.Sprintf("%d role(s)", len(m.pimRoles))
+	if m.pimFilter != "" {
+		headerCount = fmt.Sprintf("%d/%d", len(filt), len(m.pimRoles))
+	}
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
-			styles.Help.Render(fmt.Sprintf("%d role(s)  duration %dh (use +/- to change)", len(m.pimRoles), m.pimDuration)),
+			styles.Help.Render(fmt.Sprintf("%s  duration %dh (use +/- to change)", headerCount, m.pimDuration)),
 		"",
 	}
-	if len(m.pimRoles) == 0 {
-		lines = append(lines,
-			styles.Help.Render("  no eligible PIM assignments for this user"),
-			"",
-			styles.Help.Render("  if you expect some, check:"),
-			styles.Help.Render("    • PIM is enabled on the tenant"),
-			styles.Help.Render("    • you have read on roleEligibilityScheduleInstances"),
-		)
+	if m.pimFilterOn {
+		lines = append(lines, m.pimFilterIn.View(), "")
+	} else if m.pimFilter != "" {
+		lines = append(lines, "  "+styles.Help.Render("filter: "+m.pimFilter+"  (/ to change, esc in filter clears)"), "")
 	}
-	for i, r := range m.pimRoles {
-		marker := "  "
-		body := fmt.Sprintf("%s%2d. %-40s  on  %s", marker, i+1, r.RoleName, scopeDisplay(r))
+	if len(filt) == 0 {
+		if len(m.pimRoles) > 0 && m.pimFilter != "" {
+			lines = append(lines,
+				styles.Help.Render("  no roles match the current filter"),
+			)
+		} else {
+			lines = append(lines,
+				styles.Help.Render("  no eligible PIM assignments for this user"),
+				"",
+				styles.Help.Render("  if you expect some, check:"),
+				styles.Help.Render("    • PIM is enabled on the tenant"),
+				styles.Help.Render("    • you have read on roleEligibilityScheduleInstances"),
+			)
+		}
+	}
+	window := 14
+	if m.height > 12 {
+		window = m.height - 12
+	}
+	if window < 5 {
+		window = 5
+	}
+	start := 0
+	if len(filt) > window {
+		start = m.pimCursor - window/2
+		if start < 0 {
+			start = 0
+		}
+		if start+window > len(filt) {
+			start = len(filt) - window
+		}
+	}
+	end := start + window
+	if end > len(filt) {
+		end = len(filt)
+	}
+	if start > 0 {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	}
+	for i := start; i < end; i++ {
+		r := filt[i]
+		body := fmt.Sprintf("  %2d. %-40s  on  %s", i+1, r.RoleName, scopeDisplay(r))
 		if i == m.pimCursor {
 			body = styles.Selected.Render(fmt.Sprintf("> %2d. %-40s  on  %s", i+1, r.RoleName, scopeDisplay(r)))
 		}
 		lines = append(lines, body)
 	}
+	if end < len(filt) {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(filt)-end)))
+	}
 	switch {
-	case m.pimActivate && len(m.pimRoles) > 0:
-		role := m.pimRoles[m.pimCursor]
+	case m.pimActivate && len(filt) > 0:
+		role := filt[m.pimCursor]
 		lines = append(lines,
 			"",
 			styles.Help.Render("activate: ")+role.RoleName+"  on  "+scopeDisplay(role)+fmt.Sprintf("  for %dh", m.pimDuration),
@@ -1737,7 +1846,7 @@ func (m *model) pimView() string {
 	default:
 		lines = append(lines,
 			"",
-			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  esc close"),
+			styles.Help.Render("  ↑↓ / jk move  / filter  a activate  +/- duration  esc close"),
 		)
 	}
 	return styles.Box.Render(strings.Join(lines, "\n"))

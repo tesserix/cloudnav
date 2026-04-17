@@ -49,6 +49,7 @@ type PIMRole struct {
 	RoleName         string
 	Scope            string
 	ScopeName        string // human-readable scope (e.g. subscription name) when resolvable
+	TenantID         string // tenant whose bearer token can activate this role
 	PrincipalID      string
 	RoleDefinitionID string // /providers/Microsoft.Authorization/roleDefinitions/<guid>
 	EligibilityID    string // linkedRoleEligibilityScheduleId
