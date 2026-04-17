@@ -7,6 +7,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/tesserix/cloudnav/internal/provider"
 )
 
 type costCell struct {
@@ -14,7 +16,11 @@ type costCell struct {
 	currency string
 }
 
-func (a *Azure) ResourceGroupCosts(ctx context.Context, subID string) (map[string]string, error) {
+func (a *Azure) Costs(ctx context.Context, parent provider.Node) (map[string]string, error) {
+	if parent.Kind != provider.KindSubscription {
+		return nil, fmt.Errorf("azure: cost breakdown is supported on subscription scope, got %q", parent.Kind)
+	}
+	subID := parent.ID
 	current, err := a.queryRGCosts(ctx, subID, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("azure cost query: %w", err)

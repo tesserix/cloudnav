@@ -31,7 +31,10 @@ import (
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 )
 
-const keyEsc = "esc"
+const (
+	keyEsc   = "esc"
+	keyEnter = "enter"
+)
 
 func Run() error {
 	m := newModel()
@@ -59,6 +62,11 @@ type (
 	entitiesLoadedMsg struct {
 		provider string
 		nodes    []provider.Node
+	}
+	pimLoadedMsg    struct{ roles []provider.PIMRole }
+	pimActivatedMsg struct {
+		role string
+		err  error
 	}
 	errMsg struct{ err error }
 )
@@ -119,6 +127,12 @@ type model struct {
 	restorePath  []config.Crumb               // remaining crumbs to drill into during bookmark restore
 	restoreLabel string                       // label shown while restoring (for status)
 	entities     map[string][]provider.Node   // provider name → top-level entities (subs/projects/accounts)
+	pimMode      bool
+	pimRoles     []provider.PIMRole
+	pimCursor    int
+	pimActivate  bool
+	pimInput     textinput.Model
+	pimDuration  int
 	width        int
 	height       int
 	keys         keys.Map
@@ -158,6 +172,12 @@ func newModel() *model {
 	pi.CharLimit = 120
 	pi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	pimIn := textinput.New()
+	pimIn.Prompt = "justification: "
+	pimIn.Placeholder = "e.g. investigating prod incident INC-4812"
+	pimIn.CharLimit = 200
+	pimIn.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
+
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle()
 
@@ -172,6 +192,8 @@ func newModel() *model {
 		spinner:      sp,
 		search:       ti,
 		paletteInput: pi,
+		pimInput:     pimIn,
+		pimDuration:  1,
 		detail:       vp,
 		cfg:          cfg,
 		costs:        map[string]map[string]string{},
@@ -216,6 +238,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.pimMode {
+			return m.updatePIM(msg)
+		}
 		if m.detailMode {
 			if msg.String() == keyEsc || msg.String() == "q" {
 				m.detailMode = false
@@ -309,6 +334,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.paletteMode {
 			m.rebuildPalette()
 		}
+		return m, nil
+
+	case pimLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.pimRoles = msg.roles
+		m.pimCursor = 0
+		m.pimMode = true
+		m.pimActivate = false
+		m.status = fmt.Sprintf("%d eligible role assignment(s)", len(msg.roles))
+		return m, nil
+
+	case pimActivatedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = ""
+			return m, nil
+		}
+		m.err = nil
+		m.status = "✓ activation requested for " + msg.role
 		return m, nil
 
 	case errMsg:
@@ -427,7 +473,7 @@ func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.paletteIdx++
 		}
 		return m, nil
-	case "enter":
+	case keyEnter:
 		if m.paletteIdx < len(m.paletteItems) {
 			cmd := m.runPaletteItem(m.paletteItems[m.paletteIdx])
 			m.paletteMode = false
@@ -533,39 +579,72 @@ func (m *model) toggleCost() tea.Cmd {
 		m.refreshTable()
 		return nil
 	}
-	top := m.stack[len(m.stack)-1]
-	if len(top.nodes) == 0 || top.nodes[0].Kind != provider.KindResourceGroup {
-		m.status = "cost column on — currently supported on Azure RG views"
+	if m.active == nil {
+		m.status = "cost column on — enter a cloud first"
 		m.refreshTable()
-		return nil
-	}
-	if top.parent == nil {
-		return nil
-	}
-	subID := top.parent.ID
-	if _, ok := m.costs[subID]; ok {
-		m.refreshTable()
-		m.status = "cost column on (cached)"
 		return nil
 	}
 	coster, ok := m.active.(provider.Coster)
 	if !ok {
 		m.status = m.active.Name() + ": costs not supported yet"
+		m.refreshTable()
+		return nil
+	}
+	scope, ok := m.costScope()
+	if !ok {
+		m.status = m.costHint()
+		m.refreshTable()
+		return nil
+	}
+	if _, cached := m.costs[scope.ID]; cached {
+		m.refreshTable()
+		m.status = "cost column on (cached)"
 		return nil
 	}
 	m.loading = true
 	m.status = "loading cost breakdown..."
 	ctx := m.ctx
+	scopeID := scope.ID
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			costs, err := coster.ResourceGroupCosts(ctx, subID)
+			costs, err := coster.Costs(ctx, scope)
 			if err != nil {
 				return errMsg{err}
 			}
-			return costsLoadedMsg{parentID: subID, costs: costs}
+			return costsLoadedMsg{parentID: scopeID, costs: costs}
 		},
 	)
+}
+
+func (m *model) costScope() (provider.Node, bool) {
+	top := &m.stack[len(m.stack)-1]
+	switch kindOf(top) {
+	case provider.KindResourceGroup:
+		if top.parent != nil && top.parent.Kind == provider.KindSubscription {
+			return *top.parent, true
+		}
+	case provider.KindRegion:
+		if top.parent != nil && top.parent.Kind == provider.KindAccount {
+			return *top.parent, true
+		}
+	case provider.KindProject:
+		return provider.Node{ID: "gcp", Kind: provider.KindCloud}, true
+	}
+	return provider.Node{}, false
+}
+
+func (m *model) costHint() string {
+	switch m.active.Name() {
+	case "azure":
+		return "cost column on — drill into a subscription's resource groups"
+	case "aws":
+		return "cost column on — drill into the account's regions"
+	case "gcp":
+		return "cost column on — press c on the projects list"
+	default:
+		return "cost column on — not supported at this view"
+	}
 }
 
 func (m *model) saveBookmark() {
@@ -614,7 +693,7 @@ func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.search.SetValue("")
 		m.refreshTable()
 		return m, nil
-	case "enter":
+	case keyEnter:
 		m.searchMode = false
 		m.search.Blur()
 		return m, nil
@@ -743,47 +822,109 @@ func (m *model) loadDetail() tea.Cmd {
 }
 
 func (m *model) loadPIM() tea.Cmd {
-	pimer, ok := m.active.(provider.PIMer)
-	if !ok {
-		m.status = m.active.Name() + ": PIM not supported"
+	if m.active == nil {
+		m.status = "enter a cloud first (↵ on a cloud row) before requesting PIM roles"
+		return nil
+	}
+	if _, ok := m.active.(provider.PIMer); !ok {
+		m.status = m.active.Name() + ": JIT elevation not supported yet (planned — use Azure for now)"
 		return nil
 	}
 	m.loading = true
 	m.status = "loading PIM eligible roles..."
+	prov := m.active.(provider.PIMer)
 	ctx := m.ctx
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			roles, err := pimer.ListEligibleRoles(ctx)
+			roles, err := prov.ListEligibleRoles(ctx)
 			if err != nil {
 				return errMsg{err}
 			}
-			return detailLoadedMsg{title: "PIM eligible roles", body: renderPIM(roles)}
+			return pimLoadedMsg{roles: roles}
 		},
 	)
 }
 
-func renderPIM(roles []provider.PIMRole) string {
-	if len(roles) == 0 {
-		return "No PIM-eligible roles found for your user.\n\nThis means either:\n  • you have no eligible PIM assignments, or\n  • your tenant does not use PIM, or\n  • you do not have read access to roleEligibilityScheduleInstances"
+func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.pimActivate {
+		return m.updatePIMActivate(msg)
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%d eligible role assignment(s)\n\n", len(roles))
-	for i, r := range roles {
-		fmt.Fprintf(&b, "%d) %s\n", i+1, r.RoleName)
-		if r.ScopeName != "" {
-			fmt.Fprintf(&b, "   on:     %s\n", r.ScopeName)
-			fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
-		} else {
-			fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
+	switch msg.String() {
+	case keyEsc, "q":
+		m.pimMode = false
+		m.status = ""
+		return m, nil
+	case "up", "k":
+		if m.pimCursor > 0 {
+			m.pimCursor--
 		}
-		if r.EndDateTime != "" {
-			fmt.Fprintf(&b, "   until:  %s\n", r.EndDateTime)
+		return m, nil
+	case "down", "j":
+		if m.pimCursor < len(m.pimRoles)-1 {
+			m.pimCursor++
 		}
-		fmt.Fprintln(&b)
+		return m, nil
+	case "a", "enter":
+		if len(m.pimRoles) == 0 {
+			return m, nil
+		}
+		m.pimActivate = true
+		m.pimInput.SetValue("")
+		m.pimInput.Focus()
+		return m, nil
+	case "+":
+		if m.pimDuration < 8 {
+			m.pimDuration++
+		}
+		return m, nil
+	case "-":
+		if m.pimDuration > 1 {
+			m.pimDuration--
+		}
+		return m, nil
 	}
-	b.WriteString("(activation via keybinding — coming in a follow-up commit)")
-	return b.String()
+	return m, nil
+}
+
+func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		m.pimActivate = false
+		m.pimInput.Blur()
+		return m, nil
+	case keyEnter:
+		reason := strings.TrimSpace(m.pimInput.Value())
+		if reason == "" {
+			m.status = "justification is required"
+			return m, nil
+		}
+		role := m.pimRoles[m.pimCursor]
+		m.pimActivate = false
+		m.pimInput.Blur()
+		m.loading = true
+		m.status = fmt.Sprintf("activating %s on %s for %dh...", role.RoleName, scopeDisplay(role), m.pimDuration)
+		prov := m.active.(provider.PIMer)
+		ctx := m.ctx
+		dur := m.pimDuration
+		return m, tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg {
+				err := prov.ActivateRole(ctx, role, reason, dur)
+				return pimActivatedMsg{role: role.RoleName + " on " + scopeDisplay(role), err: err}
+			},
+		)
+	}
+	var cmd tea.Cmd
+	m.pimInput, cmd = m.pimInput.Update(msg)
+	return m, cmd
+}
+
+func scopeDisplay(r provider.PIMRole) string {
+	if r.ScopeName != "" {
+		return r.ScopeName
+	}
+	return r.Scope
 }
 
 func (m *model) execShell() tea.Cmd {
@@ -956,11 +1097,15 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			{Title: "ID", Width: 40},
 		}
 	case provider.KindProject:
-		return []table.Column{
-			{Title: "NAME", Width: 44},
-			{Title: "PROJECT ID", Width: 30},
-			{Title: "STATE", Width: 16},
+		cols := []table.Column{
+			{Title: "NAME", Width: 40},
+			{Title: "PROJECT ID", Width: 28},
+			{Title: "STATE", Width: 14},
 		}
+		if m.showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 16})
+		}
+		return cols
 	case provider.KindAccount:
 		return []table.Column{
 			{Title: "ACCOUNT", Width: 18},
@@ -968,11 +1113,15 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			{Title: "STATE", Width: 12},
 		}
 	case provider.KindRegion:
-		return []table.Column{
-			{Title: "REGION", Width: 24},
-			{Title: "ENDPOINT", Width: 42},
-			{Title: "STATE", Width: 14},
+		cols := []table.Column{
+			{Title: "REGION", Width: 22},
+			{Title: "ENDPOINT", Width: 38},
+			{Title: "STATE", Width: 12},
 		}
+		if m.showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 16})
+		}
+		return cols
 	case provider.KindResourceGroup:
 		cols := []table.Column{
 			{Title: "NAME", Width: 48},
@@ -1017,19 +1166,23 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, table.Row{n.Name, tenant, n.State, shorten(n.ID, 40)})
 		case provider.KindProject:
-			rows = append(rows, table.Row{n.Name, n.ID, n.State})
+			row := table.Row{n.Name, n.ID, n.State}
+			if m.showCost {
+				row = append(row, costOrDash(n.Cost))
+			}
+			rows = append(rows, row)
 		case provider.KindAccount:
 			rows = append(rows, table.Row{n.Name, shorten(n.Meta["arn"], 60), n.State})
 		case provider.KindRegion:
-			rows = append(rows, table.Row{n.Name, shorten(n.Meta["endpoint"], 42), n.State})
+			row := table.Row{n.Name, shorten(n.Meta["endpoint"], 38), n.State}
+			if m.showCost {
+				row = append(row, costOrDash(n.Cost))
+			}
+			rows = append(rows, row)
 		case provider.KindResourceGroup:
 			row := table.Row{n.Name, n.Location, n.State}
 			if m.showCost {
-				cost := n.Cost
-				if cost == "" {
-					cost = "—"
-				}
-				row = append(row, cost)
+				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
@@ -1042,18 +1195,36 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 }
 
 func (m *model) mergeCosts(f *frame) {
-	if !m.showCost || f.parent == nil {
+	if !m.showCost {
 		return
 	}
-	if kindOf(f) != provider.KindResourceGroup {
+	var costs map[string]string
+	switch kindOf(f) {
+	case provider.KindResourceGroup:
+		if f.parent != nil {
+			costs = m.costs[f.parent.ID]
+		}
+	case provider.KindRegion:
+		if f.parent != nil {
+			costs = m.costs[f.parent.ID]
+		}
+		for i, n := range m.visibleNodes {
+			if c, ok := costs[strings.ToLower(n.Name)]; ok {
+				m.visibleNodes[i].Cost = c
+			}
+		}
 		return
+	case provider.KindProject:
+		costs = m.costs["gcp"]
 	}
-	costs := m.costs[f.parent.ID]
 	if costs == nil {
 		return
 	}
 	for i, n := range m.visibleNodes {
-		if c, ok := costs[strings.ToLower(n.Name)]; ok {
+		key := strings.ToLower(n.Name)
+		if c, ok := costs[key]; ok {
+			m.visibleNodes[i].Cost = c
+		} else if c, ok := costs[strings.ToLower(n.ID)]; ok {
 			m.visibleNodes[i].Cost = c
 		}
 	}
@@ -1064,6 +1235,13 @@ func shortID(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+func costOrDash(c string) string {
+	if c == "" {
+		return "—"
+	}
+	return c
 }
 
 func shorten(s string, n int) string {
@@ -1093,6 +1271,9 @@ func (m *model) View() string {
 	if m.showHelp {
 		return m.helpView()
 	}
+	if m.pimMode {
+		return m.pimView()
+	}
 	if m.paletteMode {
 		return m.paletteView()
 	}
@@ -1112,6 +1293,46 @@ func (m *model) View() string {
 		body,
 		m.footerView(),
 	)
+}
+
+func (m *model) pimView() string {
+	lines := []string{
+		styles.Title.Render("PIM eligible roles") + "  " +
+			styles.Help.Render(fmt.Sprintf("%d role(s)  duration %dh (use +/- to change)", len(m.pimRoles), m.pimDuration)),
+		"",
+	}
+	if len(m.pimRoles) == 0 {
+		lines = append(lines,
+			styles.Help.Render("  no eligible PIM assignments for this user"),
+			"",
+			styles.Help.Render("  if you expect some, check:"),
+			styles.Help.Render("    • PIM is enabled on the tenant"),
+			styles.Help.Render("    • you have read on roleEligibilityScheduleInstances"),
+		)
+	}
+	for i, r := range m.pimRoles {
+		marker := "  "
+		body := fmt.Sprintf("%s%2d. %-40s  on  %s", marker, i+1, r.RoleName, scopeDisplay(r))
+		if i == m.pimCursor {
+			body = styles.Selected.Render(fmt.Sprintf("> %2d. %-40s  on  %s", i+1, r.RoleName, scopeDisplay(r)))
+		}
+		lines = append(lines, body)
+	}
+	if m.pimActivate && len(m.pimRoles) > 0 {
+		role := m.pimRoles[m.pimCursor]
+		lines = append(lines,
+			"",
+			styles.Help.Render("activate: ")+role.RoleName+"  on  "+scopeDisplay(role)+fmt.Sprintf("  for %dh", m.pimDuration),
+			m.pimInput.View(),
+			styles.Help.Render("enter submit  esc cancel"),
+		)
+	} else {
+		lines = append(lines,
+			"",
+			styles.Help.Render("↑↓ / jk move  a activate  +/- duration  esc close"),
+		)
+	}
+	return styles.Box.Render(strings.Join(lines, "\n"))
 }
 
 func (m *model) paletteView() string {
@@ -1255,15 +1476,15 @@ func (m *model) helpView() string {
 		"↵ / l          drill down",
 		"esc / h        back",
 		"j k / ↑ ↓      move selection",
-		"/              search current view",
-		":              command palette (switch cloud, jump to bookmark)",
-		"f              bookmark current view",
-		"c              toggle cost column (Azure RG view)",
+		"/              filter current view",
+		":              palette — search any sub/project/account, switch cloud, jump to bookmark",
+		"f              bookmark the current view (persisted)",
+		"c              toggle cost column  (Azure RGs / AWS regions — MoM delta when available)",
 		"s              cycle sort (name / state / location)",
 		"o              open selected in cloud portal",
 		"i              json detail",
-		"p              PIM eligible roles (Azure)",
-		"x              exec provider CLI in current scope",
+		"p              PIM eligible roles (Azure) — j/k select, a activate, +/- duration",
+		"x              exec provider CLI inside the selected scope",
 		"r              refresh",
 		"?              help",
 		"q / ctrl+c     quit",

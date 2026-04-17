@@ -63,10 +63,12 @@ type PIMer interface {
 	ActivateRole(ctx context.Context, role PIMRole, justification string, durationHours int) error
 }
 
-// Coster is an optional capability implemented by providers that can return
-// month-to-date costs grouped by a child container (resource group name for
-// Azure, project ID for GCP, etc.). Keys returned are lowercased so the TUI
-// can do case-insensitive lookup.
+// Coster returns formatted month-to-date costs keyed by a child entity name
+// (lowercased). Key semantics are provider-specific:
+//
+//	Azure : parent=subscription, key=resource-group name
+//	AWS   : parent=account,      key=service (EC2, S3 ...)
+//	GCP   : parent=cloud,        key=project id (aggregate across billing accts)
 type Coster interface {
-	ResourceGroupCosts(ctx context.Context, parentID string) (map[string]string, error)
+	Costs(ctx context.Context, parent Node) (map[string]string, error)
 }
