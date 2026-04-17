@@ -40,3 +40,20 @@ type Provider interface {
 	PortalURL(n Node) string
 	Details(ctx context.Context, n Node) ([]byte, error)
 }
+
+// PIMRole is a single PIM-eligible role assignment. Providers that support
+// Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
+type PIMRole struct {
+	ID          string
+	RoleName    string
+	Scope       string
+	PrincipalID string
+	EndDateTime string
+}
+
+// PIMer is an optional capability implemented by providers that expose
+// just-in-time role elevation. The TUI type-asserts against this to enable
+// the p keybinding.
+type PIMer interface {
+	ListEligibleRoles(ctx context.Context) ([]PIMRole, error)
+}

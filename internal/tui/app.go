@@ -206,6 +206,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Detail):
 			return m, m.loadDetail()
+		case key.Matches(msg, m.keys.PIM):
+			return m, m.loadPIM()
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -382,6 +384,45 @@ func (m *model) loadDetail() tea.Cmd {
 			return detailLoadedMsg{title: cur.Name, body: string(data)}
 		},
 	)
+}
+
+func (m *model) loadPIM() tea.Cmd {
+	pimer, ok := m.active.(provider.PIMer)
+	if !ok {
+		m.status = m.active.Name() + ": PIM not supported"
+		return nil
+	}
+	m.loading = true
+	m.status = "loading PIM eligible roles..."
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			roles, err := pimer.ListEligibleRoles(ctx)
+			if err != nil {
+				return errMsg{err}
+			}
+			return detailLoadedMsg{title: "PIM eligible roles", body: renderPIM(roles)}
+		},
+	)
+}
+
+func renderPIM(roles []provider.PIMRole) string {
+	if len(roles) == 0 {
+		return "No PIM-eligible roles found for your user.\n\nThis means either:\n  • you have no eligible PIM assignments, or\n  • your tenant does not use PIM, or\n  • you do not have read access to roleEligibilityScheduleInstances"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d eligible role assignment(s)\n\n", len(roles))
+	for i, r := range roles {
+		fmt.Fprintf(&b, "%d) %s\n", i+1, r.RoleName)
+		fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
+		if r.EndDateTime != "" {
+			fmt.Fprintf(&b, "   until:  %s\n", r.EndDateTime)
+		}
+		fmt.Fprintln(&b)
+	}
+	b.WriteString("(activation via keybinding — coming in a follow-up commit)")
+	return b.String()
 }
 
 func (m *model) execShell() tea.Cmd {
