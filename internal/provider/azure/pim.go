@@ -15,7 +15,16 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 	if err != nil {
 		return nil, fmt.Errorf("list eligible PIM roles: %w", err)
 	}
-	return parsePIM(out)
+	roles, err := parsePIM(out)
+	if err != nil {
+		return nil, err
+	}
+	for i := range roles {
+		if name := a.subName(subIDFromScope(roles[i].Scope)); name != "" {
+			roles[i].ScopeName = name
+		}
+	}
+	return roles, nil
 }
 
 func parsePIM(data []byte) ([]provider.PIMRole, error) {

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/tesserix/cloudnav/internal/cli"
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -12,6 +14,10 @@ import (
 
 type Azure struct {
 	az *cli.Runner
+
+	mu      sync.RWMutex
+	tenants map[string]string // tenantId → displayName
+	subs    map[string]string // subscriptionId → name
 }
 
 func New() *Azure {
@@ -19,6 +25,56 @@ func New() *Azure {
 }
 
 func (a *Azure) Name() string { return "azure" }
+
+// tenantName returns the cached display name for a tenant or "" if unknown.
+func (a *Azure) tenantName(id string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tenants[id]
+}
+
+// subName returns the cached name for a subscription or "" if unknown.
+func (a *Azure) subName(id string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.subs[id]
+}
+
+func (a *Azure) putSubs(m map[string]string) {
+	a.mu.Lock()
+	a.subs = m
+	a.mu.Unlock()
+}
+
+func (a *Azure) putTenants(m map[string]string) {
+	a.mu.Lock()
+	a.tenants = m
+	a.mu.Unlock()
+}
+
+// fetchTenants is best-effort — failure is non-fatal, we just fall back to
+// showing the tenantId when rendering.
+func (a *Azure) fetchTenants(ctx context.Context) {
+	out, err := a.az.Run(ctx, "rest", "--method", "GET",
+		"--url", "https://management.azure.com/tenants?api-version=2022-09-01")
+	if err != nil {
+		return
+	}
+	var env struct {
+		Value []struct {
+			TenantID    string `json:"tenantId"`
+			DisplayName string `json:"displayName"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		return
+	}
+	m := make(map[string]string, len(env.Value))
+	for _, t := range env.Value {
+		m[t.TenantID] = t.DisplayName
+	}
+	a.putTenants(m)
+}
 
 func (a *Azure) LoggedIn(ctx context.Context) error {
 	_, err := a.az.Run(ctx, "account", "show", "-o", "json")
@@ -40,7 +96,20 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseSubs(out)
+	a.fetchTenants(ctx)
+	nodes, err := parseSubs(out)
+	if err != nil {
+		return nil, err
+	}
+	subCache := make(map[string]string, len(nodes))
+	for i := range nodes {
+		subCache[nodes[i].ID] = nodes[i].Name
+		if name := a.tenantName(nodes[i].Meta["tenantId"]); name != "" {
+			nodes[i].Meta["tenantName"] = name
+		}
+	}
+	a.putSubs(subCache)
+	return nodes, nil
 }
 
 func parseSubs(data []byte) ([]provider.Node, error) {
@@ -62,6 +131,20 @@ func parseSubs(data []byte) ([]provider.Node, error) {
 		})
 	}
 	return nodes, nil
+}
+
+// subIDFromScope extracts the subscription UUID from an Azure resource scope
+// like "/subscriptions/<uuid>/resourceGroups/...".
+func subIDFromScope(scope string) string {
+	const prefix = "/subscriptions/"
+	rest := strings.TrimPrefix(scope, prefix)
+	if rest == scope {
+		return ""
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+	return rest
 }
 
 func (a *Azure) Children(ctx context.Context, parent provider.Node) ([]provider.Node, error) {

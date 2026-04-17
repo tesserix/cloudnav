@@ -226,6 +226,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = nil
 		m.stack = append(m.stack, msg.frame)
 		m.refreshTable()
+		m.table.SetCursor(0)
 		m.status = fmt.Sprintf("%d items", len(msg.frame.nodes))
 		return m, nil
 
@@ -278,10 +279,11 @@ func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) drillDown() tea.Cmd {
-	if len(m.visibleNodes) == 0 {
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
 		return nil
 	}
-	cur := m.visibleNodes[m.table.Cursor()]
+	cur := m.visibleNodes[c]
 	switch cur.Kind {
 	case provider.KindCloud:
 		for _, p := range m.providers {
@@ -320,6 +322,7 @@ func (m *model) goBack() tea.Cmd {
 	}
 	m.resetView()
 	m.refreshTable()
+	m.table.SetCursor(0)
 	m.status = ""
 	return nil
 }
@@ -363,10 +366,14 @@ func (m *model) load(title string, parent *provider.Node) tea.Cmd {
 }
 
 func (m *model) loadDetail() tea.Cmd {
-	if m.active == nil || len(m.visibleNodes) == 0 {
+	if m.active == nil {
 		return nil
 	}
-	cur := m.visibleNodes[m.table.Cursor()]
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return nil
+	}
+	cur := m.visibleNodes[c]
 	if cur.Kind == provider.KindCloud || cur.Kind == provider.KindCloudDisabled {
 		return nil
 	}
@@ -415,7 +422,12 @@ func renderPIM(roles []provider.PIMRole) string {
 	fmt.Fprintf(&b, "%d eligible role assignment(s)\n\n", len(roles))
 	for i, r := range roles {
 		fmt.Fprintf(&b, "%d) %s\n", i+1, r.RoleName)
-		fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
+		if r.ScopeName != "" {
+			fmt.Fprintf(&b, "   on:     %s\n", r.ScopeName)
+			fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
+		} else {
+			fmt.Fprintf(&b, "   scope:  %s\n", r.Scope)
+		}
 		if r.EndDateTime != "" {
 			fmt.Fprintf(&b, "   until:  %s\n", r.EndDateTime)
 		}
@@ -426,10 +438,14 @@ func renderPIM(roles []provider.PIMRole) string {
 }
 
 func (m *model) execShell() tea.Cmd {
-	if m.active == nil || len(m.visibleNodes) == 0 {
+	if m.active == nil {
 		return nil
 	}
-	cur := m.visibleNodes[m.table.Cursor()]
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return nil
+	}
+	cur := m.visibleNodes[c]
 	subID := contextSubID(cur)
 	if subID == "" {
 		m.status = "no subscription context at this level"
@@ -443,16 +459,16 @@ func (m *model) execShell() tea.Cmd {
 
 	banner := fmt.Sprintf("cloudnav exec  sub=%s  rg=%s  —  exit to return\n", truncID(subID), rg)
 	script := fmt.Sprintf("printf %%s %q; exec %q", banner, shell)
-	c := exec.Command("sh", "-c", script)
-	c.Env = append(os.Environ(),
+	shellCmd := exec.Command("sh", "-c", script)
+	shellCmd.Env = append(os.Environ(),
 		"CLOUDNAV_SUB="+subID,
 		"CLOUDNAV_SUB_NAME="+cur.Name,
 		"AZURE_SUBSCRIPTION_ID="+subID,
 	)
 	if rg != "" {
-		c.Env = append(c.Env, "CLOUDNAV_RG="+rg)
+		shellCmd.Env = append(shellCmd.Env, "CLOUDNAV_RG="+rg)
 	}
-	return tea.ExecProcess(c, func(err error) tea.Msg {
+	return tea.ExecProcess(shellCmd, func(err error) tea.Msg {
 		if err != nil {
 			return errMsg{err}
 		}
@@ -491,10 +507,14 @@ func truncID(s string) string {
 }
 
 func (m *model) openPortal() {
-	if m.active == nil || len(m.visibleNodes) == 0 {
+	if m.active == nil {
 		return
 	}
-	cur := m.visibleNodes[m.table.Cursor()]
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return
+	}
+	cur := m.visibleNodes[c]
 	url := m.active.PortalURL(cur)
 	if url == "" {
 		return
@@ -521,8 +541,21 @@ func openURL(url string) {
 func (m *model) refreshTable() {
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
+	// Clear rows first — bubbles/table.SetColumns re-renders existing rows,
+	// and if the new columns have fewer cells than the old rows, renderRow
+	// indexes past the column slice and panics.
+	m.table.SetRows(nil)
 	m.table.SetColumns(columnsFor(top))
 	m.table.SetRows(rowsFromNodes(top.title, m.visibleNodes))
+	c := m.table.Cursor()
+	switch {
+	case len(m.visibleNodes) == 0:
+		m.table.SetCursor(0)
+	case c < 0:
+		m.table.SetCursor(0)
+	case c >= len(m.visibleNodes):
+		m.table.SetCursor(len(m.visibleNodes) - 1)
+	}
 }
 
 func (m *model) applyView(nodes []provider.Node) []provider.Node {
@@ -537,6 +570,17 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 			}
 		}
 	}
+	if isCloudLevel(out) {
+		sort.SliceStable(out, func(i, j int) bool {
+			ai := out[i].Kind == provider.KindCloudDisabled
+			aj := out[j].Kind == provider.KindCloudDisabled
+			if ai != aj {
+				return !ai
+			}
+			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		})
+		return out
+	}
 	switch m.sort {
 	case sortState:
 		sort.SliceStable(out, func(i, j int) bool { return out[i].State < out[j].State })
@@ -550,23 +594,39 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 	return out
 }
 
-func columnsFor(f *frame) []table.Column {
-	if f.title == "clouds" {
-		return []table.Column{{Title: "CLOUD", Width: 40}}
+func isCloudLevel(nodes []provider.Node) bool {
+	if len(nodes) == 0 {
+		return false
 	}
-	if kindOf(f) == provider.KindSubscription {
+	k := nodes[0].Kind
+	return k == provider.KindCloud || k == provider.KindCloudDisabled
+}
+
+func columnsFor(f *frame) []table.Column {
+	switch kindOf(f) {
+	case provider.KindCloud, provider.KindCloudDisabled:
+		return []table.Column{{Title: "CLOUD", Width: 40}}
+	case provider.KindSubscription:
 		return []table.Column{
-			{Title: "NAME", Width: 40},
-			{Title: "TENANT", Width: 12},
+			{Title: "NAME", Width: 44},
+			{Title: "TENANT", Width: 24},
 			{Title: "STATE", Width: 12},
 			{Title: "ID", Width: 40},
 		}
-	}
-	return []table.Column{
-		{Title: "NAME", Width: 44},
-		{Title: "LOCATION", Width: 16},
-		{Title: "STATE", Width: 20},
-		{Title: "ID", Width: 50},
+	case provider.KindResourceGroup:
+		return []table.Column{
+			{Title: "NAME", Width: 56},
+			{Title: "LOCATION", Width: 20},
+			{Title: "STATE", Width: 18},
+		}
+	case provider.KindResource:
+		return []table.Column{
+			{Title: "NAME", Width: 48},
+			{Title: "TYPE", Width: 36},
+			{Title: "LOCATION", Width: 20},
+		}
+	default:
+		return []table.Column{{Title: "NAME", Width: 80}}
 	}
 }
 
@@ -574,19 +634,30 @@ func kindOf(f *frame) provider.Kind {
 	if len(f.nodes) > 0 {
 		return f.nodes[0].Kind
 	}
+	if f.title == "clouds" {
+		return provider.KindCloud
+	}
 	return ""
 }
 
-func rowsFromNodes(title string, nodes []provider.Node) []table.Row {
+func rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	rows := make([]table.Row, 0, len(nodes))
 	for _, n := range nodes {
-		switch {
-		case title == "clouds":
+		switch n.Kind {
+		case provider.KindCloud, provider.KindCloudDisabled:
 			rows = append(rows, table.Row{n.Name})
-		case n.Kind == provider.KindSubscription:
-			rows = append(rows, table.Row{n.Name, shortID(n.Meta["tenantId"]), n.State, shorten(n.ID, 40)})
+		case provider.KindSubscription:
+			tenant := n.Meta["tenantName"]
+			if tenant == "" {
+				tenant = shortID(n.Meta["tenantId"])
+			}
+			rows = append(rows, table.Row{n.Name, tenant, n.State, shorten(n.ID, 40)})
+		case provider.KindResourceGroup:
+			rows = append(rows, table.Row{n.Name, n.Location, n.State})
+		case provider.KindResource:
+			rows = append(rows, table.Row{n.Name, n.Meta["type"], n.Location})
 		default:
-			rows = append(rows, table.Row{n.Name, n.Location, n.State, shorten(n.ID, 50)})
+			rows = append(rows, table.Row{n.Name})
 		}
 	}
 	return rows

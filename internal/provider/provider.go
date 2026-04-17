@@ -47,6 +47,7 @@ type PIMRole struct {
 	ID          string
 	RoleName    string
 	Scope       string
+	ScopeName   string // human-readable scope (e.g. subscription name) when resolvable
 	PrincipalID string
 	EndDateTime string
 }
