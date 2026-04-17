@@ -1599,7 +1599,8 @@ func (m *model) pimView() string {
 		}
 		lines = append(lines, body)
 	}
-	if m.pimActivate && len(m.pimRoles) > 0 {
+	switch {
+	case m.pimActivate && len(m.pimRoles) > 0:
 		role := m.pimRoles[m.pimCursor]
 		lines = append(lines,
 			"",
@@ -1607,10 +1608,28 @@ func (m *model) pimView() string {
 			m.pimInput.View(),
 			styles.Help.Render("enter submit  esc cancel"),
 		)
-	} else {
+	case m.loading:
 		lines = append(lines,
 			"",
-			styles.Help.Render("↑↓ / jk move  a activate  +/- duration  esc close"),
+			"  "+m.spinner.View()+" "+styles.Help.Render(m.status),
+		)
+	case m.err != nil:
+		lines = append(lines,
+			"",
+			"  "+styles.Bad.Render("error: ")+firstErrLine(m.err),
+			styles.Help.Render("  esc to close, a to retry"),
+		)
+	case m.status != "":
+		lines = append(lines,
+			"",
+			"  "+styles.Good.Render(m.status),
+			styles.Help.Render("  PIM activations can take up to a minute to become effective in Azure"),
+			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  esc close"),
+		)
+	default:
+		lines = append(lines,
+			"",
+			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  esc close"),
 		)
 	}
 	return styles.Box.Render(strings.Join(lines, "\n"))

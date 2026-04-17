@@ -5,27 +5,115 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
-// ListEligibleRoles returns PIM-eligible role assignments for the calling user.
+// ListEligibleRoles returns PIM-eligible role assignments across every tenant
+// the caller has subscription access to. The eligibility API is scoped to the
+// tenant that issued the bearer token, so we ask `az account get-access-token`
+// for a token per tenant and fan the query out.
 func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, error) {
-	url := "https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
-	out, err := a.az.Run(ctx, "rest", "--method", "GET", "--url", url)
+	out, err := a.az.Run(ctx, "account", "list", "-o", "json")
 	if err != nil {
-		return nil, fmt.Errorf("list eligible PIM roles: %w", err)
+		return nil, fmt.Errorf("list subscriptions for PIM: %w", err)
 	}
-	roles, err := parsePIM(out)
+	var subs []subJSON
+	if err := json.Unmarshal(out, &subs); err != nil {
+		return nil, fmt.Errorf("parse az account list: %w", err)
+	}
+	tenants := map[string]bool{}
+	for _, s := range subs {
+		if s.TenantID != "" {
+			tenants[s.TenantID] = true
+		}
+	}
+
+	url := "https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
+	allRoles := []provider.PIMRole{}
+	seen := map[string]bool{}
+	var lastErr error
+
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	for tid := range tenants {
+		token, err := a.tenantToken(ctx, tid)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, err := fetchWithToken(ctx, client, url, token)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		roles, perr := parsePIM(body)
+		if perr != nil {
+			lastErr = perr
+			continue
+		}
+		for _, r := range roles {
+			if seen[r.ID] {
+				continue
+			}
+			seen[r.ID] = true
+			if name := a.subName(subIDFromScope(r.Scope)); name != "" {
+				r.ScopeName = name
+			}
+			allRoles = append(allRoles, r)
+		}
+	}
+	if len(allRoles) == 0 && lastErr != nil {
+		return nil, fmt.Errorf("list eligible PIM roles: %w", lastErr)
+	}
+	return allRoles, nil
+}
+
+func (a *Azure) tenantToken(ctx context.Context, tenantID string) (string, error) {
+	out, err := a.az.Run(ctx,
+		"account", "get-access-token",
+		"--tenant", tenantID,
+		"--resource", "https://management.azure.com/",
+		"-o", "json",
+	)
+	if err != nil {
+		return "", err
+	}
+	var t struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if err := json.Unmarshal(out, &t); err != nil {
+		return "", err
+	}
+	if t.AccessToken == "" {
+		return "", fmt.Errorf("empty token for tenant %s", tenantID)
+	}
+	return t.AccessToken, nil
+}
+
+func fetchWithToken(ctx context.Context, client *http.Client, url, token string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	for i := range roles {
-		if name := a.subName(subIDFromScope(roles[i].Scope)); name != "" {
-			roles[i].ScopeName = name
-		}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
 	}
-	return roles, nil
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }
 
 func parsePIM(data []byte) ([]provider.PIMRole, error) {
