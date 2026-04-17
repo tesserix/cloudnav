@@ -7,13 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-18
+
+### Added
+- **Azure resource-group lock visibility and management**. On the RG view cloudnav fetches `az lock list` once per subscription and adds a LOCK column (🔒 CanNotDelete / 🔒 ReadOnly / —). Press `<L>` on a locked RG to remove its first lock; press `<L>` on an unlocked RG to create a `cloudnav-protect` CanNotDelete lock. Changes are reflected instantly after re-fetch.
+- **Multi-select + bulk delete of resource groups**. On the RG view `space` toggles a ● marker on the cursor row, `[` selects all currently visible rows, `]` clears the selection. `<D>` asks Azure to delete the selected RGs (async, `--no-wait`) — refuses with an explanatory status if any selected RG still has a lock, so you have to `L` to unlock first. The keybar shows `<D> delete N` only when a selection exists.
+- Per-row delta arrows on the cost column are now colour-coded (green ↓, red bold ↑, grey →) in both Azure RG and AWS region views.
+- Subscription-level cost on the Azure subs view: press `<c>` on the subs list to get an MTD column with MoM arrows across every visible sub. Subs where the caller lacks Cost Management Reader are labelled "no cost read access" instead of a silent £0.
+- Empty states are now context-specific — an empty RG says "no resources inside 'rg-foo'"; an empty sub-list suggests checking `az login`; etc.
+
+### Fixed
+- Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.6.0
+
 ## [0.5.2] — 2026-04-17
 
 ### Added
 - **Tenant filter on the Azure subs view** — press `<t>` to cycle through the tenants represented in the current list (`all → tenant A → tenant B → all`). The keybar shows the active tenant inline (`<t> tenant: Civica Production`), the footer combines it with any `/` filter (`tenant: Civica Production  filter: platform  3/72`).
 - `/` search now also matches on the tenant name, so `/civica production` narrows to just that tenant's subs.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.2...HEAD
 [0.5.2]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.2
 
 ## [0.5.1] — 2026-04-17

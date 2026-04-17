@@ -68,6 +68,19 @@ type (
 		role string
 		err  error
 	}
+	locksLoadedMsg struct {
+		subID string
+		locks map[string][]azure.Lock
+	}
+	lockChangedMsg struct {
+		subID string
+		msg   string
+		err   error
+	}
+	deletedMsg struct {
+		msg string
+		err error
+	}
 	errMsg struct{ err error }
 )
 
@@ -123,11 +136,13 @@ type model struct {
 	paletteIdx   int
 	cfg          *config.Config
 	showCost     bool
-	costs        map[string]map[string]string // subID → lowercased rg name → cost
-	tenantFilter string                       // only show subs whose Meta[tenantName] == this (empty = all)
-	restorePath  []config.Crumb               // remaining crumbs to drill into during bookmark restore
-	restoreLabel string                       // label shown while restoring (for status)
-	entities     map[string][]provider.Node   // provider name → top-level entities (subs/projects/accounts)
+	costs        map[string]map[string]string       // subID → lowercased rg name → cost
+	tenantFilter string                             // only show subs whose Meta[tenantName] == this (empty = all)
+	locks        map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
+	selected     map[string]bool                    // node ID → selected
+	restorePath  []config.Crumb                     // remaining crumbs to drill into during bookmark restore
+	restoreLabel string                             // label shown while restoring (for status)
+	entities     map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
 	pimMode      bool
 	pimRoles     []provider.PIMRole
 	pimCursor    int
@@ -199,6 +214,8 @@ func newModel() *model {
 		cfg:          cfg,
 		costs:        map[string]map[string]string{},
 		entities:     map[string][]provider.Node{},
+		locks:        map[string]map[string][]azure.Lock{},
+		selected:     map[string]bool{},
 		keys:         keys.Default(),
 		table:        t,
 	}
@@ -277,6 +294,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Tenant):
 			m.cycleTenant()
 			return m, nil
+		case key.Matches(msg, m.keys.Lock):
+			return m, m.toggleLock()
+		case key.Matches(msg, m.keys.Select):
+			m.toggleSelection()
+			return m, nil
+		case key.Matches(msg, m.keys.SelectAll):
+			m.selectAllVisible()
+			return m, nil
+		case key.Matches(msg, m.keys.ClearSel):
+			m.selected = map[string]bool{}
+			m.status = "selection cleared"
+			m.refreshTable()
+			return m, nil
+		case key.Matches(msg, m.keys.Delete):
+			return m, m.promptDelete()
 		case key.Matches(msg, m.keys.Flag):
 			m.saveBookmark()
 			return m, nil
@@ -311,10 +343,47 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable()
 		m.table.SetCursor(0)
 		m.status = fmt.Sprintf("%d items", len(msg.frame.nodes))
+		cmds := []tea.Cmd{}
 		if cmd := m.advanceRestore(); cmd != nil {
-			return m, cmd
+			cmds = append(cmds, cmd)
 		}
+		if cmd := m.maybeLoadLocks(msg.frame); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
+
+	case locksLoadedMsg:
+		if m.locks == nil {
+			m.locks = map[string]map[string][]azure.Lock{}
+		}
+		m.locks[msg.subID] = msg.locks
+		m.refreshTable()
 		return m, nil
+
+	case lockChangedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		m.status = msg.msg
+		delete(m.locks, msg.subID)
+		return m, m.reloadLocksForActive()
+
+	case deletedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.err = nil
+		m.status = msg.msg
+		m.selected = map[string]bool{}
+		return m, m.reload()
 
 	case detailLoadedMsg:
 		m.loading = false
@@ -1125,10 +1194,23 @@ func (m *model) refreshTable() {
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
 	m.mergeCosts(top)
-	// Clear rows so SetColumns doesn't re-render stale-shaped rows and panic.
+	cols := m.columnsFor(top)
+	rows := m.rowsFromNodes(top.title, m.visibleNodes)
+	// Pad/truncate each row to exactly len(cols) cells so bubbles/table's
+	// renderRow never indexes past m.cols (the panic we chased before).
+	normalized := make([]table.Row, len(rows))
+	for i, r := range rows {
+		nr := make(table.Row, len(cols))
+		for j := range cols {
+			if j < len(r) {
+				nr[j] = r[j]
+			}
+		}
+		normalized[i] = nr
+	}
 	m.table.SetRows(nil)
-	m.table.SetColumns(m.columnsFor(top))
-	m.table.SetRows(m.rowsFromNodes(top.title, m.visibleNodes))
+	m.table.SetColumns(cols)
+	m.table.SetRows(normalized)
 	c := m.table.Cursor()
 	switch {
 	case len(m.visibleNodes) == 0:
@@ -1221,12 +1303,14 @@ func (m *model) columnsFor(f *frame) []table.Column {
 		return cols
 	case provider.KindResourceGroup:
 		cols := []table.Column{
-			{Title: "NAME", Width: 48},
-			{Title: "LOCATION", Width: 18},
-			{Title: "STATE", Width: 14},
+			{Title: " ", Width: 3},
+			{Title: "NAME", Width: 44},
+			{Title: "LOCATION", Width: 16},
+			{Title: "STATE", Width: 12},
+			{Title: "LOCK", Width: 16},
 		}
 		if m.showCost {
-			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 14})
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
 		}
 		return cols
 	case provider.KindResource:
@@ -1281,7 +1365,12 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
-			row := table.Row{n.Name, n.Location, n.State}
+			marker := " "
+			if m.selected[n.ID] {
+				marker = "●"
+			}
+			lock := lockBadgePlain(m.rgLockLevel(n.Name))
+			row := table.Row{marker, n.Name, n.Location, n.State, lock}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
@@ -1342,6 +1431,22 @@ func costOrDash(c string) string {
 		return "—"
 	}
 	return c
+}
+
+const (
+	lockCanNotDelete = "CanNotDelete"
+	lockReadOnly     = "ReadOnly"
+)
+
+func lockBadgePlain(level string) string {
+	switch level {
+	case lockCanNotDelete:
+		return "🔒 CanNotDelete"
+	case lockReadOnly:
+		return "🔒 ReadOnly"
+	default:
+		return "—"
+	}
 }
 
 func shorten(s string, n int) string {
@@ -1587,6 +1692,15 @@ func (m *model) keybar() string {
 		}
 		pairs = append(pairs, pair{"t", label})
 	}
+	if m.atRGLevel() {
+		pairs = append(pairs,
+			pair{"L", "lock"},
+			pair{"␣", "select"},
+		)
+		if n := len(m.selected); n > 0 {
+			pairs = append(pairs, pair{"D", fmt.Sprintf("delete %d", n)})
+		}
+	}
 	pairs = append(pairs,
 		pair{"r", "refresh"},
 		pair{"esc", "back"},
@@ -1605,6 +1719,214 @@ func (m *model) atSubscriptionLevel() bool {
 	}
 	top := &m.stack[len(m.stack)-1]
 	return kindOf(top) == provider.KindSubscription
+}
+
+func (m *model) atRGLevel() bool {
+	if len(m.stack) == 0 {
+		return false
+	}
+	top := &m.stack[len(m.stack)-1]
+	return kindOf(top) == provider.KindResourceGroup
+}
+
+func (m *model) currentSubID() string {
+	if !m.atRGLevel() {
+		return ""
+	}
+	top := &m.stack[len(m.stack)-1]
+	if top.parent == nil {
+		return ""
+	}
+	return top.parent.ID
+}
+
+func (m *model) maybeLoadLocks(f frame) tea.Cmd {
+	if len(f.nodes) == 0 || f.nodes[0].Kind != provider.KindResourceGroup || f.parent == nil {
+		return nil
+	}
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		return nil
+	}
+	subID := f.parent.ID
+	if _, cached := m.locks[subID]; cached {
+		return nil
+	}
+	// mark as in-flight so the same drill doesn't fire twice
+	m.locks[subID] = map[string][]azure.Lock{}
+	ctx := m.ctx
+	return func() tea.Msg {
+		locks, err := az.ResourceGroupLocks(ctx, subID)
+		if err != nil {
+			return locksLoadedMsg{subID: subID, locks: map[string][]azure.Lock{}}
+		}
+		return locksLoadedMsg{subID: subID, locks: locks}
+	}
+}
+
+func (m *model) reloadLocksForActive() tea.Cmd {
+	subID := m.currentSubID()
+	if subID == "" {
+		return nil
+	}
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		return nil
+	}
+	ctx := m.ctx
+	return func() tea.Msg {
+		locks, err := az.ResourceGroupLocks(ctx, subID)
+		if err != nil {
+			return locksLoadedMsg{subID: subID, locks: map[string][]azure.Lock{}}
+		}
+		return locksLoadedMsg{subID: subID, locks: locks}
+	}
+}
+
+func (m *model) rgLockLevel(rgName string) string {
+	subID := m.currentSubID()
+	if subID == "" {
+		return ""
+	}
+	locks := m.locks[subID]
+	if locks == nil {
+		return ""
+	}
+	list := locks[strings.ToLower(rgName)]
+	if len(list) == 0 {
+		return ""
+	}
+	for _, lk := range list {
+		if strings.EqualFold(lk.Level, lockReadOnly) {
+			return lockReadOnly
+		}
+	}
+	return lockCanNotDelete
+}
+
+func (m *model) toggleLock() tea.Cmd {
+	if !m.atRGLevel() {
+		m.status = "L works on the resource-groups view (Azure)"
+		return nil
+	}
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		m.status = "lock management is Azure-only"
+		return nil
+	}
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return nil
+	}
+	rg := m.visibleNodes[c]
+	subID := m.currentSubID()
+	existing := m.locks[subID][strings.ToLower(rg.Name)]
+	ctx := m.ctx
+	if len(existing) > 0 {
+		lk := existing[0]
+		m.loading = true
+		m.status = fmt.Sprintf("removing lock %q on %s...", lk.Name, rg.Name)
+		return tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg {
+				err := az.DeleteRGLock(ctx, subID, rg.Name, lk.Name)
+				return lockChangedMsg{
+					subID: subID,
+					msg:   fmt.Sprintf("removed lock %q from %s", lk.Name, rg.Name),
+					err:   err,
+				}
+			},
+		)
+	}
+	m.loading = true
+	m.status = fmt.Sprintf("adding CanNotDelete lock on %s...", rg.Name)
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			err := az.CreateRGLock(ctx, subID, rg.Name, "cloudnav-protect", "CanNotDelete")
+			return lockChangedMsg{
+				subID: subID,
+				msg:   fmt.Sprintf("added CanNotDelete lock on %s", rg.Name),
+				err:   err,
+			}
+		},
+	)
+}
+
+func (m *model) toggleSelection() {
+	if len(m.visibleNodes) == 0 {
+		return
+	}
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return
+	}
+	id := m.visibleNodes[c].ID
+	if m.selected[id] {
+		delete(m.selected, id)
+	} else {
+		m.selected[id] = true
+	}
+	m.status = fmt.Sprintf("%d selected", len(m.selected))
+	m.refreshTable()
+}
+
+func (m *model) selectAllVisible() {
+	for _, n := range m.visibleNodes {
+		m.selected[n.ID] = true
+	}
+	m.status = fmt.Sprintf("selected all %d visible", len(m.visibleNodes))
+	m.refreshTable()
+}
+
+func (m *model) promptDelete() tea.Cmd {
+	if !m.atRGLevel() {
+		m.status = "D works on the resource-groups view"
+		return nil
+	}
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		m.status = "delete is Azure-only"
+		return nil
+	}
+	targets := []provider.Node{}
+	for _, n := range m.visibleNodes {
+		if m.selected[n.ID] {
+			targets = append(targets, n)
+		}
+	}
+	if len(targets) == 0 {
+		m.status = "nothing selected — use space to select rows, [ to select all, D to delete"
+		return nil
+	}
+	for _, t := range targets {
+		if lv := m.rgLockLevel(t.Name); lv != "" {
+			m.status = fmt.Sprintf("refused — %s has a %s lock; press L to remove it first", t.Name, lv)
+			return nil
+		}
+	}
+	subID := m.currentSubID()
+	ctx := m.ctx
+	m.loading = true
+	m.status = fmt.Sprintf("deleting %d resource group(s) asynchronously...", len(targets))
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			fails := 0
+			for _, t := range targets {
+				if err := az.DeleteResourceGroup(ctx, subID, t.Name); err != nil {
+					fails++
+				}
+			}
+			if fails > 0 {
+				return deletedMsg{
+					msg: fmt.Sprintf("%d of %d deletions failed", fails, len(targets)),
+					err: fmt.Errorf("%d failures", fails),
+				}
+			}
+			return deletedMsg{msg: fmt.Sprintf("requested deletion of %d RG(s) — Azure is processing", len(targets))}
+		},
+	)
 }
 
 func (m *model) cycleTenant() {
