@@ -63,20 +63,40 @@ Grab the latest from [Releases](https://github.com/tesserix/cloudnav/releases) �
 
 Run `cloudnav doctor` to verify everything is wired up.
 
-## Quickstart
+## Quickstart — step by step
+
+1. **Install the tool** (pick one of the options above).
+2. **Log in to the cloud you care about** using its own CLI:
+   ```bash
+   az login                           # Azure
+   gcloud auth login                  # GCP
+   aws configure sso                  # AWS (recommended)
+   ```
+3. **Verify everything is wired up:**
+   ```bash
+   cloudnav doctor
+   ```
+   Expected output:
+   ```
+   ✓ azure  you@example.com
+   ✓ gcp    you@example.com
+   ✓ aws    arn:aws:iam::123456789012:user/you
+   ```
+4. **Launch the TUI:**
+   ```bash
+   cloudnav
+   ```
+   Use `↑`/`↓` (or `j`/`k`) to move, `↵` to drill down, `esc` to go back, `?` for help, `q` to quit.
+5. **Open the current selection in the cloud portal** with `o`.
+6. **Run a CLI command in the current scope** with `x` — cloudnav will pre-fill the right `--subscription` / `--project` / `--profile`.
+7. **(Azure only) List and activate PIM roles** with `p`.
+
+### Non-interactive / scripting
 
 ```bash
-# launch the TUI
-cloudnav
-
-# or start already scoped to a cloud
-cloudnav azure
-cloudnav gcp
-cloudnav aws
-
-# non-interactive (pipeable) output
-cloudnav ls azure subs --json
+cloudnav ls azure subs --json | jq '.[].name'
 cloudnav ls azure rgs --subscription <id>
+cloudnav ls azure resources --subscription <id> --resource-group my-rg --json
 ```
 
 ## Keybindings
@@ -109,11 +129,30 @@ show_cost: true
 theme: dark            # dark | light | auto
 bookmarks:
   - provider: azure
-    path: subs/fcb999d2-0d48-42ae-a29a-42bbd6cd5106/rgs
+    path: subs/<subscription-id>/rgs
 cache_ttl: 10m
 ```
 
 Override per-invocation with env vars — `CLOUDNAV_THEME`, `CLOUDNAV_NO_COLOR`, `CLOUDNAV_LOG_LEVEL`.
+
+### cloudnav never stores your credentials
+
+- cloudnav does **not** read, write, or cache tokens, keys, passwords, or refresh tokens.
+- All authentication is delegated to the wrapped CLIs (`az`, `gcloud`, `aws`). When you run `cloudnav`, it inherits their logged-in session for the duration of the subprocess call.
+- The optional config file holds preferences only (theme, bookmarks, sort order). You can delete it at any time with no loss of access.
+- Logs go to `~/.local/state/cloudnav/cloudnav.log` (Linux) / `~/Library/Logs/cloudnav/cloudnav.log` (macOS) and contain only the CLI commands we executed plus any stderr — never tokens.
+
+## Non-interactive / headless use
+
+cloudnav is a TUI by default, but every navigation step is also exposed as a scriptable command:
+
+```bash
+cloudnav ls azure subs --json | jq '.[].name'
+cloudnav ls azure rgs --subscription <id> --json
+cloudnav ls azure resources --subscription <id> --resource-group my-rg --json
+```
+
+When stdout is not a terminal (pipe, CI, Docker without `-t`), `cloudnav ls` will emit plain output by default and `--json` switches to machine-readable. The TUI binary itself requires a terminal; on headless machines use `cloudnav ls`, `cloudnav doctor`, and `cloudnav version` only.
 
 ## Architecture
 

@@ -17,8 +17,24 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !isTTY(os.Stdin) || !isTTY(os.Stdout) {
+			fmt.Fprintln(os.Stderr, "cloudnav: the TUI requires an attached terminal.")
+			fmt.Fprintln(os.Stderr, "For non-interactive use, try:")
+			fmt.Fprintln(os.Stderr, "  cloudnav doctor")
+			fmt.Fprintln(os.Stderr, "  cloudnav ls azure subs --json")
+			fmt.Fprintln(os.Stderr, "  cloudnav --help")
+			return fmt.Errorf("no TTY available")
+		}
 		return tui.Run()
 	},
+}
+
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 func Execute() {
