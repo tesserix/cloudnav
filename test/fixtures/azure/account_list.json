@@ -1,0 +1,28 @@
+[
+  {
+    "cloudName": "AzureCloud",
+    "homeTenantId": "00000000-0000-0000-0000-000000000001",
+    "id": "00000000-0000-0000-0000-00000000aaaa",
+    "isDefault": true,
+    "name": "Acme-Prod",
+    "state": "Enabled",
+    "tenantId": "00000000-0000-0000-0000-000000000001",
+    "user": {
+      "name": "alice@example.com",
+      "type": "user"
+    }
+  },
+  {
+    "cloudName": "AzureCloud",
+    "homeTenantId": "00000000-0000-0000-0000-000000000002",
+    "id": "00000000-0000-0000-0000-00000000bbbb",
+    "isDefault": false,
+    "name": "Acme-Dev",
+    "state": "Enabled",
+    "tenantId": "00000000-0000-0000-0000-000000000002",
+    "user": {
+      "name": "alice@example.com",
+      "type": "user"
+    }
+  }
+]

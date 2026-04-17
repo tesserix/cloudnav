@@ -40,8 +40,12 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSubs(out)
+}
+
+func parseSubs(data []byte) ([]provider.Node, error) {
 	var subs []subJSON
-	if err := json.Unmarshal(out, &subs); err != nil {
+	if err := json.Unmarshal(data, &subs); err != nil {
 		return nil, fmt.Errorf("parse az account list: %w", err)
 	}
 	nodes := make([]provider.Node, 0, len(subs))
@@ -85,8 +89,12 @@ func (a *Azure) resourceGroups(ctx context.Context, sub provider.Node) ([]provid
 	if err != nil {
 		return nil, err
 	}
+	return parseRGs(out, sub)
+}
+
+func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
 	var rgs []rgJSON
-	if err := json.Unmarshal(out, &rgs); err != nil {
+	if err := json.Unmarshal(data, &rgs); err != nil {
 		return nil, fmt.Errorf("parse az group list: %w", err)
 	}
 	nodes := make([]provider.Node, 0, len(rgs))
@@ -132,8 +140,12 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 	if err != nil {
 		return nil, err
 	}
+	return parseResources(out, rg, subID)
+}
+
+func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Node, error) {
 	var items []resJSON
-	if err := json.Unmarshal(out, &items); err != nil {
+	if err := json.Unmarshal(data, &items); err != nil {
 		return nil, fmt.Errorf("parse az resource list: %w", err)
 	}
 	nodes := make([]provider.Node, 0, len(items))

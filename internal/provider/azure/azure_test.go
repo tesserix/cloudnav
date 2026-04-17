@@ -1,6 +1,8 @@
 package azure
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -43,5 +45,125 @@ func TestPortalURLNoTenant(t *testing.T) {
 	want := "https://portal.azure.com/#/resource/subscriptions/abc"
 	if got := a.PortalURL(n); got != want {
 		t.Errorf("PortalURL without tenant = %q, want %q", got, want)
+	}
+}
+
+func fixture(t *testing.T, name string) []byte {
+	t.Helper()
+	p := filepath.Join("..", "..", "..", "test", "fixtures", "azure", name)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	return data
+}
+
+func TestParseSubs(t *testing.T) {
+	nodes, err := parseSubs(fixture(t, "account_list.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	first := nodes[0]
+	if first.Name != "Acme-Prod" {
+		t.Errorf("Name = %q, want Acme-Prod", first.Name)
+	}
+	if first.Kind != provider.KindSubscription {
+		t.Errorf("Kind = %q, want subscription", first.Kind)
+	}
+	if first.State != "Enabled" {
+		t.Errorf("State = %q, want Enabled", first.State)
+	}
+	if first.Meta["tenantId"] != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("tenantId = %q", first.Meta["tenantId"])
+	}
+	if first.Meta["user"] != "alice@example.com" {
+		t.Errorf("user = %q", first.Meta["user"])
+	}
+}
+
+func TestParseSubsEmpty(t *testing.T) {
+	nodes, err := parseSubs([]byte("[]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("len = %d, want 0", len(nodes))
+	}
+}
+
+func TestParseSubsInvalid(t *testing.T) {
+	if _, err := parseSubs([]byte("not json")); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestParseRGs(t *testing.T) {
+	sub := provider.Node{
+		ID:   "00000000-0000-0000-0000-00000000aaaa",
+		Kind: provider.KindSubscription,
+		Meta: map[string]string{"tenantId": "00000000-0000-0000-0000-000000000001"},
+	}
+	nodes, err := parseRGs(fixture(t, "group_list.json"), sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	rg := nodes[0]
+	if rg.Name != "web-prod-rg" {
+		t.Errorf("Name = %q, want web-prod-rg", rg.Name)
+	}
+	if rg.Location != "uksouth" {
+		t.Errorf("Location = %q", rg.Location)
+	}
+	if rg.State != "Succeeded" {
+		t.Errorf("State = %q", rg.State)
+	}
+	if rg.Meta["subscriptionId"] != sub.ID {
+		t.Errorf("subscriptionId = %q", rg.Meta["subscriptionId"])
+	}
+	if rg.Meta["tenantId"] != sub.Meta["tenantId"] {
+		t.Errorf("tenantId = %q", rg.Meta["tenantId"])
+	}
+}
+
+func TestParseResources(t *testing.T) {
+	rg := provider.Node{
+		Name: "web-prod-rg",
+		Kind: provider.KindResourceGroup,
+		Meta: map[string]string{"tenantId": "00000000-0000-0000-0000-000000000001"},
+	}
+	subID := "00000000-0000-0000-0000-00000000aaaa"
+	nodes, err := parseResources(fixture(t, "resource_list.json"), rg, subID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	vm := nodes[0]
+	if vm.Name != "api-01" {
+		t.Errorf("Name = %q", vm.Name)
+	}
+	if vm.State != "virtualMachines" {
+		t.Errorf("State (shortType) = %q, want virtualMachines", vm.State)
+	}
+	if vm.Meta["type"] != "Microsoft.Compute/virtualMachines" {
+		t.Errorf("type = %q", vm.Meta["type"])
+	}
+	if vm.Meta["subscriptionId"] != subID {
+		t.Errorf("subscriptionId = %q", vm.Meta["subscriptionId"])
+	}
+}
+
+func TestChildrenRejectsUnknownKind(t *testing.T) {
+	a := New()
+	_, err := a.Children(t.Context(), provider.Node{Kind: provider.KindTenant})
+	if err == nil {
+		t.Error("expected error for unsupported kind")
 	}
 }
