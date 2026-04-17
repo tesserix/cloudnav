@@ -52,6 +52,10 @@ type (
 		title string
 		body  string
 	}
+	costsLoadedMsg struct {
+		parentID string
+		costs    map[string]string
+	}
 	errMsg struct{ err error }
 )
 
@@ -104,6 +108,8 @@ type model struct {
 	paletteItems []paletteItem
 	paletteIdx   int
 	cfg          *config.Config
+	showCost     bool
+	costs        map[string]map[string]string // subID → lowercased rg name → cost
 	width        int
 	height       int
 	keys         keys.Map
@@ -159,6 +165,7 @@ func newModel() *model {
 		paletteInput: pi,
 		detail:       vp,
 		cfg:          cfg,
+		costs:        map[string]map[string]string{},
 		keys:         keys.Default(),
 		table:        t,
 	}
@@ -239,6 +246,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshTable()
 			m.status = "sort: " + m.sort.String()
 			return m, nil
+		case key.Matches(msg, m.keys.Costs):
+			return m, m.toggleCost()
 		case key.Matches(msg, m.keys.Detail):
 			return m, m.loadDetail()
 		case key.Matches(msg, m.keys.PIM):
@@ -273,6 +282,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.GotoTop()
 		m.detailMode = true
 		m.status = ""
+		return m, nil
+
+	case costsLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.costs[msg.parentID] = msg.costs
+		m.refreshTable()
+		m.status = fmt.Sprintf("costs: %d RGs", len(msg.costs))
 		return m, nil
 
 	case errMsg:
@@ -397,6 +414,48 @@ func (m *model) openBookmark(bm config.Bookmark) tea.Cmd {
 	}
 	m.status = "bookmark refers to unavailable provider " + bm.Provider
 	return nil
+}
+
+func (m *model) toggleCost() tea.Cmd {
+	m.showCost = !m.showCost
+	if !m.showCost {
+		m.status = "cost column off"
+		m.refreshTable()
+		return nil
+	}
+	top := m.stack[len(m.stack)-1]
+	if len(top.nodes) == 0 || top.nodes[0].Kind != provider.KindResourceGroup {
+		m.status = "cost column on — currently supported on Azure RG views"
+		m.refreshTable()
+		return nil
+	}
+	if top.parent == nil {
+		return nil
+	}
+	subID := top.parent.ID
+	if _, ok := m.costs[subID]; ok {
+		m.refreshTable()
+		m.status = "cost column on (cached)"
+		return nil
+	}
+	coster, ok := m.active.(provider.Coster)
+	if !ok {
+		m.status = m.active.Name() + ": costs not supported yet"
+		return nil
+	}
+	m.loading = true
+	m.status = "loading cost breakdown..."
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			costs, err := coster.ResourceGroupCosts(ctx, subID)
+			if err != nil {
+				return errMsg{err}
+			}
+			return costsLoadedMsg{parentID: subID, costs: costs}
+		},
+	)
 }
 
 func (m *model) saveBookmark() {
@@ -721,12 +780,13 @@ func openURL(url string) {
 func (m *model) refreshTable() {
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
+	m.mergeCosts(top)
 	// Clear rows first — bubbles/table.SetColumns re-renders existing rows,
 	// and if the new columns have fewer cells than the old rows, renderRow
 	// indexes past the column slice and panics.
 	m.table.SetRows(nil)
-	m.table.SetColumns(columnsFor(top))
-	m.table.SetRows(rowsFromNodes(top.title, m.visibleNodes))
+	m.table.SetColumns(m.columnsFor(top))
+	m.table.SetRows(m.rowsFromNodes(top.title, m.visibleNodes))
 	c := m.table.Cursor()
 	switch {
 	case len(m.visibleNodes) == 0:
@@ -751,14 +811,8 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 		}
 	}
 	if isCloudLevel(out) {
-		sort.SliceStable(out, func(i, j int) bool {
-			ai := out[i].Kind == provider.KindCloudDisabled
-			aj := out[j].Kind == provider.KindCloudDisabled
-			if ai != aj {
-				return !ai
-			}
-			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-		})
+		// Preserve the insertion order defined in newModel (active providers
+		// first as listed; disabled ones fall at the end naturally).
 		return out
 	}
 	switch m.sort {
@@ -782,7 +836,7 @@ func isCloudLevel(nodes []provider.Node) bool {
 	return k == provider.KindCloud || k == provider.KindCloudDisabled
 }
 
-func columnsFor(f *frame) []table.Column {
+func (m *model) columnsFor(f *frame) []table.Column {
 	switch kindOf(f) {
 	case provider.KindCloud, provider.KindCloudDisabled:
 		return []table.Column{{Title: "CLOUD", Width: 40}}
@@ -812,11 +866,15 @@ func columnsFor(f *frame) []table.Column {
 			{Title: "STATE", Width: 14},
 		}
 	case provider.KindResourceGroup:
-		return []table.Column{
-			{Title: "NAME", Width: 56},
-			{Title: "LOCATION", Width: 20},
-			{Title: "STATE", Width: 18},
+		cols := []table.Column{
+			{Title: "NAME", Width: 48},
+			{Title: "LOCATION", Width: 18},
+			{Title: "STATE", Width: 14},
 		}
+		if m.showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 14})
+		}
+		return cols
 	case provider.KindResource:
 		return []table.Column{
 			{Title: "NAME", Width: 48},
@@ -838,7 +896,7 @@ func kindOf(f *frame) provider.Kind {
 	return ""
 }
 
-func rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
+func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	rows := make([]table.Row, 0, len(nodes))
 	for _, n := range nodes {
 		switch n.Kind {
@@ -857,7 +915,15 @@ func rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 		case provider.KindRegion:
 			rows = append(rows, table.Row{n.Name, shorten(n.Meta["endpoint"], 42), n.State})
 		case provider.KindResourceGroup:
-			rows = append(rows, table.Row{n.Name, n.Location, n.State})
+			row := table.Row{n.Name, n.Location, n.State}
+			if m.showCost {
+				cost := n.Cost
+				if cost == "" {
+					cost = "—"
+				}
+				row = append(row, cost)
+			}
+			rows = append(rows, row)
 		case provider.KindResource:
 			rows = append(rows, table.Row{n.Name, n.Meta["type"], n.Location})
 		default:
@@ -865,6 +931,26 @@ func rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 		}
 	}
 	return rows
+}
+
+// mergeCosts stamps n.Cost on each visible RG node from the cached subscription
+// cost map. Called before rendering so sort/filter re-paints pick up the value.
+func (m *model) mergeCosts(f *frame) {
+	if !m.showCost || f.parent == nil {
+		return
+	}
+	if kindOf(f) != provider.KindResourceGroup {
+		return
+	}
+	costs := m.costs[f.parent.ID]
+	if costs == nil {
+		return
+	}
+	for i, n := range m.visibleNodes {
+		if c, ok := costs[strings.ToLower(n.Name)]; ok {
+			m.visibleNodes[i].Cost = c
+		}
+	}
 }
 
 func shortID(s string) string {
@@ -1064,15 +1150,15 @@ func (m *model) helpView() string {
 		"esc / h        back",
 		"j k / ↑ ↓      move selection",
 		"/              search current view",
-		":              command palette",
-		"c              cost column toggle",
+		":              command palette (switch cloud, jump to bookmark)",
+		"f              bookmark current view",
+		"c              toggle cost column (Azure RG view)",
 		"s              cycle sort (name / state / location)",
 		"o              open selected in cloud portal",
 		"i              json detail",
 		"p              PIM eligible roles (Azure)",
 		"x              exec provider CLI in current scope",
 		"r              refresh",
-		"f              bookmark current view",
 		"?              help",
 		"q / ctrl+c     quit",
 		"",

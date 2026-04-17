@@ -59,3 +59,11 @@ type PIMRole struct {
 type PIMer interface {
 	ListEligibleRoles(ctx context.Context) ([]PIMRole, error)
 }
+
+// Coster is an optional capability implemented by providers that can return
+// month-to-date costs grouped by a child container (resource group name for
+// Azure, project ID for GCP, etc.). Keys returned are lowercased so the TUI
+// can do case-insensitive lookup.
+type Coster interface {
+	ResourceGroupCosts(ctx context.Context, parentID string) (map[string]string, error)
+}
