@@ -140,20 +140,56 @@ func parseResources(data []byte, region provider.Node) ([]provider.Node, error) 
 	parent := region
 	nodes := make([]provider.Node, 0, len(envelope.ResourceTagMappingList))
 	for _, r := range envelope.ResourceTagMappingList {
+		service := serviceFromARN(r.ResourceARN)
+		restype := resourceTypeFromARN(r.ResourceARN)
+		typeCol := service
+		if restype != "" {
+			typeCol = service + ":" + restype
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ResourceARN,
 			Name:     nameFromARN(r.ResourceARN),
 			Kind:     provider.KindResource,
 			Location: region.ID,
-			State:    serviceFromARN(r.ResourceARN),
+			State:    service,
 			Parent:   &parent,
 			Meta: map[string]string{
 				"arn":    r.ResourceARN,
 				"region": region.ID,
+				"type":   typeCol,
 			},
 		})
 	}
 	return nodes, nil
+}
+
+// resourceTypeFromARN returns the resource-type segment from an ARN.
+//
+//	arn:aws:ec2:us-east-1:123:instance/i-abc      → instance
+//	arn:aws:iam::123:role/my-role                 → role
+//	arn:aws:lambda:us-east-1:123:function:f       → function
+//	arn:aws:s3:::my-bucket                        → ""
+func resourceTypeFromARN(arn string) string {
+	// arn:aws:<service>:<region>:<account>:<rest>
+	// rest may be:  <type>/<name>   OR  <type>:<name>   OR  <name>
+	parts := 0
+	start := 0
+	for i := 0; i < len(arn); i++ {
+		if arn[i] == ':' {
+			parts++
+			if parts == 5 {
+				start = i + 1
+				break
+			}
+		}
+	}
+	rest := arn[start:]
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' || rest[i] == ':' {
+			return rest[:i]
+		}
+	}
+	return ""
 }
 
 func (a *AWS) PortalURL(n provider.Node) string {

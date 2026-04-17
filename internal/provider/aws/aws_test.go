@@ -85,6 +85,20 @@ func TestNameFromARN(t *testing.T) {
 	}
 }
 
+func TestResourceTypeFromARN(t *testing.T) {
+	cases := map[string]string{
+		"arn:aws:ec2:us-east-1:123:instance/i-abc": "instance",
+		"arn:aws:iam::123:role/my-role":            "role",
+		"arn:aws:lambda:us-east-1:123:function:f":  "function",
+		"arn:aws:s3:::my-bucket":                   "",
+	}
+	for arn, want := range cases {
+		if got := resourceTypeFromARN(arn); got != want {
+			t.Errorf("resourceTypeFromARN(%q)=%q want %q", arn, got, want)
+		}
+	}
+}
+
 func TestServiceFromARN(t *testing.T) {
 	cases := map[string]string{
 		"arn:aws:ec2:us-east-1:123:instance/i-abc": "ec2",
