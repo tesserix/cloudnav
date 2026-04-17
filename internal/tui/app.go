@@ -435,6 +435,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pimCursor = 0
 		m.pimMode = true
 		m.pimActivate = false
+		m.syncPIMDurationToPolicy()
 		m.status = fmt.Sprintf("%d eligible role assignment(s)", len(msg.roles))
 		return m, nil
 
@@ -1178,11 +1179,13 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case keyUp, "k":
 		if m.pimCursor > 0 {
 			m.pimCursor--
+			m.syncPIMDurationToPolicy()
 		}
 		return m, nil
 	case keyDown, "j":
 		if m.pimCursor < len(m.filteredPIM())-1 {
 			m.pimCursor++
+			m.syncPIMDurationToPolicy()
 		}
 		return m, nil
 	case "/":
@@ -1199,7 +1202,7 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pimInput.Focus()
 		return m, nil
 	case "+":
-		if m.pimDuration < 8 {
+		if m.pimDuration < m.pimDurationCap() {
 			m.pimDuration++
 		}
 		return m, nil
@@ -1220,10 +1223,12 @@ func (m *model) updatePIMFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pimFilterIn.SetValue("")
 		m.pimFilterIn.Blur()
 		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
 		return m, nil
 	case keyEnter:
 		m.pimFilterOn = false
 		m.pimFilterIn.Blur()
+		m.syncPIMDurationToPolicy()
 		return m, nil
 	case keyUp, keyDown:
 		if msg.String() == keyUp && m.pimCursor > 0 {
@@ -1232,6 +1237,7 @@ func (m *model) updatePIMFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == keyDown && m.pimCursor < len(m.filteredPIM())-1 {
 			m.pimCursor++
 		}
+		m.syncPIMDurationToPolicy()
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -1240,7 +1246,38 @@ func (m *model) updatePIMFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pimCursor >= len(m.filteredPIM()) {
 		m.pimCursor = 0
 	}
+	m.syncPIMDurationToPolicy()
 	return m, cmd
+}
+
+// syncPIMDurationToPolicy sets pimDuration to the role's policy-defined max
+// when known, so + / - starts from the Azure-configured ceiling. Falls back
+// to 8h when the policy is unreadable.
+func (m *model) syncPIMDurationToPolicy() {
+	filt := m.filteredPIM()
+	if len(filt) == 0 || m.pimCursor >= len(filt) {
+		return
+	}
+	role := filt[m.pimCursor]
+	switch {
+	case role.MaxDurationHours > 0:
+		m.pimDuration = role.MaxDurationHours
+	case m.pimDuration <= 0:
+		m.pimDuration = 8
+	}
+}
+
+// pimDurationCap returns the upper bound for the duration stepper — the
+// current role's policy max when known, else 24h.
+func (m *model) pimDurationCap() int {
+	filt := m.filteredPIM()
+	if len(filt) == 0 || m.pimCursor >= len(filt) {
+		return 24
+	}
+	if max := filt[m.pimCursor].MaxDurationHours; max > 0 {
+		return max
+	}
+	return 24
 }
 
 func (m *model) filteredPIM() []provider.PIMRole {
@@ -1272,7 +1309,17 @@ func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "justification is required"
 			return m, nil
 		}
-		role := m.pimRoles[m.pimCursor]
+		filt := m.filteredPIM()
+		if len(filt) == 0 || m.pimCursor >= len(filt) {
+			return m, nil
+		}
+		role := filt[m.pimCursor]
+		if role.Active {
+			m.pimActivate = false
+			m.pimInput.Blur()
+			m.status = fmt.Sprintf("%s on %s is already ACTIVE until %s — nothing to do", role.RoleName, scopeDisplay(role), humanUntil(role.ActiveUntil))
+			return m, nil
+		}
 		m.pimActivate = false
 		m.pimInput.Blur()
 		m.loading = true
@@ -1291,6 +1338,34 @@ func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.pimInput, cmd = m.pimInput.Update(msg)
 	return m, cmd
+}
+
+func humanUntil(iso string) string {
+	t, err := time.Parse(time.RFC3339, iso)
+	if err != nil {
+		if iso == "" {
+			return "expiry unknown"
+		}
+		return iso
+	}
+	rem := time.Until(t)
+	if rem <= 0 {
+		return "just expired"
+	}
+	local := t.Local().Format("15:04 Jan-02")
+	return fmt.Sprintf("%s (%s left)", local, humanDuration(rem))
+}
+
+func humanDuration(d time.Duration) string {
+	if d >= time.Hour {
+		h := int(d / time.Hour)
+		m := int(d%time.Hour) / int(time.Minute)
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", int(d/time.Minute))
 }
 
 func scopeDisplay(r provider.PIMRole) string {
@@ -1756,9 +1831,15 @@ func (m *model) pimView() string {
 	if m.pimFilter != "" {
 		headerCount = fmt.Sprintf("%d/%d", len(filt), len(m.pimRoles))
 	}
+	durHint := fmt.Sprintf("duration %dh", m.pimDuration)
+	if len(filt) > 0 && m.pimCursor < len(filt) {
+		if max := filt[m.pimCursor].MaxDurationHours; max > 0 {
+			durHint = fmt.Sprintf("duration %dh (policy max %dh)", m.pimDuration, max)
+		}
+	}
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
-			styles.Help.Render(fmt.Sprintf("%s  duration %dh (use +/- to change)", headerCount, m.pimDuration)),
+			styles.Help.Render(fmt.Sprintf("%s  %s (use +/- to change)", headerCount, durHint)),
 		"",
 	}
 	if m.pimFilterOn {
@@ -1807,9 +1888,13 @@ func (m *model) pimView() string {
 	}
 	for i := start; i < end; i++ {
 		r := filt[i]
-		body := fmt.Sprintf("  %2d. %-40s  on  %s", i+1, r.RoleName, scopeDisplay(r))
+		state := ""
+		if r.Active {
+			state = "  " + styles.Good.Render("● ACTIVE until "+humanUntil(r.ActiveUntil))
+		}
+		body := fmt.Sprintf("  %2d. %-40s  on  %-30s%s", i+1, r.RoleName, scopeDisplay(r), state)
 		if i == m.pimCursor {
-			body = styles.Selected.Render(fmt.Sprintf("> %2d. %-40s  on  %s", i+1, r.RoleName, scopeDisplay(r)))
+			body = styles.Selected.Render(fmt.Sprintf("> %2d. %-40s  on  %-30s", i+1, r.RoleName, scopeDisplay(r))) + state
 		}
 		lines = append(lines, body)
 	}

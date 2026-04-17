@@ -54,6 +54,9 @@ type PIMRole struct {
 	RoleDefinitionID string // /providers/Microsoft.Authorization/roleDefinitions/<guid>
 	EligibilityID    string // linkedRoleEligibilityScheduleId
 	EndDateTime      string
+	Active           bool   // caller currently has an active assignment matching (roleDef, scope)
+	ActiveUntil      string // ISO-8601 expiry of the active assignment when Active is true
+	MaxDurationHours int    // max activation duration allowed by the PIM policy (0 if unknown)
 }
 
 // PIMer is an optional capability implemented by providers that expose

@@ -33,7 +33,8 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		}
 	}
 
-	url := "https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
+	eligURL := "https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
+	activeURL := "https://management.azure.com/providers/Microsoft.Authorization/roleAssignmentScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
 	allRoles := []provider.PIMRole{}
 	seen := map[string]bool{}
 	var lastErr error
@@ -46,7 +47,7 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 			lastErr = err
 			continue
 		}
-		body, err := fetchWithToken(ctx, client, url, token)
+		body, err := fetchWithToken(ctx, client, eligURL, token)
 		if err != nil {
 			lastErr = err
 			continue
@@ -56,14 +57,31 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 			lastErr = perr
 			continue
 		}
+		activeBody, _ := fetchWithToken(ctx, client, activeURL, token)
+		active := parseActiveAssignments(activeBody)
+
+		scopePolicyMax := map[string]int{}
+
 		for _, r := range roles {
 			if seen[r.ID] {
 				continue
 			}
 			seen[r.ID] = true
+			r.TenantID = tid
 			if name := a.subName(subIDFromScope(r.Scope)); name != "" {
 				r.ScopeName = name
 			}
+			key := strings.ToLower(r.RoleDefinitionID + "|" + r.Scope)
+			if until, ok := active[key]; ok {
+				r.Active = true
+				r.ActiveUntil = until
+			}
+			maxH, cached := scopePolicyMax[r.Scope]
+			if !cached {
+				maxH = fetchMaxActivationHours(ctx, client, r.Scope, token)
+				scopePolicyMax[r.Scope] = maxH
+			}
+			r.MaxDurationHours = maxH
 			allRoles = append(allRoles, r)
 		}
 	}
@@ -71,6 +89,41 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		return nil, fmt.Errorf("list eligible PIM roles: %w", lastErr)
 	}
 	return allRoles, nil
+}
+
+func parseActiveAssignments(body []byte) map[string]string {
+	out := map[string]string{}
+	if len(body) == 0 {
+		return out
+	}
+	var env struct {
+		Value []struct {
+			Properties struct {
+				Scope              string `json:"scope"`
+				RoleDefinitionID   string `json:"roleDefinitionId"`
+				EndDateTime        string `json:"endDateTime"`
+				ExpandedProperties struct {
+					RoleDefinition struct {
+						ID string `json:"id"`
+					} `json:"roleDefinition"`
+				} `json:"expandedProperties"`
+			} `json:"properties"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return out
+	}
+	for _, v := range env.Value {
+		roleDef := v.Properties.RoleDefinitionID
+		if roleDef == "" {
+			roleDef = v.Properties.ExpandedProperties.RoleDefinition.ID
+		}
+		if roleDef == "" || v.Properties.Scope == "" {
+			continue
+		}
+		out[strings.ToLower(roleDef+"|"+v.Properties.Scope)] = v.Properties.EndDateTime
+	}
+	return out
 }
 
 func (a *Azure) tenantToken(ctx context.Context, tenantID string) (string, error) {
@@ -208,6 +261,111 @@ func (a *Azure) ActivateRole(ctx context.Context, role provider.PIMRole, justifi
 		"--body", string(raw),
 	)
 	return err
+}
+
+// fetchMaxActivationHours returns the policy-defined max activation duration
+// (in hours) for assignments at scope. Returns 0 if the policy can't be read
+// or doesn't express a limit. Best-effort: any error is swallowed so PIM
+// listing continues without a cap.
+func fetchMaxActivationHours(ctx context.Context, client *http.Client, scope, token string) int {
+	listURL := fmt.Sprintf(
+		"https://management.azure.com%s/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01&$filter=roleDefinitionId+eq+null",
+		scope,
+	)
+	body, err := fetchWithToken(ctx, client, listURL, token)
+	if err != nil {
+		return 0
+	}
+	var env struct {
+		Value []struct {
+			Properties struct {
+				PolicyID string `json:"policyId"`
+			} `json:"properties"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return 0
+	}
+	maxH := 0
+	for _, v := range env.Value {
+		if v.Properties.PolicyID == "" {
+			continue
+		}
+		h := fetchMaxFromPolicy(ctx, client, v.Properties.PolicyID, token)
+		if h > maxH {
+			maxH = h
+		}
+	}
+	return maxH
+}
+
+func fetchMaxFromPolicy(ctx context.Context, client *http.Client, policyID, token string) int {
+	url := fmt.Sprintf("https://management.azure.com%s?api-version=2020-10-01", policyID)
+	body, err := fetchWithToken(ctx, client, url, token)
+	if err != nil {
+		return 0
+	}
+	return maxHoursFromRules(body)
+}
+
+func maxHoursFromRules(body []byte) int {
+	var env struct {
+		Properties struct {
+			Rules []struct {
+				ID            string `json:"id"`
+				RuleType      string `json:"ruleType"`
+				MaximumDur    string `json:"maximumDuration"`
+				IsExpirationR bool   `json:"isExpirationRequired"`
+			} `json:"rules"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return 0
+	}
+	for _, r := range env.Properties.Rules {
+		if r.RuleType != "RoleManagementPolicyExpirationRule" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(r.ID), "enablement_enduser_assignment") &&
+			!strings.Contains(strings.ToLower(r.ID), "expiration_enduser_assignment") {
+			continue
+		}
+		if h := parseISO8601Hours(r.MaximumDur); h > 0 {
+			return h
+		}
+	}
+	return 0
+}
+
+// parseISO8601Hours returns the hour count for simple ISO-8601 durations the
+// PIM API emits: PT8H, PT30M, P1D, PT1H30M. Minutes round up to the next hour
+// so callers always get a usable integer cap.
+func parseISO8601Hours(d string) int {
+	if d == "" || !strings.HasPrefix(d, "P") {
+		return 0
+	}
+	s := d[1:]
+	days := 0
+	if i := strings.Index(s, "D"); i >= 0 {
+		fmt.Sscanf(s[:i], "%d", &days)
+		s = s[i+1:]
+	}
+	hours, minutes := 0, 0
+	if strings.HasPrefix(s, "T") {
+		s = s[1:]
+		if i := strings.Index(s, "H"); i >= 0 {
+			fmt.Sscanf(s[:i], "%d", &hours)
+			s = s[i+1:]
+		}
+		if i := strings.Index(s, "M"); i >= 0 {
+			fmt.Sscanf(s[:i], "%d", &minutes)
+		}
+	}
+	total := days*24 + hours
+	if minutes > 0 {
+		total++
+	}
+	return total
 }
 
 // newGUID returns a random RFC 4122 v4 UUID without pulling in a dep.

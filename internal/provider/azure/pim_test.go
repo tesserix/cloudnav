@@ -58,3 +58,53 @@ func TestParsePIMBadJSON(t *testing.T) {
 		t.Error("expected error for invalid JSON")
 	}
 }
+
+func TestParseISO8601Hours(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"PT8H", 8},
+		{"PT1H", 1},
+		{"PT30M", 1},
+		{"PT1H30M", 2},
+		{"P1D", 24},
+		{"P1DT2H", 26},
+		{"", 0},
+		{"garbage", 0},
+	}
+	for _, c := range cases {
+		if got := parseISO8601Hours(c.in); got != c.want {
+			t.Errorf("parseISO8601Hours(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMaxHoursFromRules(t *testing.T) {
+	body := []byte(`{"properties":{"rules":[
+      {"id":"Expiration_EndUser_Assignment","ruleType":"RoleManagementPolicyExpirationRule","maximumDuration":"PT8H"},
+      {"id":"Approval_EndUser_Assignment","ruleType":"RoleManagementPolicyApprovalRule"}
+    ]}}`)
+	if got := maxHoursFromRules(body); got != 8 {
+		t.Errorf("maxHoursFromRules = %d, want 8", got)
+	}
+	if got := maxHoursFromRules([]byte(`{}`)); got != 0 {
+		t.Errorf("empty policy = %d, want 0", got)
+	}
+}
+
+func TestParseActiveAssignments(t *testing.T) {
+	body := []byte(`{"value":[{"properties":{
+      "scope":"/subscriptions/abc",
+      "roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/111",
+      "endDateTime":"2030-01-01T00:00:00Z"
+    }}]}`)
+	m := parseActiveAssignments(body)
+	if len(m) != 1 {
+		t.Fatalf("len = %d, want 1", len(m))
+	}
+	key := "/providers/microsoft.authorization/roledefinitions/111|/subscriptions/abc"
+	if m[key] != "2030-01-01T00:00:00Z" {
+		t.Errorf("endDateTime = %q", m[key])
+	}
+}
