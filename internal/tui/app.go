@@ -22,7 +22,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tesserix/cloudnav/internal/provider"
+	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
+	"github.com/tesserix/cloudnav/internal/provider/gcp"
 	"github.com/tesserix/cloudnav/internal/tui/keys"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 )
@@ -125,7 +127,7 @@ func newModel() *model {
 
 	m := &model{
 		ctx:       context.Background(),
-		providers: []provider.Provider{azure.New()},
+		providers: []provider.Provider{azure.New(), gcp.New(), aws.New()},
 		spinner:   sp,
 		search:    ti,
 		detail:    vp,
@@ -144,10 +146,6 @@ func (m *model) pushHome() {
 			Kind: provider.KindCloud,
 		})
 	}
-	home.nodes = append(home.nodes,
-		provider.Node{Name: "gcp (coming soon)", Kind: provider.KindCloudDisabled},
-		provider.Node{Name: "aws (coming soon)", Kind: provider.KindCloudDisabled},
-	)
 	m.stack = []frame{home}
 	m.refreshTable()
 }
@@ -295,10 +293,11 @@ func (m *model) drillDown() tea.Cmd {
 		}
 	case provider.KindCloudDisabled:
 		m.status = "coming soon"
-	case provider.KindSubscription:
-		m.resetView()
-		return m.load(cur.Name, &cur)
-	case provider.KindResourceGroup:
+	case provider.KindSubscription,
+		provider.KindResourceGroup,
+		provider.KindProject,
+		provider.KindAccount,
+		provider.KindRegion:
 		m.resetView()
 		return m.load(cur.Name, &cur)
 	}
@@ -613,6 +612,24 @@ func columnsFor(f *frame) []table.Column {
 			{Title: "STATE", Width: 12},
 			{Title: "ID", Width: 40},
 		}
+	case provider.KindProject:
+		return []table.Column{
+			{Title: "NAME", Width: 44},
+			{Title: "PROJECT ID", Width: 30},
+			{Title: "STATE", Width: 16},
+		}
+	case provider.KindAccount:
+		return []table.Column{
+			{Title: "ACCOUNT", Width: 18},
+			{Title: "ARN", Width: 60},
+			{Title: "STATE", Width: 12},
+		}
+	case provider.KindRegion:
+		return []table.Column{
+			{Title: "REGION", Width: 24},
+			{Title: "ENDPOINT", Width: 42},
+			{Title: "STATE", Width: 14},
+		}
 	case provider.KindResourceGroup:
 		return []table.Column{
 			{Title: "NAME", Width: 56},
@@ -652,6 +669,12 @@ func rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 				tenant = shortID(n.Meta["tenantId"])
 			}
 			rows = append(rows, table.Row{n.Name, tenant, n.State, shorten(n.ID, 40)})
+		case provider.KindProject:
+			rows = append(rows, table.Row{n.Name, n.ID, n.State})
+		case provider.KindAccount:
+			rows = append(rows, table.Row{n.Name, shorten(n.Meta["arn"], 60), n.State})
+		case provider.KindRegion:
+			rows = append(rows, table.Row{n.Name, shorten(n.Meta["endpoint"], 42), n.State})
 		case provider.KindResourceGroup:
 			rows = append(rows, table.Row{n.Name, n.Location, n.State})
 		case provider.KindResource:

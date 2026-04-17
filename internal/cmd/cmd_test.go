@@ -36,17 +36,10 @@ func TestBytesTrim(t *testing.T) {
 }
 
 func TestPickProvider(t *testing.T) {
-	ok := []string{"azure", "az"}
+	ok := []string{"azure", "az", "gcp", "aws"}
 	for _, n := range ok {
 		if _, err := pickProvider(n); err != nil {
 			t.Errorf("pickProvider(%q) unexpected err: %v", n, err)
-		}
-	}
-
-	notYet := []string{"gcp", "aws"}
-	for _, n := range notYet {
-		if _, err := pickProvider(n); err == nil {
-			t.Errorf("pickProvider(%q) expected coming-soon error", n)
 		}
 	}
 

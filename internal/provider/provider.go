@@ -17,6 +17,7 @@ const (
 	KindResource      Kind = "resource"
 	KindProject       Kind = "project"
 	KindAccount       Kind = "account"
+	KindRegion        Kind = "region"
 )
 
 type Node struct {
