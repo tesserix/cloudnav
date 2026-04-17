@@ -61,7 +61,7 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		activeBody, _ := fetchWithToken(ctx, client, activeURL, token)
 		active := parseActiveAssignments(activeBody)
 
-		scopePolicyMax := map[string]int{}
+		policyMax := map[string]int{}
 
 		for _, r := range roles {
 			if seen[r.ID] {
@@ -77,10 +77,11 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 				r.Active = true
 				r.ActiveUntil = until
 			}
-			maxH, cached := scopePolicyMax[r.Scope]
+			polKey := r.Scope + "|" + r.RoleDefinitionID
+			maxH, cached := policyMax[polKey]
 			if !cached {
-				maxH = fetchMaxActivationHours(ctx, client, r.Scope, token)
-				scopePolicyMax[r.Scope] = maxH
+				maxH = fetchMaxActivationHours(ctx, client, r.Scope, r.RoleDefinitionID, token)
+				policyMax[polKey] = maxH
 			}
 			r.MaxDurationHours = maxH
 			allRoles = append(allRoles, r)
@@ -265,12 +266,11 @@ func (a *Azure) ActivateRole(ctx context.Context, role provider.PIMRole, justifi
 }
 
 // fetchMaxActivationHours returns the policy-defined max activation duration
-// (in hours) for assignments at scope. Returns 0 if the policy can't be read
-// or doesn't express a limit. Best-effort: any error is swallowed so PIM
-// listing continues without a cap.
-func fetchMaxActivationHours(ctx context.Context, client *http.Client, scope, token string) int {
+// (in hours) for the given role at scope. Returns 0 if the policy can't be
+// read or doesn't express a limit; callers fall back to a sensible default.
+func fetchMaxActivationHours(ctx context.Context, client *http.Client, scope, roleDefID, token string) int {
 	listURL := fmt.Sprintf(
-		"https://management.azure.com%s/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01&$filter=roleDefinitionId+eq+null",
+		"https://management.azure.com%s/providers/Microsoft.Authorization/roleManagementPolicyAssignments?api-version=2020-10-01",
 		scope,
 	)
 	body, err := fetchWithToken(ctx, client, listURL, token)
@@ -280,24 +280,27 @@ func fetchMaxActivationHours(ctx context.Context, client *http.Client, scope, to
 	var env struct {
 		Value []struct {
 			Properties struct {
-				PolicyID string `json:"policyId"`
+				PolicyID         string `json:"policyId"`
+				RoleDefinitionID string `json:"roleDefinitionId"`
 			} `json:"properties"`
 		} `json:"value"`
 	}
 	if err := json.Unmarshal(body, &env); err != nil {
 		return 0
 	}
-	maxH := 0
+	wantRole := strings.ToLower(roleDefID)
 	for _, v := range env.Value {
 		if v.Properties.PolicyID == "" {
 			continue
 		}
-		h := fetchMaxFromPolicy(ctx, client, v.Properties.PolicyID, token)
-		if h > maxH {
-			maxH = h
+		if wantRole != "" && strings.ToLower(v.Properties.RoleDefinitionID) != wantRole {
+			continue
+		}
+		if h := fetchMaxFromPolicy(ctx, client, v.Properties.PolicyID, token); h > 0 {
+			return h
 		}
 	}
-	return maxH
+	return 0
 }
 
 func fetchMaxFromPolicy(ctx context.Context, client *http.Client, policyID, token string) int {

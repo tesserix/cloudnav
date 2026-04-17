@@ -69,8 +69,10 @@ type (
 	}
 	pimLoadedMsg    struct{ roles []provider.PIMRole }
 	pimActivatedMsg struct {
-		role string
-		err  error
+		role      string
+		roleID    string
+		expiresAt string
+		err       error
 	}
 	locksLoadedMsg struct {
 		subID string
@@ -223,7 +225,7 @@ func newModel() *model {
 		paletteInput: pi,
 		pimInput:     pimIn,
 		pimFilterIn:  pimFilt,
-		pimDuration:  1,
+		pimDuration:  8,
 		detail:       vp,
 		cfg:          cfg,
 		costs:        map[string]map[string]string{},
@@ -447,7 +449,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
-		m.status = "✓ activation requested for " + msg.role
+		for i := range m.pimRoles {
+			if m.pimRoles[i].ID == msg.roleID {
+				m.pimRoles[i].Active = true
+				m.pimRoles[i].ActiveUntil = msg.expiresAt
+				break
+			}
+		}
+		m.status = "✓ activation requested for " + msg.role + " — may take ~1 min to become effective"
 		return m, nil
 
 	case errMsg:
@@ -1259,10 +1268,11 @@ func (m *model) syncPIMDurationToPolicy() {
 		return
 	}
 	role := filt[m.pimCursor]
-	switch {
-	case role.MaxDurationHours > 0:
+	if role.MaxDurationHours > 0 {
 		m.pimDuration = role.MaxDurationHours
-	case m.pimDuration <= 0:
+		return
+	}
+	if m.pimDuration <= 0 {
 		m.pimDuration = 8
 	}
 }
@@ -1327,11 +1337,17 @@ func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prov := m.active.(provider.PIMer)
 		ctx := m.ctx
 		dur := m.pimDuration
+		expires := time.Now().Add(time.Duration(dur) * time.Hour).UTC().Format(time.RFC3339)
 		return m, tea.Batch(
 			m.spinner.Tick,
 			func() tea.Msg {
 				err := prov.ActivateRole(ctx, role, reason, dur)
-				return pimActivatedMsg{role: role.RoleName + " on " + scopeDisplay(role), err: err}
+				return pimActivatedMsg{
+					role:      role.RoleName + " on " + scopeDisplay(role),
+					roleID:    role.ID,
+					expiresAt: expires,
+					err:       err,
+				}
 			},
 		)
 	}
@@ -1834,6 +1850,8 @@ func (m *model) pimView() string {
 	if len(filt) > 0 && m.pimCursor < len(filt) {
 		if max := filt[m.pimCursor].MaxDurationHours; max > 0 {
 			durHint = fmt.Sprintf("duration %dh (policy max %dh)", m.pimDuration, max)
+		} else {
+			durHint = fmt.Sprintf("duration %dh (policy not readable, default 8h)", m.pimDuration)
 		}
 	}
 	lines := []string{
