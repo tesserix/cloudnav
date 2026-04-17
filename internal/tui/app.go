@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -41,20 +43,44 @@ type (
 	errMsg         struct{ err error }
 )
 
+type sortMode int
+
+const (
+	sortName sortMode = iota
+	sortState
+	sortLocation
+)
+
+func (s sortMode) String() string {
+	switch s {
+	case sortState:
+		return "state"
+	case sortLocation:
+		return "location"
+	default:
+		return "name"
+	}
+}
+
 type model struct {
-	ctx       context.Context
-	providers []provider.Provider
-	active    provider.Provider
-	stack     []frame
-	table     table.Model
-	spinner   spinner.Model
-	loading   bool
-	err       error
-	status    string
-	showHelp  bool
-	width     int
-	height    int
-	keys      keys.Map
+	ctx          context.Context
+	providers    []provider.Provider
+	active       provider.Provider
+	stack        []frame
+	visibleNodes []provider.Node
+	table        table.Model
+	spinner      spinner.Model
+	search       textinput.Model
+	searchMode   bool
+	filter       string
+	sort         sortMode
+	loading      bool
+	err          error
+	status       string
+	showHelp     bool
+	width        int
+	height       int
+	keys         keys.Map
 }
 
 func newModel() *model {
@@ -79,10 +105,17 @@ func newModel() *model {
 		Bold(true)
 	t.SetStyles(ts)
 
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "filter by name"
+	ti.CharLimit = 120
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
+
 	m := &model{
 		ctx:       context.Background(),
 		providers: []provider.Provider{azure.New()},
 		spinner:   sp,
+		search:    ti,
 		keys:      keys.Default(),
 		table:     t,
 	}
@@ -116,6 +149,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		if w := msg.Width - 2; w > 0 {
 			m.table.SetWidth(w)
+			m.search.Width = w - 4
 		}
 		if h := msg.Height - 4; h > 0 {
 			m.table.SetHeight(h)
@@ -124,6 +158,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.searchMode {
+			return m.updateSearch(msg)
+		}
 		if m.showHelp {
 			m.showHelp = false
 			return m, nil
@@ -133,6 +170,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Help):
 			m.showHelp = true
+			return m, nil
+		case key.Matches(msg, m.keys.Search):
+			m.searchMode = true
+			m.search.Focus()
+			return m, nil
+		case key.Matches(msg, m.keys.Sort):
+			m.sort = (m.sort + 1) % 3
+			m.refreshTable()
+			m.status = "sort: " + m.sort.String()
 			return m, nil
 		case key.Matches(msg, m.keys.Enter):
 			return m, m.drillDown()
@@ -170,28 +216,58 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.searchMode = false
+		m.search.Blur()
+		m.filter = ""
+		m.search.SetValue("")
+		m.refreshTable()
+		return m, nil
+	case "enter":
+		m.searchMode = false
+		m.search.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.search, cmd = m.search.Update(msg)
+	m.filter = m.search.Value()
+	m.refreshTable()
+	return m, cmd
+}
+
 func (m *model) drillDown() tea.Cmd {
-	top := m.stack[len(m.stack)-1]
-	if len(top.nodes) == 0 {
+	if len(m.visibleNodes) == 0 {
 		return nil
 	}
-	cur := top.nodes[m.table.Cursor()]
+	cur := m.visibleNodes[m.table.Cursor()]
 	switch cur.Kind {
 	case provider.KindCloud:
 		for _, p := range m.providers {
 			if p.Name() == cur.Name {
 				m.active = p
+				m.resetView()
 				return m.load(p.Name(), nil)
 			}
 		}
 	case provider.KindCloudDisabled:
 		m.status = "coming soon"
 	case provider.KindSubscription:
+		m.resetView()
 		return m.load(cur.Name, &cur)
 	case provider.KindResourceGroup:
+		m.resetView()
 		return m.load(cur.Name, &cur)
 	}
 	return nil
+}
+
+func (m *model) resetView() {
+	m.filter = ""
+	m.search.SetValue("")
+	m.searchMode = false
+	m.search.Blur()
 }
 
 func (m *model) goBack() tea.Cmd {
@@ -202,6 +278,7 @@ func (m *model) goBack() tea.Cmd {
 	if len(m.stack) == 1 {
 		m.active = nil
 	}
+	m.resetView()
 	m.refreshTable()
 	m.status = ""
 	return nil
@@ -246,14 +323,10 @@ func (m *model) load(title string, parent *provider.Node) tea.Cmd {
 }
 
 func (m *model) openPortal() {
-	if m.active == nil || len(m.stack) <= 1 {
+	if m.active == nil || len(m.visibleNodes) == 0 {
 		return
 	}
-	top := m.stack[len(m.stack)-1]
-	if len(top.nodes) == 0 {
-		return
-	}
-	cur := top.nodes[m.table.Cursor()]
+	cur := m.visibleNodes[m.table.Cursor()]
 	url := m.active.PortalURL(cur)
 	if url == "" {
 		return
@@ -279,8 +352,34 @@ func openURL(url string) {
 
 func (m *model) refreshTable() {
 	top := &m.stack[len(m.stack)-1]
+	m.visibleNodes = m.applyView(top.nodes)
 	m.table.SetColumns(columnsFor(top))
-	m.table.SetRows(rowsFor(top))
+	m.table.SetRows(rowsFromNodes(top.title, m.visibleNodes))
+}
+
+func (m *model) applyView(nodes []provider.Node) []provider.Node {
+	out := make([]provider.Node, 0, len(nodes))
+	if m.filter == "" {
+		out = append(out, nodes...)
+	} else {
+		q := strings.ToLower(m.filter)
+		for _, n := range nodes {
+			if strings.Contains(strings.ToLower(n.Name), q) {
+				out = append(out, n)
+			}
+		}
+	}
+	switch m.sort {
+	case sortState:
+		sort.SliceStable(out, func(i, j int) bool { return out[i].State < out[j].State })
+	case sortLocation:
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Location < out[j].Location })
+	default:
+		sort.SliceStable(out, func(i, j int) bool {
+			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		})
+	}
+	return out
 }
 
 func columnsFor(f *frame) []table.Column {
@@ -295,10 +394,10 @@ func columnsFor(f *frame) []table.Column {
 	}
 }
 
-func rowsFor(f *frame) []table.Row {
-	rows := make([]table.Row, 0, len(f.nodes))
-	for _, n := range f.nodes {
-		if f.title == "clouds" {
+func rowsFromNodes(title string, nodes []provider.Node) []table.Row {
+	rows := make([]table.Row, 0, len(nodes))
+	for _, n := range nodes {
+		if title == "clouds" {
 			rows = append(rows, table.Row{n.Name})
 			continue
 		}
@@ -317,6 +416,19 @@ func shorten(s string, n int) string {
 	return s[:n-3] + "..."
 }
 
+func firstErrLine(err error) string {
+	s := err.Error()
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = strings.TrimPrefix(line, "ERROR: ")
+		return line
+	}
+	return s
+}
+
 func (m *model) View() string {
 	if m.showHelp {
 		return m.helpView()
@@ -332,7 +444,13 @@ func (m *model) headerView() string {
 	title := styles.Title.Render("cloudnav")
 	crumbs := strings.Join(breadcrumbs(m.stack), styles.CrumbSep)
 	left := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", styles.Crumb.Render(crumbs))
-	right := styles.Help.Render(currentProvider(m))
+	rightBits := []string{}
+	if m.filter != "" {
+		rightBits = append(rightBits, "filter: "+m.filter)
+	}
+	rightBits = append(rightBits, "sort: "+m.sort.String())
+	rightBits = append(rightBits, currentProvider(m))
+	right := styles.Help.Render(strings.Join(rightBits, "  "))
 	if m.width == 0 {
 		return left + "   " + right
 	}
@@ -359,16 +477,25 @@ func currentProvider(m *model) string {
 }
 
 func (m *model) footerView() string {
+	if m.searchMode {
+		return styles.StatusBar.Render(m.search.View())
+	}
 	if m.loading {
 		return styles.StatusBar.Render(m.spinner.View() + " " + m.status)
 	}
 	if m.err != nil {
-		return styles.StatusBar.Render(styles.Bad.Render("error: " + m.err.Error()))
+		msg := firstErrLine(m.err)
+		budget := m.width - len("error: ") - 2
+		if budget > 10 {
+			msg = shorten(msg, budget)
+		}
+		return styles.StatusBar.Render(styles.Bad.Render("error: ") + msg)
 	}
 	hints := []string{
 		styles.Key.Render("↵") + " open",
 		styles.Key.Render("esc") + " back",
 		styles.Key.Render("/") + " search",
+		styles.Key.Render("s") + " sort",
 		styles.Key.Render("o") + " portal",
 		styles.Key.Render("r") + " refresh",
 		styles.Key.Render("?") + " help",
@@ -391,7 +518,7 @@ func (m *model) helpView() string {
 		"/              search current view",
 		":              command palette",
 		"c              cost column toggle",
-		"s              cycle sort",
+		"s              cycle sort (name / state / location)",
 		"o              open selected in cloud portal",
 		"i              json detail",
 		"p              PIM eligible roles (Azure)",
