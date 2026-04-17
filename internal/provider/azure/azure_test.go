@@ -11,8 +11,8 @@ func TestShortType(t *testing.T) {
 		"Microsoft.Compute/virtualMachines":         "virtualMachines",
 		"Microsoft.Storage/storageAccounts":         "storageAccounts",
 		"Microsoft.Network/virtualNetworks/subnets": "subnets",
-		"plain":                                     "plain",
-		"":                                          "",
+		"plain": "plain",
+		"":      "",
 	}
 	for in, want := range cases {
 		if got := shortType(in); got != want {

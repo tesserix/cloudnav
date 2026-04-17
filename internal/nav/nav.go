@@ -15,8 +15,8 @@ type Stack struct {
 	frames []Frame
 }
 
-func (s *Stack) Push(f Frame)  { s.frames = append(s.frames, f) }
-func (s *Stack) Depth() int    { return len(s.frames) }
+func (s *Stack) Push(f Frame)    { s.frames = append(s.frames, f) }
+func (s *Stack) Depth() int      { return len(s.frames) }
 func (s *Stack) Frames() []Frame { return s.frames }
 
 func (s *Stack) Pop() (Frame, bool) {

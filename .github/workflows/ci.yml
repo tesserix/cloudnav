@@ -23,10 +23,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
-          args: --timeout=3m
+          version: v2.1.6
 
   test:
     name: test (${{ matrix.os }})

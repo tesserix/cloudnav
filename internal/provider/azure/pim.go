@@ -61,12 +61,10 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]PIMRole, error) {
 // TODO: POST /providers/Microsoft.Authorization/roleAssignmentScheduleRequests/{guid}
 // with a body derived from the eligible role — implemented in Phase 1 follow-up.
 func (a *Azure) Activate(_ context.Context, role PIMRole, justification string, durationHours int) error {
+	_ = role
+	_ = durationHours
 	if justification == "" {
 		return fmt.Errorf("justification is required by PIM policy")
 	}
-	if durationHours <= 0 {
-		durationHours = 1
-	}
-	_ = role
 	return fmt.Errorf("PIM activation not yet implemented — read-only listing for now")
 }

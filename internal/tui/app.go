@@ -36,8 +36,10 @@ type frame struct {
 	nodes  []provider.Node
 }
 
-type nodesLoadedMsg struct{ frame frame }
-type errMsg struct{ err error }
+type (
+	nodesLoadedMsg struct{ frame frame }
+	errMsg         struct{ err error }
+)
 
 type model struct {
 	ctx       context.Context
