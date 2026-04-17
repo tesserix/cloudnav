@@ -369,6 +369,13 @@ func (a *Azure) PortalURL(n provider.Node) string {
 func (a *Azure) Details(ctx context.Context, n provider.Node) ([]byte, error) {
 	switch n.Kind {
 	case provider.KindResource, provider.KindResourceGroup:
+		subID := n.Meta["subscriptionId"]
+		if subID == "" {
+			subID = subIDFromScope(n.ID)
+		}
+		if subID != "" {
+			return a.az.Run(ctx, "resource", "show", "--ids", n.ID, "--subscription", subID, "-o", "json")
+		}
 		return a.az.Run(ctx, "resource", "show", "--ids", n.ID, "-o", "json")
 	case provider.KindSubscription:
 		return a.az.Run(ctx, "account", "show", "--subscription", n.ID, "-o", "json")

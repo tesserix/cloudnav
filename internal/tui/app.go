@@ -2110,12 +2110,24 @@ func (m *model) keybar() string {
 		pairs = append(pairs,
 			pair{"L", "lock"},
 			pair{"␣", "select"},
+			pair{"[", "select-all"},
 		)
 		if n := len(m.selected); n > 0 {
 			pairs = append(pairs, pair{"D", fmt.Sprintf("delete %d", n)})
+			pairs = append(pairs, pair{"]", "clear-sel"})
+		}
+	}
+	if m.atResourceLevel() {
+		pairs = append(pairs,
+			pair{"␣", "select"},
+			pair{"[", "select-all"},
+		)
+		if n := len(m.selected); n > 0 {
+			pairs = append(pairs, pair{"]", "clear-sel"})
 		}
 	}
 	pairs = append(pairs,
+		pair{"?", "help"},
 		pair{"r", "refresh"},
 		pair{"esc", "back"},
 		pair{"q", "quit"},
@@ -2506,23 +2518,42 @@ func (m *model) footerView() string {
 
 func (m *model) helpView() string {
 	body := strings.Join([]string{
-		styles.Title.Render("keybindings"),
+		styles.Title.Render("cloudnav keybindings"),
 		"",
-		"↵ / l          drill down",
-		"esc / h        back",
-		"j k / ↑ ↓      move selection",
-		"/              filter current view",
-		":              palette — search any sub/project/account, switch cloud, jump to bookmark",
-		"f              bookmark the current view (persisted)",
-		"c              toggle cost column  (Azure RGs / AWS regions — MoM delta when available)",
-		"s              cycle sort (name / state / location)",
-		"o              open selected in cloud portal",
-		"i              json detail",
-		"p              PIM eligible roles (Azure) — j/k select, a activate, +/- duration",
-		"x              exec provider CLI inside the selected scope",
-		"r              refresh",
-		"?              help",
-		"q / ctrl+c     quit",
+		styles.Header.Render("Navigation"),
+		"  ↵ / l          drill down into the selected row",
+		"  esc / h        go back one level",
+		"  j k / ↑ ↓      move the cursor",
+		"  /              filter the current view",
+		"  :              palette — jump to any sub/project/account, switch cloud, recall bookmark",
+		"  f              bookmark the current view (persisted)",
+		"  r              refresh current view",
+		"",
+		styles.Header.Render("Views"),
+		"  i              show full JSON detail for the selected resource",
+		"  o              open selected in the cloud portal (browser)",
+		"  c              toggle cost column (MoM delta when available)",
+		"  s              cycle sort (name / state / location)",
+		"  t              tenant filter (on subscription view, Azure only)",
+		"",
+		styles.Header.Render("Multi-select (RG and resource views)"),
+		"  ␣  (space)     toggle selection on the cursor row",
+		"  [              select all visible rows",
+		"  ]              clear all selections",
+		"  D              delete every selected resource group (Azure, with confirm)",
+		"  L              toggle lock on the cursor resource group (Azure)",
+		"",
+		styles.Header.Render("PIM (Azure)"),
+		"  p              open PIM eligible roles",
+		"  j / k / ↑ / ↓  move inside PIM list",
+		"  /              filter PIM roles by tenant / sub / role name",
+		"  a or ↵         activate the selected role — justification prompt follows",
+		"  + / -          increase / decrease duration (capped by policy max)",
+		"",
+		styles.Header.Render("Misc"),
+		"  x              exec provider CLI inside the selected scope",
+		"  ?              show / hide this help",
+		"  q / ctrl+c     quit",
 		"",
 		styles.Help.Render("press any key to close"),
 	}, "\n")
