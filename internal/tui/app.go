@@ -830,16 +830,16 @@ func formatSubCost(current, last float64, currency string) string {
 		return base
 	}
 	if last == 0 {
-		return base + " " + styles.CostUp.Render("new")
+		return base + " new"
 	}
 	delta := (current - last) / last * 100
 	switch {
 	case delta > 2:
-		return base + " " + styles.CostUp.Render(fmt.Sprintf("↑%d%%", int(delta+0.5)))
+		return fmt.Sprintf("%s ↑%d%%", base, int(delta+0.5))
 	case delta < -2:
-		return base + " " + styles.CostDown.Render(fmt.Sprintf("↓%d%%", int(-delta+0.5)))
+		return fmt.Sprintf("%s ↓%d%%", base, int(-delta+0.5))
 	default:
-		return base + " " + styles.CostFlat.Render("→")
+		return base + " →"
 	}
 }
 
@@ -1615,6 +1615,7 @@ func selectionMark(selected bool) string {
 	}
 	return "[ ]"
 }
+
 
 const (
 	lockCanNotDelete = "CanNotDelete"

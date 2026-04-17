@@ -159,16 +159,16 @@ func formatCostWithDelta(current, last costCell) string {
 		if current.amount == 0 {
 			return base
 		}
-		return base + " \x1b[1;31mnew\x1b[0m"
+		return base + " new"
 	}
 	delta := (current.amount - last.amount) / last.amount * 100
 	switch {
 	case delta > 2:
-		return fmt.Sprintf("%s \x1b[1;31m↑%d%%\x1b[0m", base, int(math.Round(delta)))
+		return fmt.Sprintf("%s ↑%d%%", base, int(math.Round(delta)))
 	case delta < -2:
-		return fmt.Sprintf("%s \x1b[1;32m↓%d%%\x1b[0m", base, int(math.Round(-delta)))
+		return fmt.Sprintf("%s ↓%d%%", base, int(math.Round(-delta)))
 	default:
-		return base + " \x1b[2;37m→\x1b[0m"
+		return base + " →"
 	}
 }
 
