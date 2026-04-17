@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	colPreTaxCost = "PreTaxCost"
-	colCost       = "Cost"
+	colPreTaxCost   = "PreTaxCost"
+	colCost         = "Cost"
+	colCurrency     = "Currency"
+	timeframeCustom = "Custom"
 )
 
 type costCell struct {
@@ -64,7 +66,7 @@ func (a *Azure) queryRGCosts(ctx context.Context, subID string, from, to *time.T
 		},
 	}
 	if from != nil && to != nil {
-		body["timeframe"] = "Custom"
+		body["timeframe"] = timeframeCustom
 		body["timePeriod"] = map[string]any{
 			"from": from.UTC().Format("2006-01-02T15:04:05Z"),
 			"to":   to.UTC().Format("2006-01-02T15:04:05Z"),
@@ -104,7 +106,7 @@ func parseCostCells(data []byte) (map[string]costCell, error) {
 			costCol = i
 		case "ResourceGroupName", "ResourceGroup":
 			rgCol = i
-		case "Currency":
+		case colCurrency:
 			currencyCol = i
 		}
 	}

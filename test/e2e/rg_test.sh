@@ -30,13 +30,13 @@ assert_contains "RG view keybar exposes <␣> select" "<␣> select" "$view"
 
 send " "; sleep 0.3
 view=$(grab)
-assert_contains "space toggles selection marker (●)" "●" "$view"
+assert_contains "space toggles selection marker [x]" "[x]" "$view"
 assert_regex   "keybar updates to show delete count" '<D>[[:space:]]*delete[[:space:]]+[0-9]+' "$view"
 
 send "]"; sleep 0.5
 view=$(grab)
-if echo "$view" | grep -Fq '●'; then
-  fail "] clears selection" "still shows ● marker after ]"
+if echo "$view" | grep -Fq '[x]'; then
+  fail "] clears selection" "still shows [x] marker after ]"
 else
   pass "] clears the selection"
 fi

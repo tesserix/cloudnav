@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	keyEsc   = "esc"
-	keyEnter = "enter"
-	keyUp    = "up"
-	keyDown  = "down"
+	keyEsc           = "esc"
+	keyEnter         = "enter"
+	keyUp            = "up"
+	keyDown          = "down"
+	statusCostCached = "cost column on (cached)"
 )
 
 func Run() error {
@@ -669,6 +670,9 @@ func (m *model) toggleCost() tea.Cmd {
 	if kindOf(&m.stack[len(m.stack)-1]) == provider.KindSubscription {
 		return m.loadSubscriptionCosts()
 	}
+	if m.atResourceLevel() {
+		return m.loadResourceCosts()
+	}
 	coster, ok := m.active.(provider.Coster)
 	if !ok {
 		m.status = m.active.Name() + ": costs not supported yet"
@@ -677,7 +681,7 @@ func (m *model) toggleCost() tea.Cmd {
 	}
 	if _, cached := m.costs[scope.ID]; cached {
 		m.refreshTable()
-		m.status = "cost column on (cached)"
+		m.status = statusCostCached
 		return nil
 	}
 	m.loading = true
@@ -696,6 +700,48 @@ func (m *model) toggleCost() tea.Cmd {
 	)
 }
 
+func (m *model) loadResourceCosts() tea.Cmd {
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		m.status = m.active.Name() + ": per-resource cost is Azure-only for now"
+		m.refreshTable()
+		return nil
+	}
+	top := &m.stack[len(m.stack)-1]
+	if top.parent == nil || top.parent.Kind != provider.KindResourceGroup {
+		return nil
+	}
+	rg := top.parent.Name
+	subID := top.parent.Meta["subscriptionId"]
+	if subID == "" && top.parent.Parent != nil {
+		subID = top.parent.Parent.ID
+	}
+	if subID == "" {
+		m.status = "resource cost: missing subscription context"
+		m.refreshTable()
+		return nil
+	}
+	cacheKey := "res:" + subID + "/" + rg
+	if _, cached := m.costs[cacheKey]; cached {
+		m.refreshTable()
+		m.status = statusCostCached
+		return nil
+	}
+	m.loading = true
+	m.status = fmt.Sprintf("loading resource cost for %s...", rg)
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			costs, err := az.ResourceCosts(ctx, subID, rg)
+			if err != nil {
+				return errMsg{err}
+			}
+			return costsLoadedMsg{parentID: cacheKey, costs: costs}
+		},
+	)
+}
+
 func (m *model) loadSubscriptionCosts() tea.Cmd {
 	az, ok := m.active.(*azure.Azure)
 	if !ok {
@@ -705,7 +751,7 @@ func (m *model) loadSubscriptionCosts() tea.Cmd {
 	}
 	if _, cached := m.costs["__azure_subs__"]; cached {
 		m.refreshTable()
-		m.status = "cost column on (cached)"
+		m.status = statusCostCached
 		return nil
 	}
 	top := m.stack[len(m.stack)-1]
@@ -785,6 +831,10 @@ func (m *model) costScope() (provider.Node, bool) {
 		return provider.Node{ID: "__azure_subs__", Kind: provider.KindCloud}, true
 	case provider.KindResourceGroup:
 		if top.parent != nil && top.parent.Kind == provider.KindSubscription {
+			return *top.parent, true
+		}
+	case provider.KindResource:
+		if top.parent != nil && top.parent.Kind == provider.KindResourceGroup {
 			return *top.parent, true
 		}
 	case provider.KindRegion:
@@ -1320,11 +1370,16 @@ func (m *model) columnsFor(f *frame) []table.Column {
 		}
 		return cols
 	case provider.KindResource:
-		return []table.Column{
-			{Title: "NAME", Width: 48},
-			{Title: "TYPE", Width: 36},
-			{Title: "LOCATION", Width: 20},
+		cols := []table.Column{
+			{Title: " ", Width: 4},
+			{Title: "NAME", Width: 44},
+			{Title: "TYPE", Width: 34},
+			{Title: "LOCATION", Width: 16},
 		}
+		if m.showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
+		}
+		return cols
 	default:
 		return []table.Column{{Title: "NAME", Width: 80}}
 	}
@@ -1371,18 +1426,18 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
-			marker := " "
-			if m.selected[n.ID] {
-				marker = "●"
-			}
 			lock := lockBadgePlain(m.rgLockLevel(n.Name))
-			row := table.Row{marker, n.Name, n.Location, n.State, lock}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
-			rows = append(rows, table.Row{n.Name, n.Meta["type"], n.Location})
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location}
+			if m.showCost {
+				row = append(row, costOrDash(n.Cost))
+			}
+			rows = append(rows, row)
 		default:
 			rows = append(rows, table.Row{n.Name})
 		}
@@ -1401,6 +1456,14 @@ func (m *model) mergeCosts(f *frame) {
 	case provider.KindResourceGroup:
 		if f.parent != nil {
 			costs = m.costs[f.parent.ID]
+		}
+	case provider.KindResource:
+		if f.parent != nil && f.parent.Parent != nil {
+			subID := f.parent.Meta["subscriptionId"]
+			if subID == "" {
+				subID = f.parent.Parent.ID
+			}
+			costs = m.costs["res:"+subID+"/"+f.parent.Name]
 		}
 	case provider.KindRegion:
 		if f.parent != nil {
@@ -1437,6 +1500,13 @@ func costOrDash(c string) string {
 		return "—"
 	}
 	return c
+}
+
+func selectionMark(selected bool) string {
+	if selected {
+		return "[x]"
+	}
+	return "[ ]"
 }
 
 const (
@@ -1733,6 +1803,14 @@ func (m *model) atRGLevel() bool {
 	}
 	top := &m.stack[len(m.stack)-1]
 	return kindOf(top) == provider.KindResourceGroup
+}
+
+func (m *model) atResourceLevel() bool {
+	if len(m.stack) == 0 {
+		return false
+	}
+	top := &m.stack[len(m.stack)-1]
+	return kindOf(top) == provider.KindResource
 }
 
 func (m *model) currentSubID() string {

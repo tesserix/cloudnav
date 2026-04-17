@@ -101,7 +101,7 @@ func (a *Azure) querySubTotal(ctx context.Context, subID string, from, to *time.
 		},
 	}
 	if from != nil && to != nil {
-		body["timeframe"] = "Custom"
+		body["timeframe"] = timeframeCustom
 		body["timePeriod"] = map[string]any{
 			"from": from.UTC().Format("2006-01-02T15:04:05Z"),
 			"to":   to.UTC().Format("2006-01-02T15:04:05Z"),
@@ -139,7 +139,7 @@ func parseSubTotal(data []byte) (costCell, error) {
 		switch c.Name {
 		case colPreTaxCost, colCost:
 			costCol = i
-		case "Currency":
+		case colCurrency:
 			currencyCol = i
 		}
 	}
