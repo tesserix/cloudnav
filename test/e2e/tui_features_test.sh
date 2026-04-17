@@ -17,14 +17,17 @@ grab() { tmux capture-pane -t "$SESSION" -p; }
 send() { tmux send-keys -t "$SESSION" "$@"; }
 stop()  { tmux send-keys -t "$SESSION" q 2>/dev/null || true; sleep 0.5; tmux kill-session -t "$SESSION" 2>/dev/null || true; }
 
-# search filter on subs view
+# search filter on subs view — search input replaces footer while typing
 start
 send Enter; sleep 10
 send "/"; sleep 0.3
 send "Platform-Prod"; sleep 1
 view=$(grab)
-assert_contains "/ filter shows 'filter: Platform-Prod'" "filter: Platform-Prod" "$view"
-assert_regex   "/ filter count updates (X/165)" '[0-9]+/[0-9]+' "$view"
+assert_contains "/ shows search input prompt" "/ Platform-Prod" "$view"
+send Enter; sleep 0.5
+view=$(grab)
+assert_contains "exiting search leaves 'filter: Platform-Prod' in footer" "filter: Platform-Prod" "$view"
+assert_regex   "footer shows filtered count (X/Y)" '[0-9]+/[0-9]+' "$view"
 stop
 
 # sort cycle s
@@ -32,10 +35,10 @@ start
 send Enter; sleep 10
 send s; sleep 0.3
 view=$(grab)
-assert_contains "s cycles to sort: state" "sort: state" "$view"
+assert_contains "s cycles to 'sort state' in keybar" "sort state" "$view"
 send s; sleep 0.3
 view=$(grab)
-assert_contains "s cycles to sort: location" "sort: location" "$view"
+assert_contains "s cycles to 'sort location' in keybar" "sort location" "$view"
 stop
 
 # drill to RGs + cost column (c) — cost runs 2 REST calls, can take 40s+
@@ -43,8 +46,8 @@ start
 send Enter; sleep 10
 send "/"; sleep 0.3
 send "Platform-Prod"; sleep 0.8
-send Enter; sleep 0.5  # close search keeping filter
-send Enter; sleep 8    # drill into sub
+send Enter; sleep 0.5   # close search keeping filter
+send Enter; sleep 12    # drill into sub
 view=$(grab)
 assert_contains "drill reaches Platform-Prod RGs" "clouds › azure › Platform-Prod" "$view"
 send c; sleep 45
@@ -65,8 +68,8 @@ stop
 # detail view (i)
 start
 send Enter; sleep 10
-send Enter; sleep 8
-send i; sleep 4
+send Enter; sleep 12
+send i; sleep 6
 view=$(grab)
 assert_contains "i detail view opens with detail breadcrumb" "detail ›" "$view"
 assert_regex   "detail body renders JSON braces" '[{}]' "$view"
@@ -81,7 +84,7 @@ send Enter; sleep 10
 send "/"; sleep 0.3
 send "Platform-Prod"; sleep 0.8
 send Enter; sleep 0.5
-send Enter; sleep 8
+send Enter; sleep 12
 send f; sleep 0.5
 view=$(grab)
 assert_regex "f saves a bookmark (status ★)" 'bookmarked.*Platform-Prod' "$view"

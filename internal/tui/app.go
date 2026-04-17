@@ -149,15 +149,15 @@ func newModel() *model {
 	)
 	ts := table.DefaultStyles()
 	ts.Header = ts.Header.
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(styles.Subtle).
-		BorderBottom(true).
+		BorderStyle(lipgloss.Border{}).
 		Bold(true).
-		Foreground(styles.Fg)
+		Foreground(styles.Fg).
+		Padding(0, 1)
 	ts.Selected = ts.Selected.
 		Background(styles.Purple).
 		Foreground(lipgloss.Color("#ffffff")).
 		Bold(true)
+	ts.Cell = ts.Cell.Padding(0, 1)
 	t.SetStyles(ts)
 
 	ti := textinput.New()
@@ -225,12 +225,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if w := msg.Width - 2; w > 0 {
+		if w := msg.Width; w > 0 {
 			m.table.SetWidth(w)
 			m.search.Width = w - 4
 			m.detail.Width = w
 		}
-		if h := msg.Height - 4; h > 0 {
+		// 2 header lines + 1 blank + 1 footer = 4 rows of chrome
+		if h := msg.Height - 5; h > 0 {
 			m.table.SetHeight(h)
 			m.detail.Height = h
 		}
@@ -1426,33 +1427,42 @@ func (m *model) detailFooter() string {
 }
 
 func (m *model) headerView() string {
-	title := styles.Title.Render("cloudnav")
-	crumbs := strings.Join(breadcrumbs(m.stack), styles.CrumbSep)
-	left := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", styles.Crumb.Render(crumbs))
-	rightBits := []string{}
-	if len(m.stack) > 0 {
-		total := len(m.stack[len(m.stack)-1].nodes)
-		shown := len(m.visibleNodes)
-		if m.filter != "" && shown != total {
-			rightBits = append(rightBits, fmt.Sprintf("%d/%d", shown, total))
-		} else {
-			rightBits = append(rightBits, fmt.Sprintf("%d", total))
-		}
-	}
-	if m.filter != "" {
-		rightBits = append(rightBits, "filter: "+m.filter)
-	}
-	rightBits = append(rightBits, "sort: "+m.sort.String())
-	rightBits = append(rightBits, currentProvider(m))
-	right := styles.Help.Render(strings.Join(rightBits, "  "))
+	path := []string{styles.Title.Render("cloudnav")}
+	path = append(path, breadcrumbs(m.stack)...)
+	crumb := strings.Join(path, styles.CrumbSep)
+	right := styles.Help.Render("^_^")
 	if m.width == 0 {
-		return left + "   " + right
+		return crumb + "   " + right + "\n" + m.keybar() + "\n"
 	}
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	gap := m.width - lipgloss.Width(crumb) - lipgloss.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	return left + strings.Repeat(" ", gap) + right
+	top := crumb + strings.Repeat(" ", gap) + right
+	return top + "\n" + m.keybar() + "\n"
+}
+
+func (m *model) keybar() string {
+	type pair struct{ key, action string }
+	pairs := []pair{
+		{"↵", "drill"},
+		{"/", "search"},
+		{":", "palette"},
+		{"f", "flag"},
+		{"p", "PIM"},
+		{"i", "info"},
+		{"o", "portal"},
+		{"c", "costs"},
+		{"s", "sort " + m.sort.String()},
+		{"r", "refresh"},
+		{"esc", "back"},
+		{"q", "quit"},
+	}
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, styles.Key.Render("<"+p.key+">")+" "+styles.Help.Render(p.action))
+	}
+	return "  " + strings.Join(parts, "  ")
 }
 
 func breadcrumbs(stack []frame) []string {
@@ -1463,19 +1473,12 @@ func breadcrumbs(stack []frame) []string {
 	return out
 }
 
-func currentProvider(m *model) string {
-	if m.active == nil {
-		return "—"
-	}
-	return m.active.Name()
-}
-
 func (m *model) footerView() string {
 	if m.searchMode {
-		return styles.StatusBar.Render(m.search.View())
+		return " " + m.search.View()
 	}
 	if m.loading {
-		return styles.StatusBar.Render(m.spinner.View() + " " + m.status)
+		return " " + m.spinner.View() + " " + styles.Help.Render(m.status)
 	}
 	if m.err != nil {
 		msg := firstErrLine(m.err)
@@ -1483,23 +1486,19 @@ func (m *model) footerView() string {
 		if budget > 10 {
 			msg = shorten(msg, budget)
 		}
-		return styles.StatusBar.Render(styles.Bad.Render("error: ") + msg)
+		return " " + styles.Bad.Render("error: ") + msg
 	}
-	hints := []string{
-		styles.Key.Render("↵") + " open",
-		styles.Key.Render("esc") + " back",
-		styles.Key.Render("/") + " search",
-		styles.Key.Render("s") + " sort",
-		styles.Key.Render("o") + " portal",
-		styles.Key.Render("r") + " refresh",
-		styles.Key.Render("?") + " help",
-		styles.Key.Render("q") + " quit",
+	right := ""
+	if m.filter != "" && len(m.stack) > 0 {
+		total := len(m.stack[len(m.stack)-1].nodes)
+		shown := len(m.visibleNodes)
+		right = fmt.Sprintf("filter: %s  %d/%d", m.filter, shown, total)
+	} else if m.status != "" {
+		right = m.status
+	} else if len(m.stack) > 0 {
+		right = fmt.Sprintf("%d items", len(m.stack[len(m.stack)-1].nodes))
 	}
-	line := strings.Join(hints, "  ")
-	if m.status != "" {
-		line += "   " + styles.Help.Render(m.status)
-	}
-	return styles.StatusBar.Render(line)
+	return " " + styles.Help.Render(right)
 }
 
 func (m *model) helpView() string {

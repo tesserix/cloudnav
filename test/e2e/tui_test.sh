@@ -25,7 +25,7 @@ home=$(grab)
 assert_contains "TUI home lists azure" "azure" "$home"
 assert_contains "TUI home lists gcp" "gcp" "$home"
 assert_contains "TUI home lists aws" "aws" "$home"
-assert_contains "TUI home shows 'sort: name' in header" "sort: name" "$home"
+assert_contains "TUI home shows sort keybinding" "sort name" "$home"
 
 # T2: help overlay opens
 send "?"; sleep 0.5

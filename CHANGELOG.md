@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-04-17
+
+### Changed
+- TUI layout redesigned to match the cleaner aznav-style chrome:
+  - Line 1: `cloudnav › clouds › azure › <sub>` breadcrumb on the left, compact `^_^` marker on the right.
+  - Line 2: discoverable keybar — `<↵> drill  </> search  <:> palette  <f> flag  <p> PIM  <i> info  <o> portal  <c> costs  <s> sort name  <r> refresh  <esc> back  <q> quit`.
+  - Table body is now borderless with padded cells, so rows feel spacious and the purple cursor row stands out.
+  - Footer is a single quiet line that surfaces only what's contextual: search input while typing, `filter: X  n/total` when filtered, spinner while loading, or item count when idle.
+- Sort mode now surfaces inline on the `<s>` key in the keybar (`<s> sort name / state / location`) instead of being tucked in the corner.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.1
+
 ## [0.5.0] — 2026-04-17
 
 Advisor reports, multi-cloud VM control, richer cost tables, and a shell-based e2e harness.
@@ -24,7 +37,6 @@ Advisor reports, multi-cloud VM control, richer cost tables, and a shell-based e
 - Palette overflow with >150 entities: view now picks a scroll window around the cursor and shows "N more above/below" breadcrumbs so cloud switchers stay visible.
 - Provider CLI timeouts lifted from 30s: Azure 2m, AWS 2m, GCP 3m — `gcloud asset search-all-resources` was being killed on large projects.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.0
 
 ## [0.4.0] — 2026-04-17
