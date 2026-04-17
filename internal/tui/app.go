@@ -513,6 +513,14 @@ func columnsFor(f *frame) []table.Column {
 	if f.title == "clouds" {
 		return []table.Column{{Title: "CLOUD", Width: 40}}
 	}
+	if kindOf(f) == provider.KindSubscription {
+		return []table.Column{
+			{Title: "NAME", Width: 40},
+			{Title: "TENANT", Width: 12},
+			{Title: "STATE", Width: 12},
+			{Title: "ID", Width: 40},
+		}
+	}
 	return []table.Column{
 		{Title: "NAME", Width: 44},
 		{Title: "LOCATION", Width: 16},
@@ -521,16 +529,33 @@ func columnsFor(f *frame) []table.Column {
 	}
 }
 
+func kindOf(f *frame) provider.Kind {
+	if len(f.nodes) > 0 {
+		return f.nodes[0].Kind
+	}
+	return ""
+}
+
 func rowsFromNodes(title string, nodes []provider.Node) []table.Row {
 	rows := make([]table.Row, 0, len(nodes))
 	for _, n := range nodes {
-		if title == "clouds" {
+		switch {
+		case title == "clouds":
 			rows = append(rows, table.Row{n.Name})
-			continue
+		case n.Kind == provider.KindSubscription:
+			rows = append(rows, table.Row{n.Name, shortID(n.Meta["tenantId"]), n.State, shorten(n.ID, 40)})
+		default:
+			rows = append(rows, table.Row{n.Name, n.Location, n.State, shorten(n.ID, 50)})
 		}
-		rows = append(rows, table.Row{n.Name, n.Location, n.State, shorten(n.ID, 50)})
 	}
 	return rows
+}
+
+func shortID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 func shorten(s string, n int) string {
