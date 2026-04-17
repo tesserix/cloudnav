@@ -272,7 +272,62 @@ func (a *Azure) resourceGroups(ctx context.Context, sub provider.Node) ([]provid
 	if err != nil {
 		return nil, err
 	}
-	return parseRGs(out, sub)
+	nodes, err := parseRGs(out, sub)
+	if err != nil {
+		return nil, err
+	}
+	created := a.rgCreatedTimes(ctx, sub.ID)
+	for i := range nodes {
+		if t, ok := created[strings.ToLower(nodes[i].Name)]; ok && t != "" {
+			nodes[i].Meta["createdTime"] = t
+		}
+	}
+	return nodes, nil
+}
+
+// rgCreatedTimes asks Azure Resource Graph for createdTime of every RG in a
+// subscription in one round trip. Best-effort: if the graph extension is
+// missing or the user lacks permission the map comes back empty and RG rows
+// render "—" for the creation column.
+func (a *Azure) rgCreatedTimes(ctx context.Context, subID string) map[string]string {
+	q := "resourcecontainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | " +
+		"project name = tolower(name), createdTime = tostring(properties.createdTime)"
+	out, err := a.az.Run(ctx,
+		"graph", "query",
+		"-q", q,
+		"--subscriptions", subID,
+		"--first", "1000",
+		"-o", "json",
+	)
+	if err != nil {
+		return map[string]string{}
+	}
+	var env struct {
+		Data []struct {
+			Name        string `json:"name"`
+			CreatedTime string `json:"createdTime"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		// Older CLI versions return a bare array.
+		var flat []struct {
+			Name        string `json:"name"`
+			CreatedTime string `json:"createdTime"`
+		}
+		if err2 := json.Unmarshal(out, &flat); err2 != nil {
+			return map[string]string{}
+		}
+		m := make(map[string]string, len(flat))
+		for _, r := range flat {
+			m[r.Name] = r.CreatedTime
+		}
+		return m
+	}
+	m := make(map[string]string, len(env.Data))
+	for _, r := range env.Data {
+		m[r.Name] = r.CreatedTime
+	}
+	return m
 }
 
 func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
@@ -300,10 +355,12 @@ func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
 }
 
 type resJSON struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Location string `json:"location"`
-	Type     string `json:"type"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Location    string `json:"location"`
+	Type        string `json:"type"`
+	CreatedTime string `json:"createdTime"`
+	ChangedTime string `json:"changedTime"`
 }
 
 func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Node, error) {
@@ -314,10 +371,13 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 	if subID == "" {
 		return nil, fmt.Errorf("azure: resource group %q has no subscription context", rg.Name)
 	}
+	// $expand=createdTime,changedTime surfaces per-resource audit timestamps
+	// that ARM doesn't return by default.
 	out, err := a.az.Run(ctx,
 		"resource", "list",
 		"--resource-group", rg.Name,
 		"--subscription", subID,
+		"--expand", "createdTime,changedTime",
 		"-o", "json",
 	)
 	if err != nil {
@@ -334,6 +394,17 @@ func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Nod
 	nodes := make([]provider.Node, 0, len(items))
 	parent := rg
 	for _, r := range items {
+		meta := map[string]string{
+			"type":           r.Type,
+			"tenantId":       rg.Meta["tenantId"],
+			"subscriptionId": subID,
+		}
+		if r.CreatedTime != "" {
+			meta["createdTime"] = r.CreatedTime
+		}
+		if r.ChangedTime != "" {
+			meta["changedTime"] = r.ChangedTime
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ID,
 			Name:     r.Name,
@@ -341,11 +412,7 @@ func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Nod
 			Location: r.Location,
 			State:    shortType(r.Type),
 			Parent:   &parent,
-			Meta: map[string]string{
-				"type":           r.Type,
-				"tenantId":       rg.Meta["tenantId"],
-				"subscriptionId": subID,
-			},
+			Meta:     meta,
 		})
 	}
 	return nodes, nil

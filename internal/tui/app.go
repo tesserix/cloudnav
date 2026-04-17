@@ -67,7 +67,13 @@ type (
 		provider string
 		nodes    []provider.Node
 	}
-	pimLoadedMsg    struct{ roles []provider.PIMRole }
+	pimLoadedMsg struct{ roles []provider.PIMRole }
+
+	advisorLoadedMsg struct {
+		recs      []azure.Recommendation
+		scope     string
+		scopeName string
+	}
 	pimActivatedMsg struct {
 		role      string
 		roleID    string
@@ -158,6 +164,11 @@ type model struct {
 	pimFilterOn  bool
 	pimFilterIn  textinput.Model
 	pimDuration  int
+	advisorMode  bool
+	advisorRecs  []azure.Recommendation
+	advisorScope string
+	advisorName  string
+	advisorIdx   int
 	width        int
 	height       int
 	keys         keys.Map
@@ -277,6 +288,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pimMode {
 			return m.updatePIM(msg)
 		}
+		if m.advisorMode {
+			return m.updateAdvisor(msg)
+		}
 		if m.detailMode {
 			if msg.String() == keyEsc || msg.String() == "q" {
 				m.detailMode = false
@@ -340,6 +354,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadDetail()
 		case key.Matches(msg, m.keys.PIM):
 			return m, m.loadPIM()
+		case key.Matches(msg, m.keys.Advisor):
+			return m, m.loadAdvisor()
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -439,6 +455,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pimActivate = false
 		m.syncPIMDurationToPolicy()
 		m.status = fmt.Sprintf("%d eligible role assignment(s)", len(msg.roles))
+		return m, nil
+
+	case advisorLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.advisorRecs = msg.recs
+		m.advisorScope = msg.scope
+		m.advisorName = msg.scopeName
+		m.advisorIdx = 0
+		m.advisorMode = true
+		m.status = fmt.Sprintf("%d advisor recommendation(s) for %s", len(msg.recs), msg.scopeName)
 		return m, nil
 
 	case pimActivatedMsg:
@@ -1148,6 +1175,111 @@ func (m *model) loadDetail() tea.Cmd {
 	)
 }
 
+// loadAdvisor fetches Azure Advisor recommendations for the subscription that
+// contains the cursor row, filters them to the current scope (sub / RG /
+// resource) so the user only sees what applies to what they're looking at,
+// and opens the advisor overlay.
+func (m *model) loadAdvisor() tea.Cmd {
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		m.status = "advisor is Azure-only for now"
+		return nil
+	}
+	subID, rgName, resourceID, displayName := m.advisorTarget()
+	if subID == "" {
+		m.status = "advisor needs a subscription / RG / resource scope — drill in first"
+		return nil
+	}
+	m.loading = true
+	m.status = "loading Azure Advisor recommendations..."
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			recs, err := az.Recommendations(ctx, subID)
+			if err != nil {
+				return errMsg{err}
+			}
+			scope := "/subscriptions/" + subID
+			if rgName != "" {
+				scope += "/resourceGroups/" + rgName
+			}
+			if resourceID != "" {
+				scope = resourceID
+			}
+			filtered := filterAdvisorByScope(recs, scope)
+			return advisorLoadedMsg{recs: filtered, scope: scope, scopeName: displayName}
+		},
+	)
+}
+
+func filterAdvisorByScope(recs []azure.Recommendation, scope string) []azure.Recommendation {
+	scopeLow := strings.ToLower(scope)
+	out := make([]azure.Recommendation, 0, len(recs))
+	for _, r := range recs {
+		target := strings.ToLower(r.ResourceID)
+		if target == "" || strings.HasPrefix(target, scopeLow) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// advisorTarget returns the (subID, rgName, resourceID, display) tuple for
+// the cursor's current scope.
+func (m *model) advisorTarget() (string, string, string, string) {
+	if len(m.stack) == 0 {
+		return "", "", "", ""
+	}
+	top := &m.stack[len(m.stack)-1]
+	c := m.table.Cursor()
+	var cursor *provider.Node
+	if c >= 0 && c < len(m.visibleNodes) {
+		cursor = &m.visibleNodes[c]
+	}
+	switch kindOf(top) {
+	case provider.KindSubscription:
+		if cursor != nil {
+			return cursor.ID, "", "", cursor.Name
+		}
+	case provider.KindResourceGroup:
+		if cursor != nil {
+			sub := cursor.Meta["subscriptionId"]
+			return sub, cursor.Name, "", cursor.Name
+		}
+		if top.parent != nil {
+			return top.parent.ID, "", "", top.parent.Name
+		}
+	case provider.KindResource:
+		if cursor != nil {
+			sub := cursor.Meta["subscriptionId"]
+			return sub, parentRGName(cursor.ID), cursor.ID, cursor.Name
+		}
+		if top.parent != nil {
+			sub := top.parent.Meta["subscriptionId"]
+			if sub == "" && top.parent.Parent != nil {
+				sub = top.parent.Parent.ID
+			}
+			return sub, top.parent.Name, "", top.parent.Name
+		}
+	}
+	return "", "", "", ""
+}
+
+// parentRGName pulls the RG name out of a full Azure resource ID.
+func parentRGName(id string) string {
+	const marker = "/resourceGroups/"
+	i := strings.Index(id, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := id[i+len(marker):]
+	if j := strings.Index(rest, "/"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
 func (m *model) loadPIM() tea.Cmd {
 	if m.active == nil {
 		m.status = "enter a cloud first (↵ on a cloud row) before requesting PIM roles"
@@ -1609,10 +1741,11 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResourceGroup:
 		cols := []table.Column{
 			{Title: " ", Width: 3},
-			{Title: "NAME", Width: 44},
-			{Title: "LOCATION", Width: 16},
-			{Title: "STATE", Width: 12},
-			{Title: "LOCK", Width: 16},
+			{Title: "NAME", Width: 40},
+			{Title: "LOCATION", Width: 14},
+			{Title: "STATE", Width: 10},
+			{Title: "LOCK", Width: 14},
+			{Title: "CREATED", Width: 12},
 		}
 		if m.showCost {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
@@ -1621,9 +1754,10 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResource:
 		cols := []table.Column{
 			{Title: " ", Width: 4},
-			{Title: "NAME", Width: 40},
-			{Title: "TYPE", Width: 30},
-			{Title: "LOCATION", Width: 14},
+			{Title: "NAME", Width: 36},
+			{Title: "TYPE", Width: 28},
+			{Title: "LOCATION", Width: 12},
+			{Title: "CREATED", Width: 12},
 		}
 		if f.aggregated {
 			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: 32})
@@ -1679,13 +1813,13 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
 			lock := lockBadgePlain(m.rgLockLevel(n.Name))
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock, shortDate(n.Meta["createdTime"])}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"])}
 			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
 				row = append(row, n.Meta["originRG"])
 			}
@@ -1766,6 +1900,21 @@ func costOrDash(c string) string {
 	return c
 }
 
+// shortDate renders an ISO-8601 timestamp as "2026-01-15" for the audit
+// column. Empty or unparseable input falls back to an em-dash.
+func shortDate(iso string) string {
+	if iso == "" {
+		return "—"
+	}
+	if t, err := time.Parse(time.RFC3339, iso); err == nil {
+		return t.Format("2006-01-02")
+	}
+	if len(iso) >= 10 {
+		return iso[:10]
+	}
+	return "—"
+}
+
 func selectionMark(selected bool) string {
 	if selected {
 		return "[x]"
@@ -1819,6 +1968,9 @@ func (m *model) View() string {
 	if m.pimMode {
 		return m.pimView()
 	}
+	if m.advisorMode {
+		return m.advisorView()
+	}
 	if m.paletteMode {
 		return m.paletteView()
 	}
@@ -1838,6 +1990,144 @@ func (m *model) View() string {
 		body,
 		m.footerView(),
 	)
+}
+
+func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc, "q", "A":
+		m.advisorMode = false
+		m.status = ""
+		return m, nil
+	case keyUp, "k":
+		if m.advisorIdx > 0 {
+			m.advisorIdx--
+		}
+		return m, nil
+	case keyDown, "j":
+		if m.advisorIdx < len(m.advisorRecs)-1 {
+			m.advisorIdx++
+		}
+		return m, nil
+	case "o":
+		if m.advisorIdx >= 0 && m.advisorIdx < len(m.advisorRecs) {
+			go openURL("https://portal.azure.com/#blade/Microsoft_Azure_Expert/AdvisorMenuBlade/overview")
+			m.status = "opened Advisor in portal"
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *model) advisorView() string {
+	header := styles.Title.Render("Azure Advisor") + "  " +
+		styles.Help.Render(fmt.Sprintf("%d recommendation(s) for %s", len(m.advisorRecs), m.advisorName))
+	if len(m.advisorRecs) == 0 {
+		return styles.Box.Render(strings.Join([]string{
+			header,
+			"",
+			"No recommendations at this scope.",
+			"",
+			styles.Help.Render("Advisor generates cost / security / reliability / performance tips."),
+			styles.Help.Render("Drill further and press A again, or check the full Advisor in the portal."),
+			"",
+			styles.Help.Render("esc close   o open Advisor in portal"),
+		}, "\n"))
+	}
+
+	lines := []string{header, ""}
+	// Render the list on top, full detail for the cursor row below.
+	max := len(m.advisorRecs)
+	if max > 14 {
+		max = 14
+	}
+	start := 0
+	if m.advisorIdx >= max {
+		start = m.advisorIdx - max + 1
+	}
+	for i := start; i < start+max && i < len(m.advisorRecs); i++ {
+		r := m.advisorRecs[i]
+		marker := "  "
+		if i == m.advisorIdx {
+			marker = "> "
+		}
+		line := fmt.Sprintf("%s%s  %s  %s  %s",
+			marker,
+			padRight(categoryBadge(r.Category), 14),
+			padRight(impactBadge(r.Impact), 10),
+			padRight(shortTail(r.ResourceID, 40), 40),
+			shorten(r.Problem, 60),
+		)
+		if i == m.advisorIdx {
+			line = styles.Selected.Render(line)
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "")
+
+	if m.advisorIdx >= 0 && m.advisorIdx < len(m.advisorRecs) {
+		r := m.advisorRecs[m.advisorIdx]
+		lines = append(lines,
+			styles.Header.Render("Details"),
+			"Category: "+categoryBadge(r.Category)+"   Impact: "+impactBadge(r.Impact),
+			"Target:   "+r.ResourceID,
+			"Problem:  "+r.Problem,
+			"Solution: "+r.Solution,
+		)
+		if r.LastUpdated != "" {
+			lines = append(lines, "Updated:  "+shortDate(r.LastUpdated))
+		}
+	}
+	lines = append(lines, "", styles.Help.Render("↑↓/jk move   o portal   esc/A close"))
+	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+func categoryBadge(c string) string {
+	switch strings.ToLower(c) {
+	case "cost":
+		return styles.Cost.Render("Cost")
+	case "security":
+		return styles.Bad.Render("Security")
+	case "reliability", "highavailability", "high availability":
+		return styles.WarnS.Render("Reliability")
+	case "performance":
+		return styles.AccentS.Render("Performance")
+	case "operationalexcellence", "operational excellence":
+		return styles.Help.Render("OpsExcellence")
+	default:
+		return c
+	}
+}
+
+func impactBadge(i string) string {
+	switch strings.ToLower(i) {
+	case "high":
+		return styles.Bad.Render("HIGH")
+	case "medium":
+		return styles.WarnS.Render("MED")
+	case "low":
+		return styles.Help.Render("low")
+	default:
+		return i
+	}
+}
+
+// padRight pads s with spaces so the *visible* width equals n. Uses
+// lipgloss.Width so ANSI-styled strings measure correctly.
+func padRight(s string, n int) string {
+	w := lipgloss.Width(s)
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
+// shortTail returns the last n characters so long resource IDs keep the
+// meaningful segment (resource name) rather than the subscription prefix.
+func shortTail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n+1:]
 }
 
 func (m *model) pimView() string {
@@ -2094,6 +2384,7 @@ func (m *model) keybar() string {
 		{":", "palette"},
 		{"f", "flag"},
 		{"p", "PIM"},
+		{"A", "advisor"},
 		{"i", "info"},
 		{"o", "portal"},
 		{"c", "costs"},
@@ -2542,6 +2833,10 @@ func (m *model) helpView() string {
 		"  ]              clear all selections",
 		"  D              delete every selected resource group (Azure, with confirm)",
 		"  L              toggle lock on the cursor resource group (Azure)",
+		"",
+		styles.Header.Render("Advisor (Azure)"),
+		"  A              open Azure Advisor for the cursor scope (sub / RG / resource)",
+		"                 — cost, security, reliability, performance and ops-excellence tips",
 		"",
 		styles.Header.Render("PIM (Azure)"),
 		"  p              open PIM eligible roles",

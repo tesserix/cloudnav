@@ -14,6 +14,7 @@ type Map struct {
 	Portal    key.Binding
 	Detail    key.Binding
 	PIM       key.Binding
+	Advisor   key.Binding
 	Exec      key.Binding
 	Refresh   key.Binding
 	Sort      key.Binding
@@ -40,6 +41,7 @@ func Default() Map {
 		Portal:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "portal")),
 		Detail:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 		PIM:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "PIM")),
+		Advisor:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "advisor")),
 		Exec:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "exec")),
 		Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),

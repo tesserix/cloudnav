@@ -26,6 +26,8 @@ var (
 	Cost      = lipgloss.NewStyle().Foreground(Accent)
 	Bad       = lipgloss.NewStyle().Foreground(Err)
 	Good      = lipgloss.NewStyle().Foreground(Green)
+	WarnS     = lipgloss.NewStyle().Foreground(Warn)
+	AccentS   = lipgloss.NewStyle().Foreground(Accent)
 	StatusBar = lipgloss.NewStyle().Background(Subtle).Foreground(Fg).Padding(0, 1)
 	Box       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Subtle).Padding(1, 2)
 	Selected  = lipgloss.NewStyle().Background(Purple).Foreground(lipgloss.Color("#ffffff")).Bold(true)
