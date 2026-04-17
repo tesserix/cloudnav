@@ -1,6 +1,7 @@
 package azure
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -258,13 +259,36 @@ func (a *Azure) ActivateRole(ctx context.Context, role provider.PIMRole, justifi
 		"https://management.azure.com%s/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/%s?api-version=2020-10-01",
 		role.Scope, guid,
 	)
-	_, err = a.az.Run(ctx,
-		"rest",
-		"--method", "PUT",
-		"--url", url,
-		"--body", string(raw),
-	)
-	return err
+	subID := subIDFromScope(role.Scope)
+	if subID != "" {
+		if _, err := a.putJSONForSub(ctx, subID, url, raw); err != nil {
+			return err
+		}
+		return nil
+	}
+	// Management-group or tenant-root scope: fall back to az rest using the
+	// role's own tenant context.
+	client := &http.Client{Timeout: 60 * time.Second}
+	token, err := a.tenantToken(ctx, role.TenantID)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body2, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PIM activate %s -> %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body2)))
+	}
+	return nil
 }
 
 // fetchPolicyMaxes resolves the activation-hour cap for every unique

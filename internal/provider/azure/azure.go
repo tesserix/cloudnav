@@ -2,9 +2,12 @@
 package azure
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +19,10 @@ import (
 type Azure struct {
 	az *cli.Runner
 
-	mu      sync.RWMutex
-	tenants map[string]string // tenantId → displayName
-	subs    map[string]string // subscriptionId → name
+	mu         sync.RWMutex
+	tenants    map[string]string // tenantId → displayName
+	subs       map[string]string // subscriptionId → name
+	subTenants map[string]string // subscriptionId → tenantId
 }
 
 func New() *Azure {
@@ -43,9 +47,44 @@ func (a *Azure) subName(id string) string {
 	return a.subs[id]
 }
 
+// tenantForSub returns the tenantId a subscription belongs to. Falls back to
+// the active az context tenant when unknown.
+func (a *Azure) tenantForSub(ctx context.Context, subID string) string {
+	a.mu.RLock()
+	t := a.subTenants[subID]
+	a.mu.RUnlock()
+	if t != "" {
+		return t
+	}
+	// Lazy lookup: ask az directly for this subscription.
+	out, err := a.az.Run(ctx, "account", "show", "--subscription", subID, "-o", "json")
+	if err != nil {
+		return ""
+	}
+	var s subJSON
+	if err := json.Unmarshal(out, &s); err != nil {
+		return ""
+	}
+	if s.TenantID != "" {
+		a.mu.Lock()
+		if a.subTenants == nil {
+			a.subTenants = map[string]string{}
+		}
+		a.subTenants[subID] = s.TenantID
+		a.mu.Unlock()
+	}
+	return s.TenantID
+}
+
 func (a *Azure) putSubs(m map[string]string) {
 	a.mu.Lock()
 	a.subs = m
+	a.mu.Unlock()
+}
+
+func (a *Azure) putSubTenants(m map[string]string) {
+	a.mu.Lock()
+	a.subTenants = m
 	a.mu.Unlock()
 }
 
@@ -84,6 +123,59 @@ func (a *Azure) LoggedIn(ctx context.Context) error {
 	return err
 }
 
+// doTenantRequest sends a Management API call using a bearer token scoped to
+// the subscription's home tenant. This avoids the "wrong tenant context"
+// failures that `az rest` hits on cross-tenant subscriptions (e.g. a Prod
+// login querying a DevTest cost or advisor endpoint).
+func (a *Azure) doTenantRequest(ctx context.Context, subID, method, url string, body []byte) ([]byte, error) {
+	tid := a.tenantForSub(ctx, subID)
+	if tid == "" {
+		return nil, fmt.Errorf("azure: could not resolve tenant for subscription %s — run 'az account list' to check access", subID)
+	}
+	token, err := a.tenantToken(ctx, tid)
+	if err != nil {
+		return nil, fmt.Errorf("azure: tenant %s not authenticated — run 'az login --tenant %s' and retry (%w)", tid, tid, err)
+	}
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("azure: %s %s -> %d: %s", method, url, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return b, nil
+}
+
+func (a *Azure) postJSONForSub(ctx context.Context, subID, url string, body []byte) ([]byte, error) {
+	return a.doTenantRequest(ctx, subID, http.MethodPost, url, body)
+}
+
+func (a *Azure) getJSONForSub(ctx context.Context, subID, url string) ([]byte, error) {
+	return a.doTenantRequest(ctx, subID, http.MethodGet, url, nil)
+}
+
+func (a *Azure) putJSONForSub(ctx context.Context, subID, url string, body []byte) ([]byte, error) {
+	return a.doTenantRequest(ctx, subID, http.MethodPut, url, body)
+}
+
 type subJSON struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -105,13 +197,18 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 		return nil, err
 	}
 	subCache := make(map[string]string, len(nodes))
+	tenantCache := make(map[string]string, len(nodes))
 	for i := range nodes {
 		subCache[nodes[i].ID] = nodes[i].Name
+		if t := nodes[i].Meta["tenantId"]; t != "" {
+			tenantCache[nodes[i].ID] = t
+		}
 		if name := a.tenantName(nodes[i].Meta["tenantId"]); name != "" {
 			nodes[i].Meta["tenantName"] = name
 		}
 	}
 	a.putSubs(subCache)
+	a.putSubTenants(tenantCache)
 	return nodes, nil
 }
 

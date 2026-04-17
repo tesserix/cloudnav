@@ -61,7 +61,7 @@ func (a *Azure) queryResourceCosts(ctx context.Context, subID, rg string, from, 
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
 		subID, rg,
 	)
-	out, err := a.az.Run(ctx, "rest", "--method", "POST", "--url", url, "--body", string(raw))
+	out, err := a.postJSONForSub(ctx, subID, url, raw)
 	if err != nil {
 		return nil, err
 	}

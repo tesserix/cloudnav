@@ -115,7 +115,7 @@ func (a *Azure) querySubTotal(ctx context.Context, subID string, from, to *time.
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
 		subID,
 	)
-	out, err := a.az.Run(ctx, "rest", "--method", "POST", "--url", url, "--body", string(raw))
+	out, err := a.postJSONForSub(ctx, subID, url, raw)
 	if err != nil {
 		return costCell{}, err
 	}

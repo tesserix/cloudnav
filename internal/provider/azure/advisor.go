@@ -21,7 +21,7 @@ func (a *Azure) Recommendations(ctx context.Context, subID string) ([]Recommenda
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Advisor/recommendations?api-version=2023-01-01",
 		subID,
 	)
-	out, err := a.az.Run(ctx, "rest", "--method", "GET", "--url", url)
+	out, err := a.getJSONForSub(ctx, subID, url)
 	if err != nil {
 		return nil, fmt.Errorf("azure advisor: %w", err)
 	}
