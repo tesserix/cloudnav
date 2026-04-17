@@ -1336,25 +1336,58 @@ func (m *model) pimView() string {
 }
 
 func (m *model) paletteView() string {
+	window := 15
+	if m.height > 10 {
+		window = m.height - 8
+	}
+	if window < 5 {
+		window = 5
+	}
+	start := 0
+	if len(m.paletteItems) > window {
+		start = m.paletteIdx - window/2
+		if start < 0 {
+			start = 0
+		}
+		if start+window > len(m.paletteItems) {
+			start = len(m.paletteItems) - window
+		}
+	}
+	end := start + window
+	if end > len(m.paletteItems) {
+		end = len(m.paletteItems)
+	}
+
+	counter := fmt.Sprintf("%d items", len(m.paletteItems))
+	if len(m.paletteItems) > window {
+		counter = fmt.Sprintf("%d–%d of %d", start+1, end, len(m.paletteItems))
+	}
 	lines := []string{
-		styles.Title.Render("palette") + "  " + styles.Help.Render(fmt.Sprintf("%d items", len(m.paletteItems))),
+		styles.Title.Render("palette") + "  " + styles.Help.Render(counter),
 		"",
 		m.paletteInput.View(),
 		"",
 	}
-	for i, it := range m.paletteItems {
+	if start > 0 {
+		lines = append(lines, styles.Help.Render("  ↑ "+fmt.Sprintf("%d more above", start)))
+	}
+	for i := start; i < end; i++ {
+		it := m.paletteItems[i]
 		line := "  " + it.label
 		if i == m.paletteIdx {
 			line = styles.Selected.Render("> " + it.label)
 		}
 		lines = append(lines, line)
 	}
+	if end < len(m.paletteItems) {
+		lines = append(lines, styles.Help.Render("  ↓ "+fmt.Sprintf("%d more below", len(m.paletteItems)-end)))
+	}
 	if len(m.paletteItems) == 0 {
 		lines = append(lines, styles.Help.Render("  no matches"))
 	}
 	lines = append(lines,
 		"",
-		styles.Help.Render("↑↓ nav  ↵ select  esc close"),
+		styles.Help.Render("↑↓ nav  ↵ select  esc close  (type to filter)"),
 	)
 	return styles.Box.Render(strings.Join(lines, "\n"))
 }

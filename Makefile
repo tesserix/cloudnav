@@ -31,6 +31,9 @@ doctor: build
 test: ## Run unit tests
 	go test -race -count=1 ./...
 
+test-e2e: build ## Run end-to-end CLI + TUI tests against live cloud sessions
+	./test/e2e/run.sh
+
 lint: ## Run golangci-lint
 	golangci-lint run ./...
 
