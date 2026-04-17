@@ -589,15 +589,18 @@ func (m *model) toggleCost() tea.Cmd {
 		m.refreshTable()
 		return nil
 	}
-	coster, ok := m.active.(provider.Coster)
-	if !ok {
-		m.status = m.active.Name() + ": costs not supported yet"
-		m.refreshTable()
-		return nil
-	}
 	scope, ok := m.costScope()
 	if !ok {
 		m.status = m.costHint()
+		m.refreshTable()
+		return nil
+	}
+	if kindOf(&m.stack[len(m.stack)-1]) == provider.KindSubscription {
+		return m.loadSubscriptionCosts()
+	}
+	coster, ok := m.active.(provider.Coster)
+	if !ok {
+		m.status = m.active.Name() + ": costs not supported yet"
 		m.refreshTable()
 		return nil
 	}
@@ -622,9 +625,93 @@ func (m *model) toggleCost() tea.Cmd {
 	)
 }
 
+func (m *model) loadSubscriptionCosts() tea.Cmd {
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		m.status = m.active.Name() + ": subscription-level costs are Azure-only for now"
+		m.refreshTable()
+		return nil
+	}
+	if _, cached := m.costs["__azure_subs__"]; cached {
+		m.refreshTable()
+		m.status = "cost column on (cached)"
+		return nil
+	}
+	top := m.stack[len(m.stack)-1]
+	ids := make([]string, 0, len(top.nodes))
+	for _, n := range top.nodes {
+		ids = append(ids, n.ID)
+	}
+	m.loading = true
+	m.status = fmt.Sprintf("loading cost for %d subscription(s)...", len(ids))
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			subCosts, _ := az.SubscriptionCosts(ctx, ids)
+			out := make(map[string]string, len(subCosts))
+			for _, c := range subCosts {
+				if c.Error != "" {
+					out[strings.ToLower(c.SubscriptionID)] = styles.Help.Render(c.Error)
+					continue
+				}
+				out[strings.ToLower(c.SubscriptionID)] = formatSubCost(c.Current, c.LastMonth, c.Currency)
+			}
+			return costsLoadedMsg{parentID: "__azure_subs__", costs: out}
+		},
+	)
+}
+
+func formatSubCost(current, last float64, currency string) string {
+	base := formatAmount(current, currency)
+	if last == 0 && current == 0 {
+		return base
+	}
+	if last == 0 {
+		return base + " " + styles.CostUp.Render("new")
+	}
+	delta := (current - last) / last * 100
+	switch {
+	case delta > 2:
+		return base + " " + styles.CostUp.Render(fmt.Sprintf("↑%d%%", int(delta+0.5)))
+	case delta < -2:
+		return base + " " + styles.CostDown.Render(fmt.Sprintf("↓%d%%", int(-delta+0.5)))
+	default:
+		return base + " " + styles.CostFlat.Render("→")
+	}
+}
+
+func formatAmount(amount float64, currency string) string {
+	symbol := currencyChar(currency)
+	return fmt.Sprintf("%s%.2f", symbol, amount)
+}
+
+func currencyChar(code string) string {
+	switch strings.ToUpper(code) {
+	case "USD", "":
+		return "$"
+	case "GBP":
+		return "£"
+	case "EUR":
+		return "€"
+	case "INR":
+		return "₹"
+	case "JPY":
+		return "¥"
+	case "AUD":
+		return "A$"
+	case "CAD":
+		return "C$"
+	default:
+		return code + " "
+	}
+}
+
 func (m *model) costScope() (provider.Node, bool) {
 	top := &m.stack[len(m.stack)-1]
 	switch kindOf(top) {
+	case provider.KindSubscription:
+		return provider.Node{ID: "__azure_subs__", Kind: provider.KindCloud}, true
 	case provider.KindResourceGroup:
 		if top.parent != nil && top.parent.Kind == provider.KindSubscription {
 			return *top.parent, true
@@ -1096,12 +1183,16 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindCloud, provider.KindCloudDisabled:
 		return []table.Column{{Title: "CLOUD", Width: 40}}
 	case provider.KindSubscription:
-		return []table.Column{
-			{Title: "NAME", Width: 44},
-			{Title: "TENANT", Width: 24},
-			{Title: "STATE", Width: 12},
-			{Title: "ID", Width: 40},
+		cols := []table.Column{
+			{Title: "NAME", Width: 40},
+			{Title: "TENANT", Width: 22},
+			{Title: "STATE", Width: 10},
+			{Title: "ID", Width: 38},
 		}
+		if m.showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 22})
+		}
+		return cols
 	case provider.KindProject:
 		cols := []table.Column{
 			{Title: "NAME", Width: 40},
@@ -1170,7 +1261,11 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			if tenant == "" {
 				tenant = shortID(n.Meta["tenantId"])
 			}
-			rows = append(rows, table.Row{n.Name, tenant, n.State, shorten(n.ID, 40)})
+			row := table.Row{n.Name, tenant, n.State, shorten(n.ID, 38)}
+			if m.showCost {
+				row = append(row, costOrDash(n.Cost))
+			}
+			rows = append(rows, row)
 		case provider.KindProject:
 			row := table.Row{n.Name, n.ID, n.State}
 			if m.showCost {
@@ -1206,6 +1301,8 @@ func (m *model) mergeCosts(f *frame) {
 	}
 	var costs map[string]string
 	switch kindOf(f) {
+	case provider.KindSubscription:
+		costs = m.costs["__azure_subs__"]
 	case provider.KindResourceGroup:
 		if f.parent != nil {
 			costs = m.costs[f.parent.ID]
@@ -1214,12 +1311,6 @@ func (m *model) mergeCosts(f *frame) {
 		if f.parent != nil {
 			costs = m.costs[f.parent.ID]
 		}
-		for i, n := range m.visibleNodes {
-			if c, ok := costs[strings.ToLower(n.Name)]; ok {
-				m.visibleNodes[i].Cost = c
-			}
-		}
-		return
 	case provider.KindProject:
 		costs = m.costs["gcp"]
 	}
@@ -1227,11 +1318,14 @@ func (m *model) mergeCosts(f *frame) {
 		return
 	}
 	for i, n := range m.visibleNodes {
-		key := strings.ToLower(n.Name)
-		if c, ok := costs[key]; ok {
-			m.visibleNodes[i].Cost = c
-		} else if c, ok := costs[strings.ToLower(n.ID)]; ok {
-			m.visibleNodes[i].Cost = c
+		for _, key := range []string{
+			strings.ToLower(n.ID),
+			strings.ToLower(n.Name),
+		} {
+			if c, ok := costs[key]; ok {
+				m.visibleNodes[i].Cost = c
+				break
+			}
 		}
 	}
 }
@@ -1400,11 +1494,37 @@ func (m *model) paletteView() string {
 
 func (m *model) emptyBody() string {
 	msg := "  no items here"
-	if m.filter != "" {
-		msg = fmt.Sprintf("  no matches for %q  (esc to clear filter)", m.filter)
-	}
-	if len(m.stack) > 0 && m.err == nil && len(m.stack[len(m.stack)-1].nodes) == 0 {
-		msg = "  empty — drill back with esc and try another path"
+	if m.filter != "" || m.tenantFilter != "" {
+		parts := []string{}
+		if m.filter != "" {
+			parts = append(parts, fmt.Sprintf("filter %q", m.filter))
+		}
+		if m.tenantFilter != "" {
+			parts = append(parts, fmt.Sprintf("tenant %q", m.tenantFilter))
+		}
+		msg = "  no matches for " + strings.Join(parts, " + ") + "  (esc to clear)"
+	} else if len(m.stack) > 0 && m.err == nil && len(m.stack[len(m.stack)-1].nodes) == 0 {
+		top := &m.stack[len(m.stack)-1]
+		switch kindOf(top) {
+		case provider.KindResource:
+			if top.parent != nil {
+				msg = fmt.Sprintf("  no resources inside %q — the resource group is empty", top.parent.Name)
+			} else {
+				msg = "  no resources found"
+			}
+		case provider.KindResourceGroup:
+			msg = "  no resource groups in this subscription"
+		case provider.KindRegion:
+			msg = "  no active regions"
+		case provider.KindSubscription:
+			msg = "  no subscriptions visible — check `az login` or try a different tenant"
+		case provider.KindProject:
+			msg = "  no projects visible — check `gcloud auth login` and your org access"
+		case provider.KindAccount:
+			msg = "  no AWS account visible — check `aws configure` or SSO session"
+		default:
+			msg = "  empty at this level — drill back with esc"
+		}
 	}
 	return styles.Help.Render("\n"+msg) + "\n"
 }

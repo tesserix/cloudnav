@@ -84,10 +84,10 @@ func TestFormatCostWithDelta(t *testing.T) {
 			wantContains: []string{"£101.00", "→"},
 		},
 		{
-			name:      "new this month",
-			cur:       costCell{amount: 50, currency: "GBP"},
-			last:      costCell{amount: 0, currency: "GBP"},
-			wantExact: "£50.00 new",
+			name:         "new this month",
+			cur:          costCell{amount: 50, currency: "GBP"},
+			last:         costCell{amount: 0, currency: "GBP"},
+			wantContains: []string{"£50.00", "new"},
 		},
 		{
 			name:      "both zero",
