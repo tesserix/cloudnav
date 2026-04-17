@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Initial scaffold: Cobra CLI, Bubbletea TUI, Azure provider wrapping `az`.
-- `doctor` and `version` subcommands.
-- Navigation through Azure tenants → subscriptions → resource groups → resources.
-- Portal handoff (`o`), CLI exec in context (`x`), PIM listing (`p`).
-- GoReleaser with Homebrew tap, multi-arch builds, CodeQL, dependabot.
+## [0.1.0] — 2026-04-17
 
-[Unreleased]: https://github.com/tesserix/cloudnav/commits/main
+First public release.
+
+### Added
+- Cobra CLI: `cloudnav` (TUI), `doctor`, `version`, `ls`, `completion`.
+- Bubbletea TUI with full Azure navigation: clouds → subscriptions → resource groups → resources, cursor, breadcrumbs, help overlay, empty-state and filtered-count indicators.
+- Fuzzy search (`/`), three sort modes (`s`: name / state / location), portal handoff (`o`), scrollable JSON detail (`i`), exec-in-context shell (`x`), PIM eligible-roles listing (`p`), refresh (`r`).
+- Tenant and subscription display-name resolution via `az rest /tenants`, caching, and meta enrichment.
+- Non-interactive mode: stdin/stdout TTY detection falls back to a guided error with `doctor` / `ls --json` hints.
+- Apache-2.0 licensed OSS layout: README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, ROADMAP, issue/PR templates.
+- CI (lint + test matrix) with golangci-lint v2.1.6, CodeQL, dependabot.
+- GoReleaser multi-arch release pipeline (darwin/linux amd64/arm64, windows amd64) with SBOM and Homebrew formula auto-published to `tesserix/homebrew-tap`.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.1.0
