@@ -1336,12 +1336,12 @@ func (m *model) pimView() string {
 }
 
 func (m *model) paletteView() string {
-	window := 15
-	if m.height > 10 {
-		window = m.height - 8
+	window := 10
+	if m.height > 14 {
+		window = m.height - 12
 	}
-	if window < 5 {
-		window = 5
+	if window < 4 {
+		window = 4
 	}
 	start := 0
 	if len(m.paletteItems) > window {

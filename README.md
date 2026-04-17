@@ -21,6 +21,17 @@ A fast, keyboard-driven multi-cloud navigator. One TUI for **Azure**, **GCP**, a
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Read-only by default
+
+cloudnav is a **navigator**, not an orchestrator. Every command is read-only
+unless it's explicitly documented as mutating and requires `--yes`:
+
+- `vm start` / `vm stop` — start/stop VMs (opt-in mutation, `--yes` required).
+- `pim activate` — requests time-bound role elevation via the cloud's own PIM/SSO/JIT surface. This *changes IAM state* but doesn't create resources.
+
+Nothing else writes — not `ls`, `cost`, `advisor`, `doctor`, the TUI, or
+anything in the palette.
+
 ## Why
 
 Jumping between `az`, `gcloud`, `aws`, the three web portals, and half a dozen cost dashboards wastes minutes every time. `cloudnav` puts it all behind one keyboard-first TUI:

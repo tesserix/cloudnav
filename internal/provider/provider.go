@@ -72,3 +72,22 @@ type PIMer interface {
 type Coster interface {
 	Costs(ctx context.Context, parent Node) (map[string]string, error)
 }
+
+// VM is a provider-agnostic view of a compute instance.
+type VM struct {
+	ID       string
+	Name     string
+	State    string
+	Type     string
+	Location string
+	Meta     map[string]string
+}
+
+// VMOps is the capability implemented by providers that can read or control
+// VMs / EC2 / Compute Engine instances.
+type VMOps interface {
+	ListVMs(ctx context.Context, scope Node) ([]VM, error)
+	ShowVM(ctx context.Context, id, scope string) ([]byte, error)
+	StartVM(ctx context.Context, id, scope string) error
+	StopVM(ctx context.Context, id, scope string) error
+}

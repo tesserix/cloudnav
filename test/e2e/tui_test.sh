@@ -39,7 +39,7 @@ stop_cn
 
 # T4: palette opens and preloads entities from all clouds
 start_cn
-send ":"; sleep 8
+send ":"; sleep 12
 pal=$(grab)
 assert_contains "palette opens on :" "palette" "$pal"
 assert_contains "palette shows cloud switcher for azure" "switch to azure" "$pal"

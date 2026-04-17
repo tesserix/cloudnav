@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-04-17
+
+Advisor reports, multi-cloud VM control, richer cost tables, and a shell-based e2e harness.
+
+### Added
+- **`cloudnav advisor --subscription <id>`** — Azure Advisor recommendations in a table, sortable by impact (High/Medium/Low), filterable by `--category Cost|Security|HighAvailability|Performance|OperationalExcellence`.
+- **`cloudnav vm list|show|start|stop`** — multi-cloud VM control:
+  - `list` across Azure (sub/RG scope), GCP (project scope), AWS (region scope) with `--state` filter.
+  - `show` dumps the full cloud-native describe JSON.
+  - `start`/`stop` accept multiple IDs and **require `--yes`** to proceed. Pre-flight refuses the operation otherwise.
+- **`cloudnav cost subs|rgs|regions|services`** — read-only cost reports with MoM delta, sorted desc by spend, tabwriter-aligned columns, `--json` everywhere. Azure sub-level query runs 8-way parallel and flags subs where you lack Cost Management Reader.
+- **`test/e2e/`** — tmux-driven shell harness covering every CLI verb + TUI drill flows (67 assertions). `make test-e2e`.
+
+### Fixed
+- Palette overflow with >150 entities: view now picks a scroll window around the cursor and shows "N more above/below" breadcrumbs so cloud switchers stay visible.
+- Provider CLI timeouts lifted from 30s: Azure 2m, AWS 2m, GCP 3m — `gcloud asset search-all-resources` was being killed on large projects.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.0
+
 ## [0.4.0] — 2026-04-17
 
 JIT / elevation story rounded out for all three clouds, plus multi-cloud `pim` CLI.
@@ -20,7 +40,6 @@ JIT / elevation story rounded out for all three clouds, plus multi-cloud `pim` C
 ### Fixed
 - Nothing regressed — all earlier keybindings / CLI verbs run green on the full smoke suite.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.4.0
 
 ## [0.3.0] — 2026-04-17

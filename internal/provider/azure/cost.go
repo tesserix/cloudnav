@@ -11,6 +11,11 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
+const (
+	colPreTaxCost = "PreTaxCost"
+	colCost       = "Cost"
+)
+
 type costCell struct {
 	amount   float64
 	currency string
@@ -95,7 +100,7 @@ func parseCostCells(data []byte) (map[string]costCell, error) {
 	costCol, rgCol, currencyCol := -1, -1, -1
 	for i, c := range envelope.Properties.Columns {
 		switch c.Name {
-		case "PreTaxCost", "Cost":
+		case colPreTaxCost, colCost:
 			costCol = i
 		case "ResourceGroupName", "ResourceGroup":
 			rgCol = i

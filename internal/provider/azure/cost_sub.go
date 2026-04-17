@@ -137,7 +137,7 @@ func parseSubTotal(data []byte) (costCell, error) {
 	costCol, currencyCol := -1, -1
 	for i, c := range env.Properties.Columns {
 		switch c.Name {
-		case "PreTaxCost", "Cost":
+		case colPreTaxCost, colCost:
 			costCol = i
 		case "Currency":
 			currencyCol = i
