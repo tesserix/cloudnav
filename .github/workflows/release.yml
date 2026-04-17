@@ -27,7 +27,7 @@ jobs:
       - name: Install syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
           args: release --clean
