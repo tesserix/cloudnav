@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/tesserix/cloudnav/internal/cli"
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -15,7 +16,9 @@ type AWS struct {
 }
 
 func New() *AWS {
-	return &AWS{aws: cli.New("aws")}
+	r := cli.New("aws")
+	r.Timeout = 2 * time.Minute
+	return &AWS{aws: r}
 }
 
 func (a *AWS) Name() string { return "aws" }

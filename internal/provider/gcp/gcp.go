@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/tesserix/cloudnav/internal/cli"
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -16,7 +17,9 @@ type GCP struct {
 }
 
 func New() *GCP {
-	return &GCP{gcloud: cli.New("gcloud")}
+	r := cli.New("gcloud")
+	r.Timeout = 3 * time.Minute
+	return &GCP{gcloud: r}
 }
 
 func (g *GCP) Name() string { return "gcp" }

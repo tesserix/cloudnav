@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tesserix/cloudnav/internal/cli"
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -21,7 +22,9 @@ type Azure struct {
 }
 
 func New() *Azure {
-	return &Azure{az: cli.New("az")}
+	r := cli.New("az")
+	r.Timeout = 2 * time.Minute
+	return &Azure{az: r}
 }
 
 func (a *Azure) Name() string { return "azure" }
