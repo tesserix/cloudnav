@@ -47,9 +47,10 @@ func Run() error {
 }
 
 type frame struct {
-	title  string
-	parent *provider.Node
-	nodes  []provider.Node
+	title      string
+	parent     *provider.Node
+	nodes      []provider.Node
+	aggregated bool // multi-RG resources view
 }
 
 type (
@@ -221,6 +222,7 @@ func newModel() *model {
 		selected:     map[string]bool{},
 		keys:         keys.Default(),
 		table:        t,
+		showCost:     true,
 	}
 	m.pushHome()
 	return m
@@ -351,6 +353,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		if cmd := m.maybeLoadLocks(msg.frame); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		if cmd := m.maybeAutoLoadCost(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		if len(cmds) == 0 {
@@ -700,6 +705,46 @@ func (m *model) toggleCost() tea.Cmd {
 	)
 }
 
+func (m *model) loadAggregatedCost(top *frame) tea.Cmd {
+	az, ok := m.active.(*azure.Azure)
+	if !ok {
+		return nil
+	}
+	rgs := map[string]bool{}
+	for _, n := range top.nodes {
+		rgs[n.Meta["originRG"]] = true
+	}
+	cacheKey := "agg:" + top.title
+	if _, cached := m.costs[cacheKey]; cached {
+		return nil
+	}
+	// Find subscription — use one node's meta.
+	subID := ""
+	for _, n := range top.nodes {
+		if s := n.Meta["subscriptionId"]; s != "" {
+			subID = s
+			break
+		}
+	}
+	if subID == "" {
+		return nil
+	}
+	ctx := m.ctx
+	return func() tea.Msg {
+		merged := map[string]string{}
+		for rg := range rgs {
+			out, err := az.ResourceCosts(ctx, subID, rg)
+			if err != nil {
+				continue
+			}
+			for k, v := range out {
+				merged[k] = v
+			}
+		}
+		return costsLoadedMsg{parentID: cacheKey, costs: merged}
+	}
+}
+
 func (m *model) loadResourceCosts() tea.Cmd {
 	az, ok := m.active.(*azure.Azure)
 	if !ok {
@@ -923,6 +968,9 @@ func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) drillDown() tea.Cmd {
+	if m.atRGLevel() && len(m.selected) > 0 {
+		return m.drillAggregated()
+	}
 	c := m.table.Cursor()
 	if c < 0 || c >= len(m.visibleNodes) {
 		return nil
@@ -948,6 +996,47 @@ func (m *model) drillDown() tea.Cmd {
 		return m.load(cur.Name, &cur)
 	}
 	return nil
+}
+
+func (m *model) drillAggregated() tea.Cmd {
+	selected := make([]provider.Node, 0, len(m.selected))
+	for _, n := range m.visibleNodes {
+		if m.selected[n.ID] {
+			selected = append(selected, n)
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	prov := m.active
+	ctx := m.ctx
+	m.loading = true
+	m.status = fmt.Sprintf("loading resources across %d resource group(s)...", len(selected))
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			var combined []provider.Node
+			for _, rg := range selected {
+				rg := rg
+				nodes, err := prov.Children(ctx, rg)
+				if err != nil {
+					continue
+				}
+				for i := range nodes {
+					if nodes[i].Meta == nil {
+						nodes[i].Meta = map[string]string{}
+					}
+					nodes[i].Meta["originRG"] = rg.Name
+				}
+				combined = append(combined, nodes...)
+			}
+			return nodesLoadedMsg{frame: frame{
+				title:      fmt.Sprintf("%d resource group(s)", len(selected)),
+				nodes:      combined,
+				aggregated: true,
+			}}
+		},
+	)
 }
 
 func (m *model) resetView() {
@@ -1247,13 +1336,15 @@ func openURL(url string) {
 }
 
 func (m *model) refreshTable() {
+	// Remember cursor across the SetRows(nil)/SetColumns/SetRows dance — the
+	// intermediate SetRows(nil) can reset bubbles/table's cursor to -1, which
+	// would snap the user back to the top on every refresh (e.g. space-select).
+	prev := m.table.Cursor()
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
 	m.mergeCosts(top)
 	cols := m.columnsFor(top)
 	rows := m.rowsFromNodes(top.title, m.visibleNodes)
-	// Pad/truncate each row to exactly len(cols) cells so bubbles/table's
-	// renderRow never indexes past m.cols (the panic we chased before).
 	normalized := make([]table.Row, len(rows))
 	for i, r := range rows {
 		nr := make(table.Row, len(cols))
@@ -1267,14 +1358,15 @@ func (m *model) refreshTable() {
 	m.table.SetRows(nil)
 	m.table.SetColumns(cols)
 	m.table.SetRows(normalized)
-	c := m.table.Cursor()
 	switch {
 	case len(m.visibleNodes) == 0:
 		m.table.SetCursor(0)
-	case c < 0:
+	case prev < 0:
 		m.table.SetCursor(0)
-	case c >= len(m.visibleNodes):
+	case prev >= len(m.visibleNodes):
 		m.table.SetCursor(len(m.visibleNodes) - 1)
+	default:
+		m.table.SetCursor(prev)
 	}
 }
 
@@ -1372,9 +1464,12 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResource:
 		cols := []table.Column{
 			{Title: " ", Width: 4},
-			{Title: "NAME", Width: 44},
-			{Title: "TYPE", Width: 34},
-			{Title: "LOCATION", Width: 16},
+			{Title: "NAME", Width: 40},
+			{Title: "TYPE", Width: 30},
+			{Title: "LOCATION", Width: 14},
+		}
+		if f.aggregated {
+			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: 32})
 		}
 		if m.showCost {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
@@ -1434,6 +1529,9 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			rows = append(rows, row)
 		case provider.KindResource:
 			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location}
+			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
+				row = append(row, n.Meta["originRG"])
+			}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
@@ -1450,6 +1548,15 @@ func (m *model) mergeCosts(f *frame) {
 		return
 	}
 	var costs map[string]string
+	if f.aggregated {
+		costs = m.costs["agg:"+f.title]
+		for i, n := range m.visibleNodes {
+			if c, ok := costs[strings.ToLower(n.ID)]; ok {
+				m.visibleNodes[i].Cost = c
+			}
+		}
+		return
+	}
 	switch kindOf(f) {
 	case provider.KindSubscription:
 		costs = m.costs["__azure_subs__"]
@@ -1841,6 +1948,75 @@ func (m *model) currentSubID() string {
 		return ""
 	}
 	return top.parent.ID
+}
+
+func (m *model) maybeAutoLoadCost() tea.Cmd {
+	if !m.showCost {
+		return nil
+	}
+	if len(m.stack) == 0 {
+		return nil
+	}
+	top := &m.stack[len(m.stack)-1]
+	if top.aggregated {
+		return m.loadAggregatedCost(top)
+	}
+	scope, ok := m.costScope()
+	if !ok {
+		return nil
+	}
+	cacheKey := scope.ID
+	if m.atResourceLevel() && scope.Kind == provider.KindResourceGroup {
+		subID := scope.Meta["subscriptionId"]
+		if subID == "" && scope.Parent != nil {
+			subID = scope.Parent.ID
+		}
+		if subID == "" {
+			return nil
+		}
+		cacheKey = "res:" + subID + "/" + scope.Name
+	}
+	if m.atSubscriptionLevel() {
+		cacheKey = "__azure_subs__"
+	}
+	if m.atRGLevel() && scope.Kind == provider.KindSubscription {
+		cacheKey = scope.ID
+	}
+	if _, cached := m.costs[cacheKey]; cached {
+		return nil
+	}
+	return m.toggleCostInner()
+}
+
+// toggleCostInner fires the same load paths as the <c> keybinding without
+// flipping the showCost flag.
+func (m *model) toggleCostInner() tea.Cmd {
+	if m.atSubscriptionLevel() {
+		return m.loadSubscriptionCosts()
+	}
+	if m.atResourceLevel() {
+		return m.loadResourceCosts()
+	}
+	coster, ok := m.active.(provider.Coster)
+	if !ok {
+		return nil
+	}
+	scope, ok := m.costScope()
+	if !ok {
+		return nil
+	}
+	if _, cached := m.costs[scope.ID]; cached {
+		return nil
+	}
+	ctx := m.ctx
+	scopeID := scope.ID
+	return func() tea.Msg {
+		costs, err := coster.Costs(ctx, scope)
+		if err != nil {
+			return costsLoadedMsg{parentID: scopeID, costs: nil}
+		}
+		return costsLoadedMsg{parentID: scopeID, costs: costs}
+	}
 }
 
 func (m *model) maybeLoadLocks(f frame) tea.Cmd {
