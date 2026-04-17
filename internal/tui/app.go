@@ -34,6 +34,8 @@ import (
 const (
 	keyEsc   = "esc"
 	keyEnter = "enter"
+	keyUp    = "up"
+	keyDown  = "down"
 )
 
 func Run() error {
@@ -537,12 +539,12 @@ func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.paletteMode = false
 		m.paletteInput.Blur()
 		return m, nil
-	case "up":
+	case keyUp:
 		if m.paletteIdx > 0 {
 			m.paletteIdx--
 		}
 		return m, nil
-	case "down":
+	case keyDown:
 		if m.paletteIdx < len(m.paletteItems)-1 {
 			m.paletteIdx++
 		}
@@ -858,6 +860,10 @@ func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchMode = false
 		m.search.Blur()
 		return m, nil
+	case keyUp, keyDown, "pgup", "pgdown", "home", "end":
+		var cmd tea.Cmd
+		m.table, cmd = m.table.Update(msg)
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.search, cmd = m.search.Update(msg)
