@@ -56,6 +56,10 @@ type (
 		parentID string
 		costs    map[string]string
 	}
+	entitiesLoadedMsg struct {
+		provider string
+		nodes    []provider.Node
+	}
 	errMsg struct{ err error }
 )
 
@@ -79,9 +83,11 @@ func (s sortMode) String() string {
 }
 
 type paletteItem struct {
-	label  string
-	action string // "switch-cloud" | "open-bookmark" | "delete-bookmark"
-	arg    string
+	label    string
+	action   string // "switch-cloud" | "open-bookmark" | "jump-entity"
+	arg      string
+	provider string        // owning provider for jump-entity
+	node     provider.Node // target for jump-entity
 }
 
 type model struct {
@@ -110,6 +116,9 @@ type model struct {
 	cfg          *config.Config
 	showCost     bool
 	costs        map[string]map[string]string // subID → lowercased rg name → cost
+	restorePath  []config.Crumb               // remaining crumbs to drill into during bookmark restore
+	restoreLabel string                       // label shown while restoring (for status)
+	entities     map[string][]provider.Node   // provider name → top-level entities (subs/projects/accounts)
 	width        int
 	height       int
 	keys         keys.Map
@@ -145,7 +154,7 @@ func newModel() *model {
 
 	pi := textinput.New()
 	pi.Prompt = ": "
-	pi.Placeholder = "switch cloud, jump to bookmark..."
+	pi.Placeholder = "search any sub / project / account, or switch cloud, or jump to bookmark"
 	pi.CharLimit = 120
 	pi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
@@ -166,6 +175,7 @@ func newModel() *model {
 		detail:       vp,
 		cfg:          cfg,
 		costs:        map[string]map[string]string{},
+		entities:     map[string][]provider.Node{},
 		keys:         keys.Default(),
 		table:        t,
 	}
@@ -236,8 +246,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.Focus()
 			return m, nil
 		case key.Matches(msg, m.keys.Palette):
-			m.openPalette()
-			return m, nil
+			return m, m.openPalette()
 		case key.Matches(msg, m.keys.Flag):
 			m.saveBookmark()
 			return m, nil
@@ -272,6 +281,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable()
 		m.table.SetCursor(0)
 		m.status = fmt.Sprintf("%d items", len(msg.frame.nodes))
+		if cmd := m.advanceRestore(); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case detailLoadedMsg:
@@ -292,6 +304,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("costs: %d RGs", len(msg.costs))
 		return m, nil
 
+	case entitiesLoadedMsg:
+		m.entities[msg.provider] = msg.nodes
+		if m.paletteMode {
+			m.rebuildPalette()
+		}
+		return m, nil
+
 	case errMsg:
 		m.loading = false
 		m.err = msg.err
@@ -309,20 +328,47 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *model) openPalette() {
+func (m *model) openPalette() tea.Cmd {
 	m.paletteMode = true
 	m.paletteInput.SetValue("")
 	m.paletteInput.Focus()
 	m.paletteIdx = 0
 	m.rebuildPalette()
+	return m.preloadEntities()
+}
+
+// preloadEntities kicks off Root() for each provider whose entities we haven't
+// cached yet. Each load returns an entitiesLoadedMsg that refreshes the palette.
+func (m *model) preloadEntities() tea.Cmd {
+	cmds := []tea.Cmd{}
+	for _, p := range m.providers {
+		if _, ok := m.entities[p.Name()]; ok {
+			continue
+		}
+		prov := p
+		ctx := m.ctx
+		cmds = append(cmds, func() tea.Msg {
+			nodes, err := prov.Root(ctx)
+			if err != nil {
+				// Swallow errors here — a dead provider shouldn't block palette.
+				return entitiesLoadedMsg{provider: prov.Name(), nodes: nil}
+			}
+			return entitiesLoadedMsg{provider: prov.Name(), nodes: nodes}
+		})
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *model) rebuildPalette() {
 	q := strings.ToLower(m.paletteInput.Value())
-	all := make([]paletteItem, 0, len(m.providers)+len(m.cfg.Bookmarks))
+	all := make([]paletteItem, 0, 32)
+
 	for _, p := range m.providers {
 		all = append(all, paletteItem{
-			label:  "switch to " + p.Name(),
+			label:  "☁  switch to " + p.Name(),
 			action: "switch-cloud",
 			arg:    p.Name(),
 		})
@@ -334,12 +380,24 @@ func (m *model) rebuildPalette() {
 			arg:    bm.Label,
 		})
 	}
+	// Top-level entities from each provider (subs / projects / accounts).
+	for _, p := range m.providers {
+		for _, n := range m.entities[p.Name()] {
+			all = append(all, paletteItem{
+				label:    "▸ " + p.Name() + "  " + n.Name + "  " + shortID(n.ID),
+				action:   "jump-entity",
+				provider: p.Name(),
+				node:     n,
+			})
+		}
+	}
+
 	if q == "" {
 		m.paletteItems = all
 	} else {
 		filtered := make([]paletteItem, 0, len(all))
 		for _, it := range all {
-			if strings.Contains(strings.ToLower(it.label), q) {
+			if containsFold(it.label, q) || containsFold(it.arg, q) || containsFold(it.node.ID, q) {
 				filtered = append(filtered, it)
 			}
 		}
@@ -348,6 +406,13 @@ func (m *model) rebuildPalette() {
 	if m.paletteIdx >= len(m.paletteItems) {
 		m.paletteIdx = 0
 	}
+}
+
+func containsFold(haystack, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(haystack), needle)
 }
 
 func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -398,6 +463,23 @@ func (m *model) runPaletteItem(it paletteItem) tea.Cmd {
 				return m.openBookmark(bm)
 			}
 		}
+	case "jump-entity":
+		for _, p := range m.providers {
+			if p.Name() != it.provider {
+				continue
+			}
+			m.active = p
+			m.resetView()
+			m.stack = m.stack[:1]
+			m.restorePath = []config.Crumb{{
+				Kind: string(it.node.Kind),
+				ID:   it.node.ID,
+				Name: it.node.Name,
+			}}
+			m.restoreLabel = p.Name() + " / " + it.node.Name
+			m.status = "jumping to " + m.restoreLabel + "..."
+			return m.load(p.Name(), nil)
+		}
 	}
 	return nil
 }
@@ -408,11 +490,47 @@ func (m *model) openBookmark(bm config.Bookmark) tea.Cmd {
 			m.active = p
 			m.resetView()
 			m.stack = m.stack[:1]
-			m.status = "★ " + bm.Label + " — deep restore coming soon"
+			// Skip the first crumb — it's the cloud level we just set as active.
+			if len(bm.Path) > 1 {
+				m.restorePath = append(m.restorePath[:0], bm.Path[1:]...)
+				m.restoreLabel = bm.Label
+				m.status = "restoring ★ " + bm.Label + "..."
+			} else {
+				m.restorePath = nil
+				m.restoreLabel = ""
+				m.status = "★ " + bm.Label
+			}
 			return m.load(p.Name(), nil)
 		}
 	}
 	m.status = "bookmark refers to unavailable provider " + bm.Provider
+	return nil
+}
+
+// advanceRestore consumes the next crumb from m.restorePath if one is pending.
+// It locates the matching node in the just-loaded frame and triggers a drill.
+// Returns nil when there's nothing left to restore (or the crumb can't be
+// found — in which case status is updated with a clear explanation).
+func (m *model) advanceRestore() tea.Cmd {
+	if len(m.restorePath) == 0 {
+		if m.restoreLabel != "" {
+			m.status = "★ " + m.restoreLabel
+			m.restoreLabel = ""
+		}
+		return nil
+	}
+	next := m.restorePath[0]
+	for i, n := range m.visibleNodes {
+		if (next.ID != "" && n.ID == next.ID) || (next.ID == "" && n.Name == next.Name) {
+			m.table.SetCursor(i)
+			m.restorePath = m.restorePath[1:]
+			return m.drillDown()
+		}
+	}
+	// Bookmark has drifted — target no longer exists.
+	m.status = fmt.Sprintf("restore stopped at %q (not found)", next.Name)
+	m.restorePath = nil
+	m.restoreLabel = ""
 	return nil
 }
 
