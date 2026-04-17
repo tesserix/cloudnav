@@ -337,8 +337,6 @@ func (m *model) openPalette() tea.Cmd {
 	return m.preloadEntities()
 }
 
-// preloadEntities kicks off Root() for each provider whose entities we haven't
-// cached yet. Each load returns an entitiesLoadedMsg that refreshes the palette.
 func (m *model) preloadEntities() tea.Cmd {
 	cmds := []tea.Cmd{}
 	for _, p := range m.providers {
@@ -350,7 +348,6 @@ func (m *model) preloadEntities() tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			nodes, err := prov.Root(ctx)
 			if err != nil {
-				// Swallow errors here — a dead provider shouldn't block palette.
 				return entitiesLoadedMsg{provider: prov.Name(), nodes: nil}
 			}
 			return entitiesLoadedMsg{provider: prov.Name(), nodes: nodes}
@@ -380,7 +377,6 @@ func (m *model) rebuildPalette() {
 			arg:    bm.Label,
 		})
 	}
-	// Top-level entities from each provider (subs / projects / accounts).
 	for _, p := range m.providers {
 		for _, n := range m.entities[p.Name()] {
 			all = append(all, paletteItem{
@@ -507,10 +503,7 @@ func (m *model) openBookmark(bm config.Bookmark) tea.Cmd {
 	return nil
 }
 
-// advanceRestore consumes the next crumb from m.restorePath if one is pending.
-// It locates the matching node in the just-loaded frame and triggers a drill.
-// Returns nil when there's nothing left to restore (or the crumb can't be
-// found — in which case status is updated with a clear explanation).
+// advanceRestore drills one level deeper along m.restorePath, if any.
 func (m *model) advanceRestore() tea.Cmd {
 	if len(m.restorePath) == 0 {
 		if m.restoreLabel != "" {
@@ -527,7 +520,6 @@ func (m *model) advanceRestore() tea.Cmd {
 			return m.drillDown()
 		}
 	}
-	// Bookmark has drifted — target no longer exists.
 	m.status = fmt.Sprintf("restore stopped at %q (not found)", next.Name)
 	m.restorePath = nil
 	m.restoreLabel = ""
@@ -899,9 +891,7 @@ func (m *model) refreshTable() {
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
 	m.mergeCosts(top)
-	// Clear rows first — bubbles/table.SetColumns re-renders existing rows,
-	// and if the new columns have fewer cells than the old rows, renderRow
-	// indexes past the column slice and panics.
+	// Clear rows so SetColumns doesn't re-render stale-shaped rows and panic.
 	m.table.SetRows(nil)
 	m.table.SetColumns(m.columnsFor(top))
 	m.table.SetRows(m.rowsFromNodes(top.title, m.visibleNodes))
@@ -1051,8 +1041,6 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	return rows
 }
 
-// mergeCosts stamps n.Cost on each visible RG node from the cached subscription
-// cost map. Called before rendering so sort/filter re-paints pick up the value.
 func (m *model) mergeCosts(f *frame) {
 	if !m.showCost || f.parent == nil {
 		return
