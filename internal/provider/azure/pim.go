@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -347,18 +348,18 @@ func parseISO8601Hours(d string) int {
 	s := d[1:]
 	days := 0
 	if i := strings.Index(s, "D"); i >= 0 {
-		fmt.Sscanf(s[:i], "%d", &days)
+		days, _ = strconv.Atoi(s[:i])
 		s = s[i+1:]
 	}
 	hours, minutes := 0, 0
 	if strings.HasPrefix(s, "T") {
 		s = s[1:]
 		if i := strings.Index(s, "H"); i >= 0 {
-			fmt.Sscanf(s[:i], "%d", &hours)
+			hours, _ = strconv.Atoi(s[:i])
 			s = s[i+1:]
 		}
 		if i := strings.Index(s, "M"); i >= 0 {
-			fmt.Sscanf(s[:i], "%d", &minutes)
+			minutes, _ = strconv.Atoi(s[:i])
 		}
 	}
 	total := days*24 + hours

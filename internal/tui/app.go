@@ -1757,7 +1757,6 @@ func selectionMark(selected bool) string {
 	return "[ ]"
 }
 
-
 const (
 	lockCanNotDelete = "CanNotDelete"
 	lockReadOnly     = "ReadOnly"
