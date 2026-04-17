@@ -1893,9 +1893,11 @@ func shortID(s string) string {
 	return s
 }
 
+const emDash = "—"
+
 func costOrDash(c string) string {
 	if c == "" {
-		return "—"
+		return emDash
 	}
 	return c
 }
@@ -1904,7 +1906,7 @@ func costOrDash(c string) string {
 // column. Empty or unparseable input falls back to an em-dash.
 func shortDate(iso string) string {
 	if iso == "" {
-		return "—"
+		return emDash
 	}
 	if t, err := time.Parse(time.RFC3339, iso); err == nil {
 		return t.Format("2006-01-02")
@@ -1912,7 +1914,7 @@ func shortDate(iso string) string {
 	if len(iso) >= 10 {
 		return iso[:10]
 	}
-	return "—"
+	return emDash
 }
 
 func selectionMark(selected bool) string {
@@ -1934,7 +1936,7 @@ func lockBadgePlain(level string) string {
 	case lockReadOnly:
 		return "🔒 ReadOnly"
 	default:
-		return "—"
+		return emDash
 	}
 }
 
