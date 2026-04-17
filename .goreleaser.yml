@@ -1,0 +1,110 @@
+version: 2
+
+project_name: cloudnav
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cloudnav
+    main: ./cmd/cloudnav
+    binary: cloudnav
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/tesserix/cloudnav/internal/version.Version={{.Version}}
+      - -X github.com/tesserix/cloudnav/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/tesserix/cloudnav/internal/version.Date={{.Date}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: cloudnav
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macos
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: "^feat"
+      order: 0
+    - title: Fixes
+      regexp: "^fix"
+      order: 1
+    - title: Docs
+      regexp: "^docs"
+      order: 2
+    - title: Chores
+      regexp: "^(chore|ci|build|refactor)"
+      order: 99
+  filters:
+    exclude:
+      - "^Merge pull request"
+      - "^Merge branch"
+
+brews:
+  - name: cloudnav
+    repository:
+      owner: tesserix
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: tesserix-bot
+      email: bot@tesserix.dev
+    commit_msg_template: "chore(cloudnav): release {{ .Tag }}"
+    homepage: "https://github.com/tesserix/cloudnav"
+    description: "Fast, keyboard-driven multi-cloud TUI for Azure, GCP, and AWS."
+    license: "Apache-2.0"
+    directory: Formula
+    test: |
+      system "#{bin}/cloudnav", "version"
+    install: |
+      bin.install "cloudnav"
+      generate_completions_from_executable(bin/"cloudnav", "completion")
+
+release:
+  draft: false
+  prerelease: auto
+  github:
+    owner: tesserix
+    name: cloudnav
+  header: |
+    ## cloudnav {{ .Tag }}
+
+    Install with Homebrew:
+    ```
+    brew tap tesserix/tap
+    brew install cloudnav
+    ```

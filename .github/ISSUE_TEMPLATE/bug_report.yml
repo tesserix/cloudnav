@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in cloudnav is not working
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: cloudnav version
+      description: Output of `cloudnav version`
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Cloud provider
+      options:
+        - Azure
+        - GCP
+        - AWS
+        - Multiple
+        - Not provider-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Actual behaviour and steps to reproduce. Redact secrets.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Output of `CLOUDNAV_LOG_LEVEL=debug cloudnav ...` with any secrets redacted.
+      render: shell

@@ -1,0 +1,26 @@
+# Binaries and build output
+bin/
+dist/
+coverage.out
+coverage.html
+*.test
+*.out
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Go tooling
+vendor/
+
+# Local config, caches, logs
+.env
+.env.local
+.cloudnav/
+*.log
+
+# Goreleaser snapshots
+.goreleaser-snapshots/
