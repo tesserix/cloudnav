@@ -4,11 +4,11 @@ import "testing"
 
 func TestFirstLine(t *testing.T) {
 	cases := map[string]string{
-		"":               "",
-		"single":         "single",
-		"first\nsecond":  "first",
-		"\nempty-first":  "",
-		"trailing-nl\n":  "trailing-nl",
+		"":              "",
+		"single":        "single",
+		"first\nsecond": "first",
+		"\nempty-first": "",
+		"trailing-nl\n": "trailing-nl",
 	}
 	for in, want := range cases {
 		if got := firstLine(in); got != want {
@@ -18,17 +18,19 @@ func TestFirstLine(t *testing.T) {
 }
 
 func TestBytesTrim(t *testing.T) {
-	cases := map[string]string{
-		"hello":      "hello",
-		"hello\n":    "hello",
-		"hello\r\n":  "hello",
-		"hello \n ":  "hello",
-		"":           "",
-		"\n\n":       "",
+	cases := []struct {
+		in, want string
+	}{
+		{"hello", "hello"},
+		{"hello\n", "hello"},
+		{"hello\r\n", "hello"},
+		{"hello  ", "hello"},
+		{"", ""},
+		{"\n\n", ""},
 	}
-	for in, want := range cases {
-		if got := string(bytesTrim([]byte(in))); got != want {
-			t.Errorf("bytesTrim(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := string(bytesTrim([]byte(c.in))); got != c.want {
+			t.Errorf("bytesTrim(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
