@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -39,8 +40,12 @@ type frame struct {
 }
 
 type (
-	nodesLoadedMsg struct{ frame frame }
-	errMsg         struct{ err error }
+	nodesLoadedMsg  struct{ frame frame }
+	detailLoadedMsg struct {
+		title string
+		body  string
+	}
+	errMsg struct{ err error }
 )
 
 type sortMode int
@@ -71,6 +76,9 @@ type model struct {
 	table        table.Model
 	spinner      spinner.Model
 	search       textinput.Model
+	detail       viewport.Model
+	detailTitle  string
+	detailMode   bool
 	searchMode   bool
 	filter       string
 	sort         sortMode
@@ -111,11 +119,15 @@ func newModel() *model {
 	ti.CharLimit = 120
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	vp := viewport.New(80, 20)
+	vp.Style = lipgloss.NewStyle()
+
 	m := &model{
 		ctx:       context.Background(),
 		providers: []provider.Provider{azure.New()},
 		spinner:   sp,
 		search:    ti,
+		detail:    vp,
 		keys:      keys.Default(),
 		table:     t,
 	}
@@ -150,14 +162,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if w := msg.Width - 2; w > 0 {
 			m.table.SetWidth(w)
 			m.search.Width = w - 4
+			m.detail.Width = w
 		}
 		if h := msg.Height - 4; h > 0 {
 			m.table.SetHeight(h)
+			m.detail.Height = h
 		}
 		m.refreshTable()
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.detailMode {
+			if msg.String() == "esc" || msg.String() == "q" {
+				m.detailMode = false
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.detail, cmd = m.detail.Update(msg)
+			return m, cmd
+		}
 		if m.searchMode {
 			return m.updateSearch(msg)
 		}
@@ -180,6 +203,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshTable()
 			m.status = "sort: " + m.sort.String()
 			return m, nil
+		case key.Matches(msg, m.keys.Detail):
+			return m, m.loadDetail()
 		case key.Matches(msg, m.keys.Enter):
 			return m, m.drillDown()
 		case key.Matches(msg, m.keys.Back):
@@ -197,6 +222,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stack = append(m.stack, msg.frame)
 		m.refreshTable()
 		m.status = fmt.Sprintf("%d items", len(msg.frame.nodes))
+		return m, nil
+
+	case detailLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.detailTitle = msg.title
+		m.detail.SetContent(msg.body)
+		m.detail.GotoTop()
+		m.detailMode = true
+		m.status = ""
 		return m, nil
 
 	case errMsg:
@@ -322,6 +357,30 @@ func (m *model) load(title string, parent *provider.Node) tea.Cmd {
 	)
 }
 
+func (m *model) loadDetail() tea.Cmd {
+	if m.active == nil || len(m.visibleNodes) == 0 {
+		return nil
+	}
+	cur := m.visibleNodes[m.table.Cursor()]
+	if cur.Kind == provider.KindCloud || cur.Kind == provider.KindCloudDisabled {
+		return nil
+	}
+	m.loading = true
+	m.status = "loading " + cur.Name + "..."
+	prov := m.active
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			data, err := prov.Details(ctx, cur)
+			if err != nil {
+				return errMsg{err}
+			}
+			return detailLoadedMsg{title: cur.Name, body: string(data)}
+		},
+	)
+}
+
 func (m *model) openPortal() {
 	if m.active == nil || len(m.visibleNodes) == 0 {
 		return
@@ -433,11 +492,40 @@ func (m *model) View() string {
 	if m.showHelp {
 		return m.helpView()
 	}
+	if m.detailMode {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			m.detailHeader(),
+			m.detail.View(),
+			m.detailFooter(),
+		)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.headerView(),
 		m.table.View(),
 		m.footerView(),
 	)
+}
+
+func (m *model) detailHeader() string {
+	title := styles.Title.Render("cloudnav") + "  " + styles.Crumb.Render("detail › "+m.detailTitle)
+	right := styles.Help.Render(fmt.Sprintf("%d%%", int(m.detail.ScrollPercent()*100)))
+	if m.width == 0 {
+		return title + "   " + right
+	}
+	gap := m.width - lipgloss.Width(title) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return title + strings.Repeat(" ", gap) + right
+}
+
+func (m *model) detailFooter() string {
+	hints := strings.Join([]string{
+		styles.Key.Render("↑↓") + " scroll",
+		styles.Key.Render("esc") + " close",
+		styles.Key.Render("q") + " close",
+	}, "  ")
+	return styles.StatusBar.Render(hints)
 }
 
 func (m *model) headerView() string {
