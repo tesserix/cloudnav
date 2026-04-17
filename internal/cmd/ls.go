@@ -14,6 +14,12 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider/gcp"
 )
 
+const (
+	cloudAzure = "azure"
+	cloudGCP   = "gcp"
+	cloudAWS   = "aws"
+)
+
 var lsCmd = &cobra.Command{
 	Use:   "ls <provider> <kind>",
 	Short: "List resources non-interactively (pipeable)",
@@ -61,7 +67,7 @@ var lsCmd = &cobra.Command{
 			nodes, err = p.Children(ctx, root[0])
 		case "resources":
 			switch p.Name() {
-			case "azure":
+			case cloudAzure:
 				if sub == "" || rg == "" {
 					return fmt.Errorf("azure: --subscription and --resource-group are required")
 				}
@@ -71,12 +77,12 @@ var lsCmd = &cobra.Command{
 					Kind:   provider.KindResourceGroup,
 					Parent: &provider.Node{ID: sub, Kind: provider.KindSubscription},
 				})
-			case "gcp":
+			case cloudGCP:
 				if project == "" {
 					return fmt.Errorf("gcp: --project is required")
 				}
 				nodes, err = p.Children(ctx, provider.Node{ID: project, Name: project, Kind: provider.KindProject})
-			case "aws":
+			case cloudAWS:
 				if region == "" {
 					return fmt.Errorf("aws: --region is required")
 				}
@@ -103,11 +109,11 @@ var lsCmd = &cobra.Command{
 
 func pickProvider(name string) (provider.Provider, error) {
 	switch name {
-	case "azure", "az":
+	case cloudAzure, "az":
 		return azure.New(), nil
-	case "gcp":
+	case cloudGCP:
 		return gcp.New(), nil
-	case "aws":
+	case cloudAWS:
 		return aws.New(), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", name)

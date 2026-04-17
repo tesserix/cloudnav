@@ -9,27 +9,36 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tesserix/cloudnav/internal/provider"
-	"github.com/tesserix/cloudnav/internal/provider/azure"
 )
 
 var pimCmd = &cobra.Command{
 	Use:   "pim",
-	Short: "Privileged Identity Management (Azure)",
+	Short: "Privileged Identity Management / JIT elevation",
+	Long:  "Azure: PIM eligible role activation.\nAWS:   AWS SSO profile sign-in via browser.\nGCP:   prints the gcloud IAM conditional-binding template.",
 }
 
 var pimListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List PIM-eligible role assignments for the current user",
+	Short: "List PIM-eligible / SSO / JIT roles for the current user",
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		pimer := azure.New()
-		if _, err := pimer.Root(cmd.Context()); err != nil {
+		cloud, _ := cmd.Flags().GetString("cloud")
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		p, err := pickProvider(cloud)
+		if err != nil {
+			return err
+		}
+		pimer, ok := p.(provider.PIMer)
+		if !ok {
+			return fmt.Errorf("%s: JIT/PIM not supported", cloud)
+		}
+		if _, err := p.Root(cmd.Context()); err != nil && cloud == cloudAzure {
 			return err
 		}
 		roles, err := pimer.ListEligibleRoles(cmd.Context())
 		if err != nil {
 			return err
 		}
-		asJSON, _ := cmd.Flags().GetBool("json")
 		if asJSON {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -48,25 +57,34 @@ var pimListCmd = &cobra.Command{
 
 var pimActivateCmd = &cobra.Command{
 	Use:   "activate <index>",
-	Short: "Activate a PIM-eligible role by 1-based index from `pim list`",
+	Short: "Activate role #N from `pim list`",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cloud, _ := cmd.Flags().GetString("cloud")
 		reason, _ := cmd.Flags().GetString("reason")
 		duration, _ := cmd.Flags().GetInt("duration")
-		if reason == "" {
-			return fmt.Errorf("--reason is required by PIM policy")
-		}
 		idx, err := parseIndex(args[0])
 		if err != nil {
 			return err
 		}
 
 		ctx := context.Background()
-		p := azure.New()
-		if _, err := p.Root(ctx); err != nil {
+		p, err := pickProvider(cloud)
+		if err != nil {
 			return err
 		}
-		roles, err := p.ListEligibleRoles(ctx)
+		pimer, ok := p.(provider.PIMer)
+		if !ok {
+			return fmt.Errorf("%s: JIT/PIM not supported", cloud)
+		}
+		if _, err := p.Root(ctx); err != nil && cloud == cloudAzure {
+			return err
+		}
+		if cloud == cloudAzure && reason == "" {
+			return fmt.Errorf("--reason is required for azure PIM activation")
+		}
+
+		roles, err := pimer.ListEligibleRoles(ctx)
 		if err != nil {
 			return err
 		}
@@ -75,12 +93,11 @@ var pimActivateCmd = &cobra.Command{
 		}
 		role := roles[idx-1]
 
-		fmt.Printf("activating %q on %s for %dh — reason: %q\n",
-			role.RoleName, scopeOrName(role), duration, reason)
-		if err := p.ActivateRole(ctx, role, reason, duration); err != nil {
+		fmt.Printf("activating %q on %s\n", role.RoleName, scopeOrName(role))
+		if err := pimer.ActivateRole(ctx, role, reason, duration); err != nil {
 			return err
 		}
-		fmt.Println("✓ activation request submitted")
+		fmt.Println("✓ activation submitted")
 		return nil
 	},
 }
@@ -103,8 +120,9 @@ func parseIndex(s string) (int, error) {
 
 func init() {
 	pimCmd.AddCommand(pimListCmd, pimActivateCmd)
+	pimCmd.PersistentFlags().String("cloud", "azure", "cloud to target: azure | aws | gcp")
 	pimListCmd.Flags().Bool("json", false, "Emit JSON")
-	pimActivateCmd.Flags().String("reason", "", "Justification sent to PIM (required)")
-	pimActivateCmd.Flags().Int("duration", 1, "Activation duration in hours (capped by role policy)")
+	pimActivateCmd.Flags().String("reason", "", "Justification (required for Azure)")
+	pimActivateCmd.Flags().Int("duration", 1, "Activation duration in hours (Azure only)")
 	rootCmd.AddCommand(pimCmd)
 }

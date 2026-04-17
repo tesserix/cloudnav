@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-17
+
+JIT / elevation story rounded out for all three clouds, plus multi-cloud `pim` CLI.
+
+### Added
+- **AWS SSO** as a PIM-equivalent: cloudnav now parses `~/.aws/config`, lists every profile that has `sso_role_name`, and activation runs `aws sso login --profile <name>` inline (supports browser auth). Works from both the TUI (`p` key) and CLI (`cloudnav pim list --cloud aws`, `cloudnav pim activate N --cloud aws`).
+- **GCP JIT** surface: `p` on GCP and `cloudnav pim list --cloud gcp` now print the exact `gcloud projects add-iam-policy-binding` template with a time-bound condition expression — you paste it, you're elevated. No silent failure.
+- **GCP per-project cost via BigQuery export**: if `CLOUDNAV_GCP_BILLING_TABLE=project.dataset.table` is set, `c` on the projects view runs a `bq query` against the export and renders MTD cost per project. Absent env var shows a clear pointer to the setup docs.
+- **`cloudnav pim`** grew a `--cloud azure|aws|gcp` flag so the CLI is symmetric with the TUI. Defaults to Azure.
+
+### Fixed
+- Nothing regressed — all earlier keybindings / CLI verbs run green on the full smoke suite.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.4.0
+
 ## [0.3.0] — 2026-04-17
 
 Multi-cloud cost, PIM activation in the TUI, and the palette that searches every sub/project/account.
@@ -21,7 +37,6 @@ Multi-cloud cost, PIM activation in the TUI, and the palette that searches every
 ### Fixed
 - Table cursor underflow after `SetRows(nil)` that silently swallowed the Enter key on the home page when certain operations cleared rows.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.3.0
 
 ## [0.2.0] — 2026-04-17
