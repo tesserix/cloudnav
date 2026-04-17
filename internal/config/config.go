@@ -1,0 +1,97 @@
+// Package config loads and saves the user-scoped preferences that persist
+// between cloudnav sessions — bookmarks, default provider, theme. Everything
+// is optional; callers get safe zero-values on error.
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+)
+
+type Bookmark struct {
+	Label    string  `json:"label"`
+	Provider string  `json:"provider"`
+	Path     []Crumb `json:"path"`
+	Created  string  `json:"created,omitempty"`
+}
+
+type Crumb struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Config struct {
+	DefaultProvider string     `json:"default_provider,omitempty"`
+	Theme           string     `json:"theme,omitempty"`
+	Bookmarks       []Bookmark `json:"bookmarks,omitempty"`
+}
+
+// Path returns the resolved config file path.
+func Path() string {
+	if v := os.Getenv("CLOUDNAV_CONFIG"); v != "" {
+		return v
+	}
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "cloudnav", "config.json")
+	}
+	return filepath.Join(os.Getenv("HOME"), ".config", "cloudnav", "config.json")
+}
+
+// Load reads the config file. A missing file is not an error — it returns an
+// empty Config.
+func Load() (*Config, error) {
+	data, err := os.ReadFile(Path())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &Config{}, nil
+		}
+		return nil, err
+	}
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Save writes the config atomically.
+func Save(c *Config) error {
+	p := Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
+}
+
+// AddBookmark appends a bookmark if no existing entry has the same Label.
+func (c *Config) AddBookmark(b Bookmark) {
+	for _, existing := range c.Bookmarks {
+		if existing.Label == b.Label {
+			return
+		}
+	}
+	c.Bookmarks = append(c.Bookmarks, b)
+}
+
+// RemoveBookmark deletes a bookmark by Label. Silent if not found.
+func (c *Config) RemoveBookmark(label string) {
+	out := c.Bookmarks[:0]
+	for _, b := range c.Bookmarks {
+		if b.Label != label {
+			out = append(out, b)
+		}
+	}
+	c.Bookmarks = out
+}

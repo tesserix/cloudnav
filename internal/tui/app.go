@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -21,6 +22,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tesserix/cloudnav/internal/config"
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
@@ -28,6 +30,8 @@ import (
 	"github.com/tesserix/cloudnav/internal/tui/keys"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 )
+
+const keyEsc = "esc"
 
 func Run() error {
 	m := newModel()
@@ -70,6 +74,12 @@ func (s sortMode) String() string {
 	}
 }
 
+type paletteItem struct {
+	label  string
+	action string // "switch-cloud" | "open-bookmark" | "delete-bookmark"
+	arg    string
+}
+
 type model struct {
 	ctx          context.Context
 	providers    []provider.Provider
@@ -89,6 +99,11 @@ type model struct {
 	err          error
 	status       string
 	showHelp     bool
+	paletteMode  bool
+	paletteInput textinput.Model
+	paletteItems []paletteItem
+	paletteIdx   int
+	cfg          *config.Config
 	width        int
 	height       int
 	keys         keys.Map
@@ -122,17 +137,30 @@ func newModel() *model {
 	ti.CharLimit = 120
 	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	pi := textinput.New()
+	pi.Prompt = ": "
+	pi.Placeholder = "switch cloud, jump to bookmark..."
+	pi.CharLimit = 120
+	pi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
+
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle()
 
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+
 	m := &model{
-		ctx:       context.Background(),
-		providers: []provider.Provider{azure.New(), gcp.New(), aws.New()},
-		spinner:   sp,
-		search:    ti,
-		detail:    vp,
-		keys:      keys.Default(),
-		table:     t,
+		ctx:          context.Background(),
+		providers:    []provider.Provider{azure.New(), gcp.New(), aws.New()},
+		spinner:      sp,
+		search:       ti,
+		paletteInput: pi,
+		detail:       vp,
+		cfg:          cfg,
+		keys:         keys.Default(),
+		table:        t,
 	}
 	m.pushHome()
 	return m
@@ -172,13 +200,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.detailMode {
-			if msg.String() == "esc" || msg.String() == "q" {
+			if msg.String() == keyEsc || msg.String() == "q" {
 				m.detailMode = false
 				return m, nil
 			}
 			var cmd tea.Cmd
 			m.detail, cmd = m.detail.Update(msg)
 			return m, cmd
+		}
+		if m.paletteMode {
+			return m.updatePalette(msg)
 		}
 		if m.searchMode {
 			return m.updateSearch(msg)
@@ -196,6 +227,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Search):
 			m.searchMode = true
 			m.search.Focus()
+			return m, nil
+		case key.Matches(msg, m.keys.Palette):
+			m.openPalette()
+			return m, nil
+		case key.Matches(msg, m.keys.Flag):
+			m.saveBookmark()
 			return m, nil
 		case key.Matches(msg, m.keys.Sort):
 			m.sort = (m.sort + 1) % 3
@@ -255,9 +292,153 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *model) openPalette() {
+	m.paletteMode = true
+	m.paletteInput.SetValue("")
+	m.paletteInput.Focus()
+	m.paletteIdx = 0
+	m.rebuildPalette()
+}
+
+func (m *model) rebuildPalette() {
+	q := strings.ToLower(m.paletteInput.Value())
+	all := make([]paletteItem, 0, len(m.providers)+len(m.cfg.Bookmarks))
+	for _, p := range m.providers {
+		all = append(all, paletteItem{
+			label:  "switch to " + p.Name(),
+			action: "switch-cloud",
+			arg:    p.Name(),
+		})
+	}
+	for _, bm := range m.cfg.Bookmarks {
+		all = append(all, paletteItem{
+			label:  "★ " + bm.Label,
+			action: "open-bookmark",
+			arg:    bm.Label,
+		})
+	}
+	if q == "" {
+		m.paletteItems = all
+	} else {
+		filtered := make([]paletteItem, 0, len(all))
+		for _, it := range all {
+			if strings.Contains(strings.ToLower(it.label), q) {
+				filtered = append(filtered, it)
+			}
+		}
+		m.paletteItems = filtered
+	}
+	if m.paletteIdx >= len(m.paletteItems) {
+		m.paletteIdx = 0
+	}
+}
+
+func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		m.paletteMode = false
+		m.paletteInput.Blur()
+		return m, nil
+	case "up":
+		if m.paletteIdx > 0 {
+			m.paletteIdx--
+		}
+		return m, nil
+	case "down":
+		if m.paletteIdx < len(m.paletteItems)-1 {
+			m.paletteIdx++
+		}
+		return m, nil
+	case "enter":
+		if m.paletteIdx < len(m.paletteItems) {
+			cmd := m.runPaletteItem(m.paletteItems[m.paletteIdx])
+			m.paletteMode = false
+			m.paletteInput.Blur()
+			return m, cmd
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.paletteInput, cmd = m.paletteInput.Update(msg)
+	m.rebuildPalette()
+	return m, cmd
+}
+
+func (m *model) runPaletteItem(it paletteItem) tea.Cmd {
+	switch it.action {
+	case "switch-cloud":
+		for _, p := range m.providers {
+			if p.Name() == it.arg {
+				m.active = p
+				m.resetView()
+				m.stack = m.stack[:1]
+				return m.load(p.Name(), nil)
+			}
+		}
+	case "open-bookmark":
+		for _, bm := range m.cfg.Bookmarks {
+			if bm.Label == it.arg {
+				return m.openBookmark(bm)
+			}
+		}
+	}
+	return nil
+}
+
+func (m *model) openBookmark(bm config.Bookmark) tea.Cmd {
+	for _, p := range m.providers {
+		if p.Name() == bm.Provider {
+			m.active = p
+			m.resetView()
+			m.stack = m.stack[:1]
+			m.status = "★ " + bm.Label + " — deep restore coming soon"
+			return m.load(p.Name(), nil)
+		}
+	}
+	m.status = "bookmark refers to unavailable provider " + bm.Provider
+	return nil
+}
+
+func (m *model) saveBookmark() {
+	if len(m.stack) <= 1 || m.active == nil {
+		m.status = "nothing to bookmark at this level"
+		return
+	}
+	path := make([]config.Crumb, 0, len(m.stack))
+	labelParts := make([]string, 0, len(m.stack))
+	for i, f := range m.stack {
+		if i == 0 {
+			path = append(path, config.Crumb{Kind: string(provider.KindCloud), Name: m.active.Name()})
+			labelParts = append(labelParts, m.active.Name())
+			continue
+		}
+		if f.parent == nil {
+			continue
+		}
+		path = append(path, config.Crumb{
+			Kind: string(f.parent.Kind),
+			ID:   f.parent.ID,
+			Name: f.parent.Name,
+		})
+		labelParts = append(labelParts, f.parent.Name)
+	}
+	bm := config.Bookmark{
+		Label:    strings.Join(labelParts, " / "),
+		Provider: m.active.Name(),
+		Path:     path,
+		Created:  time.Now().UTC().Format(time.RFC3339),
+	}
+	m.cfg.AddBookmark(bm)
+	if err := config.Save(m.cfg); err != nil {
+		m.status = "bookmark save failed: " + err.Error()
+		return
+	}
+	m.status = "★ bookmarked " + bm.Label
+}
+
 func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
+	case keyEsc:
 		m.searchMode = false
 		m.search.Blur()
 		m.filter = ""
@@ -720,6 +901,9 @@ func (m *model) View() string {
 	if m.showHelp {
 		return m.helpView()
 	}
+	if m.paletteMode {
+		return m.paletteView()
+	}
 	if m.detailMode {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			m.detailHeader(),
@@ -736,6 +920,30 @@ func (m *model) View() string {
 		body,
 		m.footerView(),
 	)
+}
+
+func (m *model) paletteView() string {
+	lines := []string{
+		styles.Title.Render("palette") + "  " + styles.Help.Render(fmt.Sprintf("%d items", len(m.paletteItems))),
+		"",
+		m.paletteInput.View(),
+		"",
+	}
+	for i, it := range m.paletteItems {
+		line := "  " + it.label
+		if i == m.paletteIdx {
+			line = styles.Selected.Render("> " + it.label)
+		}
+		lines = append(lines, line)
+	}
+	if len(m.paletteItems) == 0 {
+		lines = append(lines, styles.Help.Render("  no matches"))
+	}
+	lines = append(lines,
+		"",
+		styles.Help.Render("↑↓ nav  ↵ select  esc close"),
+	)
+	return styles.Box.Render(strings.Join(lines, "\n"))
 }
 
 func (m *model) emptyBody() string {
