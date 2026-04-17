@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -61,7 +62,14 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		activeBody, _ := fetchWithToken(ctx, client, activeURL, token)
 		active := parseActiveAssignments(activeBody)
 
-		policyMax := map[string]int{}
+		unique := map[string]struct{ scope, roleDef string }{}
+		for _, r := range roles {
+			polKey := r.Scope + "|" + r.RoleDefinitionID
+			if _, ok := unique[polKey]; !ok {
+				unique[polKey] = struct{ scope, roleDef string }{r.Scope, r.RoleDefinitionID}
+			}
+		}
+		policyMax := fetchPolicyMaxes(ctx, client, token, unique)
 
 		for _, r := range roles {
 			if seen[r.ID] {
@@ -77,13 +85,7 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 				r.Active = true
 				r.ActiveUntil = until
 			}
-			polKey := r.Scope + "|" + r.RoleDefinitionID
-			maxH, cached := policyMax[polKey]
-			if !cached {
-				maxH = fetchMaxActivationHours(ctx, client, r.Scope, r.RoleDefinitionID, token)
-				policyMax[polKey] = maxH
-			}
-			r.MaxDurationHours = maxH
+			r.MaxDurationHours = policyMax[r.Scope+"|"+r.RoleDefinitionID]
 			allRoles = append(allRoles, r)
 		}
 	}
@@ -263,6 +265,37 @@ func (a *Azure) ActivateRole(ctx context.Context, role provider.PIMRole, justifi
 		"--body", string(raw),
 	)
 	return err
+}
+
+// fetchPolicyMaxes resolves the activation-hour cap for every unique
+// (scope, roleDefinitionId) pair in parallel. Bounded concurrency keeps the
+// call load polite; the per-call timeout guarantees the PIM list never blocks
+// on a slow or unauthorized scope. Entries with no data stay at zero and fall
+// back to the TUI's default.
+func fetchPolicyMaxes(ctx context.Context, client *http.Client, token string, pairs map[string]struct{ scope, roleDef string }) map[string]int {
+	out := map[string]int{}
+	if len(pairs) == 0 {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 12)
+	for k, v := range pairs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(key, scope, roleDef string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			h := fetchMaxActivationHours(ctx, client, scope, roleDef, token)
+			mu.Lock()
+			out[key] = h
+			mu.Unlock()
+		}(k, v.scope, v.roleDef)
+	}
+	wg.Wait()
+	return out
 }
 
 // fetchMaxActivationHours returns the policy-defined max activation duration
