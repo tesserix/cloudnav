@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-04-17
+
+### Added
+- **Tenant filter on the Azure subs view** — press `<t>` to cycle through the tenants represented in the current list (`all → tenant A → tenant B → all`). The keybar shows the active tenant inline (`<t> tenant: Civica Production`), the footer combines it with any `/` filter (`tenant: Civica Production  filter: platform  3/72`).
+- `/` search now also matches on the tenant name, so `/civica production` narrows to just that tenant's subs.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.2
+
 ## [0.5.1] — 2026-04-17
 
 ### Changed
@@ -17,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Footer is a single quiet line that surfaces only what's contextual: search input while typing, `filter: X  n/total` when filtered, spinner while loading, or item count when idle.
 - Sort mode now surfaces inline on the `<s>` key in the keybar (`<s> sort name / state / location`) instead of being tucked in the corner.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.5.1...HEAD
 [0.5.1]: https://github.com/tesserix/cloudnav/releases/tag/v0.5.1
 
 ## [0.5.0] — 2026-04-17

@@ -19,6 +19,7 @@ type Map struct {
 	Sort    key.Binding
 	Flag    key.Binding
 	Palette key.Binding
+	Tenant  key.Binding
 	Help    key.Binding
 	Quit    key.Binding
 }
@@ -39,6 +40,7 @@ func Default() Map {
 		Sort:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Flag:    key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "flag")),
 		Palette: key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "palette")),
+		Tenant:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tenant")),
 		Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}

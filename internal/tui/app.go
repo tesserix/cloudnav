@@ -124,6 +124,7 @@ type model struct {
 	cfg          *config.Config
 	showCost     bool
 	costs        map[string]map[string]string // subID → lowercased rg name → cost
+	tenantFilter string                       // only show subs whose Meta[tenantName] == this (empty = all)
 	restorePath  []config.Crumb               // remaining crumbs to drill into during bookmark restore
 	restoreLabel string                       // label shown while restoring (for status)
 	entities     map[string][]provider.Node   // provider name → top-level entities (subs/projects/accounts)
@@ -273,6 +274,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Palette):
 			return m, m.openPalette()
+		case key.Matches(msg, m.keys.Tenant):
+			m.cycleTenant()
+			return m, nil
 		case key.Matches(msg, m.keys.Flag):
 			m.saveBookmark()
 			return m, nil
@@ -739,6 +743,7 @@ func (m *model) resetView() {
 	m.search.SetValue("")
 	m.searchMode = false
 	m.search.Blur()
+	m.tenantFilter = ""
 }
 
 func (m *model) goBack() tea.Cmd {
@@ -1050,14 +1055,14 @@ func (m *model) refreshTable() {
 
 func (m *model) applyView(nodes []provider.Node) []provider.Node {
 	out := make([]provider.Node, 0, len(nodes))
-	if m.filter == "" {
-		out = append(out, nodes...)
-	} else {
-		q := strings.ToLower(m.filter)
-		for _, n := range nodes {
-			if strings.Contains(strings.ToLower(n.Name), q) {
-				out = append(out, n)
-			}
+	q := strings.ToLower(m.filter)
+	tf := strings.ToLower(m.tenantFilter)
+	for _, n := range nodes {
+		if tf != "" && strings.ToLower(n.Meta["tenantName"]) != tf {
+			continue
+		}
+		if q == "" || strings.Contains(strings.ToLower(n.Name), q) || strings.Contains(strings.ToLower(n.Meta["tenantName"]), q) {
+			out = append(out, n)
 		}
 	}
 	if isCloudLevel(out) {
@@ -1454,15 +1459,72 @@ func (m *model) keybar() string {
 		{"o", "portal"},
 		{"c", "costs"},
 		{"s", "sort " + m.sort.String()},
-		{"r", "refresh"},
-		{"esc", "back"},
-		{"q", "quit"},
 	}
+	if m.atSubscriptionLevel() {
+		label := "tenant: all"
+		if m.tenantFilter != "" {
+			label = "tenant: " + m.tenantFilter
+		}
+		pairs = append(pairs, pair{"t", label})
+	}
+	pairs = append(pairs,
+		pair{"r", "refresh"},
+		pair{"esc", "back"},
+		pair{"q", "quit"},
+	)
 	parts := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		parts = append(parts, styles.Key.Render("<"+p.key+">")+" "+styles.Help.Render(p.action))
 	}
 	return "  " + strings.Join(parts, "  ")
+}
+
+func (m *model) atSubscriptionLevel() bool {
+	if len(m.stack) == 0 {
+		return false
+	}
+	top := &m.stack[len(m.stack)-1]
+	return kindOf(top) == provider.KindSubscription
+}
+
+func (m *model) cycleTenant() {
+	if !m.atSubscriptionLevel() {
+		m.status = "tenant filter applies to the subscriptions view"
+		return
+	}
+	top := m.stack[len(m.stack)-1]
+	seen := map[string]bool{}
+	tenants := []string{}
+	for _, n := range top.nodes {
+		t := n.Meta["tenantName"]
+		if t == "" {
+			t = n.Meta["tenantId"]
+		}
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		tenants = append(tenants, t)
+	}
+	sort.Strings(tenants)
+	idx := -1
+	for i, t := range tenants {
+		if t == m.tenantFilter {
+			idx = i
+			break
+		}
+	}
+	next := ""
+	if idx+1 < len(tenants) {
+		next = tenants[idx+1]
+	}
+	m.tenantFilter = next
+	if next == "" {
+		m.status = "tenant filter: all"
+	} else {
+		m.status = "tenant filter: " + next
+	}
+	m.refreshTable()
 }
 
 func breadcrumbs(stack []frame) []string {
@@ -1489,14 +1551,22 @@ func (m *model) footerView() string {
 		return " " + styles.Bad.Render("error: ") + msg
 	}
 	right := ""
-	if m.filter != "" && len(m.stack) > 0 {
-		total := len(m.stack[len(m.stack)-1].nodes)
-		shown := len(m.visibleNodes)
+	total := 0
+	if len(m.stack) > 0 {
+		total = len(m.stack[len(m.stack)-1].nodes)
+	}
+	shown := len(m.visibleNodes)
+	switch {
+	case m.filter != "" && m.tenantFilter != "":
+		right = fmt.Sprintf("tenant: %s  filter: %s  %d/%d", m.tenantFilter, m.filter, shown, total)
+	case m.filter != "":
 		right = fmt.Sprintf("filter: %s  %d/%d", m.filter, shown, total)
-	} else if m.status != "" {
+	case m.tenantFilter != "":
+		right = fmt.Sprintf("tenant: %s  %d/%d", m.tenantFilter, shown, total)
+	case m.status != "":
 		right = m.status
-	} else if len(m.stack) > 0 {
-		right = fmt.Sprintf("%d items", len(m.stack[len(m.stack)-1].nodes))
+	case total > 0:
+		right = fmt.Sprintf("%d items", total)
 	}
 	return " " + styles.Help.Render(right)
 }
