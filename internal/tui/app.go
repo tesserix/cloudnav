@@ -633,11 +633,26 @@ func (m *model) View() string {
 			m.detailFooter(),
 		)
 	}
+	body := m.table.View()
+	if len(m.visibleNodes) == 0 && !m.loading {
+		body = m.emptyBody()
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.headerView(),
-		m.table.View(),
+		body,
 		m.footerView(),
 	)
+}
+
+func (m *model) emptyBody() string {
+	msg := "  no items here"
+	if m.filter != "" {
+		msg = fmt.Sprintf("  no matches for %q  (esc to clear filter)", m.filter)
+	}
+	if len(m.stack) > 0 && m.err == nil && len(m.stack[len(m.stack)-1].nodes) == 0 {
+		msg = "  empty — drill back with esc and try another path"
+	}
+	return styles.Help.Render("\n"+msg) + "\n"
 }
 
 func (m *model) detailHeader() string {
@@ -667,6 +682,15 @@ func (m *model) headerView() string {
 	crumbs := strings.Join(breadcrumbs(m.stack), styles.CrumbSep)
 	left := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", styles.Crumb.Render(crumbs))
 	rightBits := []string{}
+	if len(m.stack) > 0 {
+		total := len(m.stack[len(m.stack)-1].nodes)
+		shown := len(m.visibleNodes)
+		if m.filter != "" && shown != total {
+			rightBits = append(rightBits, fmt.Sprintf("%d/%d", shown, total))
+		} else {
+			rightBits = append(rightBits, fmt.Sprintf("%d", total))
+		}
+	}
 	if m.filter != "" {
 		rightBits = append(rightBits, "filter: "+m.filter)
 	}
