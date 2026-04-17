@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-17
+
+Multi-cloud cost, PIM activation in the TUI, and the palette that searches every sub/project/account.
+
+### Added
+- **Global quick-search** inside the `:` palette. On open we load every provider's top-level entities (subs / projects / accounts) in parallel; typing filters across name and id. Picking an entity jumps straight to it in one keystroke.
+- **Deep-restore of bookmarks** — saved breadcrumbs are now walked level-by-level with the cursor landing on the exact target.
+- **Cost column** on all three clouds: Azure RGs, AWS regions, GCP projects. Each row includes month-over-month delta (↑/↓/→) when last-period data is available. GCP surfaces a "BigQuery billing export needed" message cleanly.
+- **PIM activation inside the TUI**: `p` opens a selectable list, `j/k` move cursor, `+/-` change duration, `a` asks for a justification and submits — all without leaving cloudnav.
+- Non-Azure `p` / `c` presses now surface concrete guidance instead of silent no-ops.
+
+### Fixed
+- Table cursor underflow after `SetRows(nil)` that silently swallowed the Enter key on the home page when certain operations cleared rows.
+
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.3.0
+
 ## [0.2.0] — 2026-04-17
 
 All three clouds active and a persistence layer landed.
@@ -23,7 +40,6 @@ All three clouds active and a persistence layer landed.
 ### Fixed
 - Home page stops sorting alphabetically — preserves provider registration order so `azure` stays first.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.2.0
 
 ## [0.1.0] — 2026-04-17
