@@ -7,6 +7,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -205,6 +206,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Detail):
 			return m, m.loadDetail()
+		case key.Matches(msg, m.keys.Exec):
+			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
 			return m, m.drillDown()
 		case key.Matches(msg, m.keys.Back):
@@ -379,6 +382,71 @@ func (m *model) loadDetail() tea.Cmd {
 			return detailLoadedMsg{title: cur.Name, body: string(data)}
 		},
 	)
+}
+
+func (m *model) execShell() tea.Cmd {
+	if m.active == nil || len(m.visibleNodes) == 0 {
+		return nil
+	}
+	cur := m.visibleNodes[m.table.Cursor()]
+	subID := contextSubID(cur)
+	if subID == "" {
+		m.status = "no subscription context at this level"
+		return nil
+	}
+	rg := contextRG(cur)
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	banner := fmt.Sprintf("cloudnav exec  sub=%s  rg=%s  —  exit to return\n", truncID(subID), rg)
+	script := fmt.Sprintf("printf %%s %q; exec %q", banner, shell)
+	c := exec.Command("sh", "-c", script)
+	c.Env = append(os.Environ(),
+		"CLOUDNAV_SUB="+subID,
+		"CLOUDNAV_SUB_NAME="+cur.Name,
+		"AZURE_SUBSCRIPTION_ID="+subID,
+	)
+	if rg != "" {
+		c.Env = append(c.Env, "CLOUDNAV_RG="+rg)
+	}
+	return tea.ExecProcess(c, func(err error) tea.Msg {
+		if err != nil {
+			return errMsg{err}
+		}
+		return nil
+	})
+}
+
+func contextSubID(n provider.Node) string {
+	if id := n.Meta["subscriptionId"]; id != "" {
+		return id
+	}
+	if n.Kind == provider.KindSubscription {
+		return n.ID
+	}
+	if n.Parent != nil {
+		return contextSubID(*n.Parent)
+	}
+	return ""
+}
+
+func contextRG(n provider.Node) string {
+	if n.Kind == provider.KindResourceGroup {
+		return n.Name
+	}
+	if n.Parent != nil && n.Parent.Kind == provider.KindResourceGroup {
+		return n.Parent.Name
+	}
+	return ""
+}
+
+func truncID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 func (m *model) openPortal() {
