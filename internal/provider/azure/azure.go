@@ -311,66 +311,15 @@ type rgJSON struct {
 }
 
 func (a *Azure) resourceGroups(ctx context.Context, sub provider.Node) ([]provider.Node, error) {
+	// ARM doesn't expose createdTime on the group-list response and Azure
+	// Resource Graph's resourcecontainers table only has it for a subset of
+	// tenants, so we don't show it on the RG view. Per-resource creation
+	// dates (below) come from $expand=createdTime which is reliable.
 	out, err := a.az.Run(ctx, "group", "list", "--subscription", sub.ID, "-o", "json")
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := parseRGs(out, sub)
-	if err != nil {
-		return nil, err
-	}
-	created := a.rgCreatedTimes(ctx, sub.ID)
-	for i := range nodes {
-		if t, ok := created[strings.ToLower(nodes[i].Name)]; ok && t != "" {
-			nodes[i].Meta["createdTime"] = t
-		}
-	}
-	return nodes, nil
-}
-
-// rgCreatedTimes asks Azure Resource Graph for createdTime of every RG in a
-// subscription in one round trip. Best-effort: if the graph extension is
-// missing or the user lacks permission the map comes back empty and RG rows
-// render "—" for the creation column.
-func (a *Azure) rgCreatedTimes(ctx context.Context, subID string) map[string]string {
-	q := "resourcecontainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | " +
-		"project name = tolower(name), createdTime = tostring(properties.createdTime)"
-	out, err := a.az.Run(ctx,
-		"graph", "query",
-		"-q", q,
-		"--subscriptions", subID,
-		"--first", "1000",
-		"-o", "json",
-	)
-	if err != nil {
-		return map[string]string{}
-	}
-	var env struct {
-		Data []struct {
-			Name        string `json:"name"`
-			CreatedTime string `json:"createdTime"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(out, &env); err != nil {
-		// Older CLI versions return a bare array.
-		var flat []struct {
-			Name        string `json:"name"`
-			CreatedTime string `json:"createdTime"`
-		}
-		if err2 := json.Unmarshal(out, &flat); err2 != nil {
-			return map[string]string{}
-		}
-		m := make(map[string]string, len(flat))
-		for _, r := range flat {
-			m[r.Name] = r.CreatedTime
-		}
-		return m
-	}
-	m := make(map[string]string, len(env.Data))
-	for _, r := range env.Data {
-		m[r.Name] = r.CreatedTime
-	}
-	return m
+	return parseRGs(out, sub)
 }
 
 func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
@@ -415,7 +364,9 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 		return nil, fmt.Errorf("azure: resource group %q has no subscription context", rg.Name)
 	}
 	// $expand=createdTime,changedTime surfaces per-resource audit timestamps
-	// that ARM doesn't return by default.
+	// that ARM doesn't return by default. Some providers / api-versions
+	// reject this expand — fall back to the plain list so drilling always
+	// works; we just lose the CREATED column for those resources.
 	out, err := a.az.Run(ctx,
 		"resource", "list",
 		"--resource-group", rg.Name,
@@ -424,7 +375,15 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 		"-o", "json",
 	)
 	if err != nil {
-		return nil, err
+		out, err = a.az.Run(ctx,
+			"resource", "list",
+			"--resource-group", rg.Name,
+			"--subscription", subID,
+			"-o", "json",
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return parseResources(out, rg, subID)
 }

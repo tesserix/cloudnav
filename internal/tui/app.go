@@ -174,6 +174,7 @@ type model struct {
 	advisorName   string
 	advisorIdx    int
 	loginStatus   map[string]string // providerName → human-readable auth state
+	drilling      bool              // a drill-level load is in flight; block navigation
 	deleteMode    bool
 	deleteTargets []provider.Node
 	deleteInput   textinput.Model
@@ -450,6 +451,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case nodesLoadedMsg:
 		m.loading = false
+		m.drilling = false
 		m.err = nil
 		m.stack = append(m.stack, msg.frame)
 		m.refreshTable()
@@ -580,6 +582,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.loading = false
+		m.drilling = false
 		m.err = msg.err
 		m.status = ""
 		return m, nil
@@ -1150,6 +1153,7 @@ func (m *model) drillAggregated() tea.Cmd {
 	prov := m.active
 	ctx := m.ctx
 	m.loading = true
+	m.drilling = true
 	m.status = fmt.Sprintf("loading resources across %d resource group(s)...", len(selected))
 	return tea.Batch(
 		m.spinner.Tick,
@@ -1215,6 +1219,7 @@ func (m *model) load(title string, parent *provider.Node) tea.Cmd {
 		return nil
 	}
 	m.loading = true
+	m.drilling = true
 	m.err = nil
 	m.status = "loading " + title + "..."
 	prov := m.active
@@ -1978,11 +1983,10 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResourceGroup:
 		cols := []table.Column{
 			{Title: " ", Width: 3},
-			{Title: "NAME", Width: 38},
-			{Title: "LOCATION", Width: 14},
-			{Title: "STATE", Width: 10},
-			{Title: "LOCK", Width: 18},
-			{Title: "CREATED", Width: 12},
+			{Title: "NAME", Width: 42},
+			{Title: "LOCATION", Width: 16},
+			{Title: "STATE", Width: 12},
+			{Title: "LOCK", Width: 20},
 		}
 		if m.showCost {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
@@ -2051,7 +2055,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
 			lock := lockBadgePlain(m.rgLockLevel(n.Name))
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock, shortDate(n.Meta["createdTime"])}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
@@ -2781,12 +2785,12 @@ func (m *model) atSubscriptionLevel() bool {
 	return kindOf(top) == provider.KindSubscription
 }
 
-// isDrillLoading reports whether the app is waiting for the initial set of
-// nodes for the current frame — i.e. there's nothing on screen yet and a
-// request is in flight. Cost / policy / lock background fetches leave rows
-// visible, so those don't count.
+// isDrillLoading reports whether a drill-level fetch is in flight — the user
+// hit Enter on a cloud / sub / RG and we're waiting for Root() or Children()
+// to return. Background fetches (cost streaming, policy lookups, lock
+// probes) leave this false so the user can keep navigating their rows.
 func (m *model) isDrillLoading() bool {
-	return m.loading && len(m.visibleNodes) == 0
+	return m.drilling
 }
 
 func (m *model) atCloudLevel() bool {
