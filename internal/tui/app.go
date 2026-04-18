@@ -349,11 +349,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.search.Width = w - 4
 			m.detail.Width = w
 		}
-		// 2 header lines + 1 blank + 1 footer = 4 rows of chrome
-		if h := msg.Height - 5; h > 0 {
-			m.table.SetHeight(h)
-			m.detail.Height = h
-		}
+		m.applyChromeHeight()
 		m.refreshTable()
 		return m, nil
 
@@ -1951,6 +1947,9 @@ func (m *model) refreshTable() {
 	prev := m.table.Cursor()
 	top := &m.stack[len(m.stack)-1]
 	m.visibleNodes = m.applyView(top.nodes)
+	// Keybar length can change on drill (new pairs become available) —
+	// re-apply chrome height so the wrapped keybar doesn't eat table rows.
+	m.applyChromeHeight()
 	m.mergeCosts(top)
 	cols := m.columnsFor(top)
 	rows := m.rowsFromNodes(top.title, m.visibleNodes)
@@ -3026,10 +3025,43 @@ func (m *model) keybar() string {
 		pair{"q", "quit"},
 	)
 	parts := make([]string, 0, len(pairs))
+	widths := make([]int, 0, len(pairs))
 	for _, p := range pairs {
-		parts = append(parts, styles.Key.Render("<"+p.key+">")+" "+styles.Help.Render(p.action))
+		text := styles.Key.Render("<"+p.key+">") + " " + styles.Help.Render(p.action)
+		parts = append(parts, text)
+		widths = append(widths, lipgloss.Width(text))
 	}
-	return "  " + strings.Join(parts, "  ")
+	// Pack entries into as many lines as the terminal width needs. One line
+	// when we have space, wrapping cleanly when we don't — beats truncating.
+	const indent = "  "
+	const sep = "  "
+	budget := m.width - len(indent)
+	if budget <= 20 {
+		// No width info yet (first frame) or pathologically narrow — just
+		// return the single line and let the renderer do what it can.
+		return indent + strings.Join(parts, sep)
+	}
+	var lines []string
+	var cur []string
+	curW := 0
+	for i, s := range parts {
+		need := widths[i]
+		if len(cur) > 0 {
+			need += len(sep)
+		}
+		if len(cur) > 0 && curW+need > budget {
+			lines = append(lines, indent+strings.Join(cur, sep))
+			cur = cur[:0]
+			curW = 0
+			need = widths[i]
+		}
+		cur = append(cur, s)
+		curW += need
+	}
+	if len(cur) > 0 {
+		lines = append(lines, indent+strings.Join(cur, sep))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) atSubscriptionLevel() bool {
@@ -3038,6 +3070,33 @@ func (m *model) atSubscriptionLevel() bool {
 	}
 	top := &m.stack[len(m.stack)-1]
 	return kindOf(top) == provider.KindSubscription
+}
+
+// applyChromeHeight sets the table height based on the current terminal
+// height minus the surrounding chrome — breadcrumb row, keybar (which can
+// wrap across 1-3 lines depending on width), blank separator, optional
+// category bar, and footer. Computed dynamically so wide terminals keep
+// their extra table row while narrow ones don't overflow.
+func (m *model) applyChromeHeight() {
+	if m.height <= 0 {
+		return
+	}
+	chrome := 1 // breadcrumb row
+	chrome += strings.Count(m.keybar(), "\n") + 1
+	chrome++ // blank line between header block and table
+	if m.categoryBar() != "" {
+		chrome++
+	}
+	chrome++ // footer
+	h := m.height - chrome
+	if h < 3 {
+		h = 3
+	}
+	m.table.SetHeight(h)
+	m.detail.Height = m.height - 3
+	if m.detail.Height < 3 {
+		m.detail.Height = 3
+	}
 }
 
 // isDrillLoading reports whether a drill-level fetch is in flight — the user
