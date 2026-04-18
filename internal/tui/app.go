@@ -457,6 +457,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTable()
 		m.table.SetCursor(0)
 		m.status = fmt.Sprintf("%d items", len(msg.frame.nodes))
+		if len(msg.frame.nodes) > 0 {
+			if cap := msg.frame.nodes[0].Meta["partial"]; cap != "" {
+				m.status = fmt.Sprintf("showing first %s — project has more; use / to filter", cap)
+			}
+		}
 		cmds := []tea.Cmd{}
 		if cmd := m.advanceRestore(); cmd != nil {
 			cmds = append(cmds, cmd)
