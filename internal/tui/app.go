@@ -1675,7 +1675,7 @@ func (m *model) installThenLogin(prov provider.Provider, loginer provider.Logine
 	}
 	// Chain install steps then login into one shell so the TUI suspends
 	// exactly once and the user sees the full output in order.
-	var parts []string
+	parts := make([]string, 0, len(steps)+1)
 	for _, s := range steps {
 		parts = append(parts, shellQuote(s.Bin, s.Args))
 	}
@@ -2105,10 +2105,11 @@ func shortID(s string) string {
 }
 
 const (
-	emDash      = "—"
-	pimSrcAzure = "azure"
-	pimSrcEntra = "entra"
-	pimSrcGroup = "group"
+	emDash          = "—"
+	pimSrcAzure     = "azure"
+	pimSrcEntra     = "entra"
+	pimSrcGroup     = "group"
+	cliNotInstalled = "✗ CLI not installed"
 )
 
 func costOrDash(c string) string {
@@ -2313,14 +2314,14 @@ func (m *model) cloudRowStatus(name string) (string, string) {
 		if p := m.providerByName(name); p != nil {
 			if inst, ok := p.(provider.Installer); ok {
 				if _, can := inst.InstallPlan(runtime.GOOS); can {
-					return "✗ CLI not installed", "press I to auto-install + login"
+					return cliNotInstalled, "press I to auto-install + login"
 				}
 			}
 			if l, ok := p.(provider.Loginer); ok {
-				return "✗ CLI not installed", l.InstallHint()
+				return cliNotInstalled, l.InstallHint()
 			}
 		}
-		return "✗ CLI not installed", ""
+		return cliNotInstalled, ""
 	case "not logged in":
 		if p := m.providerByName(name); p != nil {
 			if l, ok := p.(provider.Loginer); ok {

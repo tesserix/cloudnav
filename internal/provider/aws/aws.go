@@ -42,7 +42,7 @@ func (a *AWS) InstallHint() string {
 	return "install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 }
 
-// InstallPlan picks a per-OS install method, prefering Homebrew where
+// InstallPlan picks a per-OS install method, preferring Homebrew where
 // available (no sudo, clean uninstall).
 func (a *AWS) InstallPlan(goos string) ([]provider.InstallStep, bool) {
 	switch goos {
