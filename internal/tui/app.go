@@ -1095,7 +1095,7 @@ func (m *model) costScope() (provider.Node, bool) {
 			return *top.parent, true
 		}
 	case provider.KindProject:
-		return provider.Node{ID: "gcp", Kind: provider.KindCloud}, true
+		return provider.Node{ID: providerGCP, Kind: provider.KindCloud}, true
 	}
 	return provider.Node{}, false
 }
@@ -1106,7 +1106,7 @@ func (m *model) costHint() string {
 		return "cost column on — drill into a subscription's resource groups"
 	case "aws":
 		return "cost column on — drill into the account's regions"
-	case "gcp":
+	case providerGCP:
 		return "cost column on — press c on the projects list"
 	default:
 		return "cost column on — not supported at this view"
@@ -1429,7 +1429,7 @@ func (m *model) advisorScopeForActive() (string, string, string) {
 			filter = resourceID
 		}
 		return subID, filter, name
-	case "gcp":
+	case providerGCP:
 		projID, name := m.gcpAdvisorTarget()
 		return projID, "projects/" + projID, name
 	}
@@ -2426,6 +2426,7 @@ const (
 	pimSrcGroup     = "group"
 	pimSrcGCP       = "gcp-pam"
 	cliNotInstalled = "✗ CLI not installed"
+	providerGCP     = "gcp"
 )
 
 func costOrDash(c string) string {
@@ -2638,7 +2639,7 @@ func (m *model) billingView() string {
 	// For GCP, if the BQ export isn't live yet we have a rich diagnostic we
 	// can show instead of an empty pane — walks the user through the exact
 	// remaining steps to enable the export.
-	if m.billingScope == "gcp" && !m.gcpExportLive() && m.billingGCP != nil {
+	if m.billingScope == providerGCP && !m.gcpExportLive() && m.billingGCP != nil {
 		return m.gcpBillingSetupView(header)
 	}
 
