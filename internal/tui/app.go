@@ -2205,15 +2205,19 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResource:
 		cols := []table.Column{
 			{Title: " ", Width: 4},
-			{Title: "NAME", Width: 36},
-			{Title: "TYPE", Width: 28},
-			{Title: "LOCATION", Width: 12},
+			{Title: "NAME", Width: 40},
+			{Title: "TYPE", Width: 30},
+			{Title: "LOCATION", Width: 14},
 			{Title: "CREATED", Width: 12},
 		}
 		if f.aggregated {
 			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: 32})
 		}
-		if m.showCost {
+		// Only Azure exposes a per-resource cost API. GCP's BigQuery billing
+		// export doesn't reliably surface a resource_name column, and AWS CE
+		// groups by service/region not individual resources, so the column
+		// would just be "—" everywhere.
+		if m.showCost && m.active != nil && m.active.Name() == pimSrcAzure {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
 		}
 		return cols
@@ -2275,7 +2279,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
 				row = append(row, n.Meta["originRG"])
 			}
-			if m.showCost {
+			if m.showCost && m.active != nil && m.active.Name() == pimSrcAzure {
 				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
@@ -3010,6 +3014,11 @@ func (m *model) keybar() string {
 	}
 	if m.atResourceLevel() {
 		pairs = append(pairs, pair{"␣", "select"})
+		label := "0-5 filter"
+		if m.categoryFilter != "" {
+			label = "filter: " + m.categoryFilter
+		}
+		pairs = append(pairs, pair{"#", label})
 	}
 	pairs = append(pairs,
 		pair{"r", "refresh"},
@@ -3497,6 +3506,11 @@ func (m *model) footerView() string {
 		right = m.status
 	case total > 0:
 		right = fmt.Sprintf("%d items", total)
+	}
+	// Truncation / "showing first N" should pop — otherwise the user easily
+	// misses that they're looking at a partial view.
+	if strings.HasPrefix(right, "showing first") {
+		return " " + styles.WarnS.Render("⚠ "+right)
 	}
 	return " " + styles.Help.Render(right)
 }
