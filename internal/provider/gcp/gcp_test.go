@@ -81,6 +81,34 @@ func TestShortType(t *testing.T) {
 	}
 }
 
+func TestIsInvalidAssetType(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"INVALID_ARGUMENT: No supported asset type matches: sqladmin.googleapis.com/Database", true},
+		{"INVALID_ARGUMENT: asset type is unknown", true},
+		{"PERMISSION_DENIED: caller does not have permission", false},
+		{"network timeout", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		var err error
+		if c.msg != "" {
+			err = errFromString(c.msg)
+		}
+		if got := isInvalidAssetType(err); got != c.want {
+			t.Errorf("isInvalidAssetType(%q) = %v, want %v", c.msg, got, c.want)
+		}
+	}
+}
+
+type testErr string
+
+func (e testErr) Error() string { return string(e) }
+
+func errFromString(s string) error { return testErr(s) }
+
 func TestPortalURL(t *testing.T) {
 	g := New()
 	n := provider.Node{ID: "acme-prod-1", Kind: provider.KindProject}

@@ -181,9 +181,13 @@ var assetTypeWhitelist = []string{
 	"run.googleapis.com/Job",
 	"cloudfunctions.googleapis.com/Function",
 	"workflows.googleapis.com/Workflow",
-	// Data stores
+	// Data stores — Asset Inventory's search surface only includes a subset
+	// of these resource types; see cloud.google.com/asset-inventory/docs/
+	// supported-asset-types. sqladmin.googleapis.com/Database,
+	// aiplatform.googleapis.com/Notebook, sourcerepo/Repository and
+	// cloudcdn/CdnPolicy aren't searchable today and fail the whole call
+	// with INVALID_ARGUMENT — keep them out of the whitelist.
 	"sqladmin.googleapis.com/Instance",
-	"sqladmin.googleapis.com/Database",
 	"spanner.googleapis.com/Instance",
 	"spanner.googleapis.com/Database",
 	"bigtableadmin.googleapis.com/Instance",
@@ -201,17 +205,14 @@ var assetTypeWhitelist = []string{
 	"composer.googleapis.com/Environment",
 	"aiplatform.googleapis.com/Endpoint",
 	"aiplatform.googleapis.com/Model",
-	"aiplatform.googleapis.com/Notebook",
 	// Messaging
 	"pubsub.googleapis.com/Topic",
 	"pubsub.googleapis.com/Subscription",
 	// DevOps / registries
 	"artifactregistry.googleapis.com/Repository",
 	"cloudbuild.googleapis.com/BuildTrigger",
-	"sourcerepo.googleapis.com/Repository",
 	// Networking
 	"dns.googleapis.com/ManagedZone",
-	"cloudcdn.googleapis.com/CdnPolicy",
 	// Security / IAM
 	"iam.googleapis.com/ServiceAccount",
 	"iam.googleapis.com/Role",
@@ -254,19 +255,28 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 	// --page-size raises the server page from the 100 default so the 500
 	// cap lands in one round trip instead of six. On a 5k-asset project
 	// this drops drill time from ~32s to ~3s.
-	args := []string{
+	baseArgs := []string{
 		"asset", "search-all-resources",
 		"--scope=projects/" + project.ID,
 		fmt.Sprintf("--limit=%d", assetPageLimit+1),
 		fmt.Sprintf("--page-size=%d", assetPageLimit),
 		"--format=json",
 	}
+	args := baseArgs
 	if at := resolveAssetTypes(); at != "" {
 		args = append(args, "--asset-types="+at)
 	}
 	out, err := g.gcloud.Run(callCtx, args...)
 	if err != nil {
-		return nil, translateAssetError(err, project.ID)
+		// Asset Inventory periodically renames or drops searchable types;
+		// when the filter is the reason the call failed, retry unfiltered
+		// so the user still gets a usable list (just noisier).
+		if isInvalidAssetType(err) && len(args) > len(baseArgs) {
+			out, err = g.gcloud.Run(callCtx, baseArgs...)
+		}
+		if err != nil {
+			return nil, translateAssetError(err, project.ID)
+		}
 	}
 	nodes, err := parseAssets(out, project)
 	if err != nil {
@@ -279,6 +289,18 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 		nodes[0].Meta["partial"] = fmt.Sprintf("%d", assetPageLimit)
 	}
 	return nodes, nil
+}
+
+// isInvalidAssetType detects the "No supported asset type matches" shape the
+// Asset Inventory API returns when one of the types in --asset-types isn't
+// searchable. The whole call fails rather than ignoring the unknown entry,
+// so we catch it and retry without the filter.
+func isInvalidAssetType(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "INVALID_ARGUMENT") && strings.Contains(s, "asset type")
 }
 
 // translateAssetError rewrites the most common Cloud Asset failure modes into
