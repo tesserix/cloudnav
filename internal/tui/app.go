@@ -373,6 +373,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
+		// Lock navigation while the current frame is still loading and has
+		// nothing on screen yet — otherwise the cursor moves behind a blank
+		// view and any keystroke that fires a new command stacks on top of
+		// the in-flight one. Quit and back still work so the user can bail.
+		if m.isDrillLoading() {
+			switch {
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, m.keys.Back):
+				return m, m.goBack()
+			}
+			return m, nil
+		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -2218,7 +2231,9 @@ func (m *model) View() string {
 		)
 	}
 	body := m.table.View()
-	if len(m.visibleNodes) == 0 && !m.loading {
+	if m.isDrillLoading() {
+		body = m.drillLoadingBody()
+	} else if len(m.visibleNodes) == 0 && !m.loading {
 		body = m.emptyBody()
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -2226,6 +2241,27 @@ func (m *model) View() string {
 		body,
 		m.footerView(),
 	)
+}
+
+// drillLoadingBody is the big in-your-face loading panel shown while the
+// initial node list is in flight. It replaces the table so there's nothing
+// to accidentally navigate, and spells out exactly what cloudnav is waiting
+// on plus the fact that input is disabled until it lands.
+func (m *model) drillLoadingBody() string {
+	title := styles.Title.Render("⏳ loading")
+	detail := m.status
+	if detail == "" {
+		detail = "waiting for cloud response..."
+	}
+	lines := []string{
+		"",
+		"  " + title + "  " + m.spinner.View(),
+		"",
+		"  " + detail,
+		"",
+		styles.Help.Render("  input is disabled until this finishes — press esc to go back, q to quit"),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -2745,6 +2781,14 @@ func (m *model) atSubscriptionLevel() bool {
 	return kindOf(top) == provider.KindSubscription
 }
 
+// isDrillLoading reports whether the app is waiting for the initial set of
+// nodes for the current frame — i.e. there's nothing on screen yet and a
+// request is in flight. Cost / policy / lock background fetches leave rows
+// visible, so those don't count.
+func (m *model) isDrillLoading() bool {
+	return m.loading && len(m.visibleNodes) == 0
+}
+
 func (m *model) atCloudLevel() bool {
 	if len(m.stack) == 0 {
 		return false
@@ -3178,12 +3222,12 @@ func (m *model) footerView() string {
 	// so the user can see what filter is active even while costs stream in.
 	if filt := m.filterFooter(); filt != "" {
 		if m.loading {
-			return " " + m.spinner.View() + " " + styles.Help.Render(filt)
+			return " " + m.loadingFooter(filt)
 		}
 		return " " + styles.Help.Render(filt)
 	}
 	if m.loading {
-		return " " + m.spinner.View() + " " + styles.Help.Render(m.status)
+		return " " + m.loadingFooter(m.status)
 	}
 	if m.err != nil {
 		msg := firstErrLine(m.err)
@@ -3205,6 +3249,13 @@ func (m *model) footerView() string {
 		right = fmt.Sprintf("%d items", total)
 	}
 	return " " + styles.Help.Render(right)
+}
+
+// loadingFooter renders the active-spinner footer line with the status in
+// cyan + bold so it reads as "something is happening" instead of melting into
+// the dim filter text.
+func (m *model) loadingFooter(text string) string {
+	return m.spinner.View() + " " + lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true).Render(text)
 }
 
 // filterFooter renders the tenant / search filter strip with an N/total
