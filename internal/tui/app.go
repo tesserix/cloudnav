@@ -3236,7 +3236,7 @@ func (m *model) keybar() string {
 		return indent + strings.Join(parts, sep)
 	}
 	var lines []string
-	var cur []string
+	cur := make([]string, 0, len(parts))
 	curW := 0
 	for i, s := range parts {
 		need := widths[i]
