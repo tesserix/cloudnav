@@ -405,17 +405,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.atResourceLevel() {
 			switch msg.String() {
 			case "0":
-				return m, m.setCategoryFilter("")
+				m.setCategoryFilter("")
+				return m, nil
 			case "1":
-				return m, m.setCategoryFilter(catCompute)
+				m.setCategoryFilter(catCompute)
+				return m, nil
 			case "2":
-				return m, m.setCategoryFilter(catData)
+				m.setCategoryFilter(catData)
+				return m, nil
 			case "3":
-				return m, m.setCategoryFilter(catNetwork)
+				m.setCategoryFilter(catNetwork)
+				return m, nil
 			case "4":
-				return m, m.setCategoryFilter(catSecurity)
+				m.setCategoryFilter(catSecurity)
+				return m, nil
 			case "5":
-				return m, m.setCategoryFilter(catOther)
+				m.setCategoryFilter(catOther)
+				return m, nil
 			}
 		}
 		switch {
@@ -2012,8 +2018,8 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 }
 
 // setCategoryFilter updates the active resource-category filter and triggers
-// a table refresh. Returns nil so callers can do `return m, m.setCategoryFilter(...)`.
-func (m *model) setCategoryFilter(cat string) tea.Cmd {
+// a table refresh.
+func (m *model) setCategoryFilter(cat string) {
 	m.categoryFilter = cat
 	if cat == "" {
 		m.status = "category: all"
@@ -2021,7 +2027,6 @@ func (m *model) setCategoryFilter(cat string) tea.Cmd {
 		m.status = "category: " + cat
 	}
 	m.refreshTable()
-	return nil
 }
 
 // Resource category constants used by the category filter bar on the
