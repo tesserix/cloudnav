@@ -49,3 +49,41 @@ func TestParseRecommendations(t *testing.T) {
 		t.Errorf("[1].Problem=%q", recs[1].Problem)
 	}
 }
+
+// TestParseRecommendationsResourceID verifies we extract the target resource
+// id from either properties.resourceMetadata.resourceId or — when that's
+// omitted — from the rec id prefix. The TUI's advisor filter uses this field
+// to scope recommendations to the cursor row.
+func TestParseRecommendationsResourceID(t *testing.T) {
+	data := []byte(`{
+      "value": [
+        {
+          "id": "/subscriptions/abc/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm1/providers/Microsoft.Advisor/recommendations/rec1",
+          "properties": {
+            "category": "Cost",
+            "impact": "Medium",
+            "resourceMetadata": { "resourceId": "/subscriptions/abc/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm1" },
+            "shortDescription": { "problem": "p1", "solution": "s1" }
+          }
+        },
+        {
+          "id": "/subscriptions/abc/resourceGroups/rg-b/providers/Microsoft.Advisor/recommendations/rec2",
+          "properties": {
+            "category": "Security",
+            "impact": "Low",
+            "shortDescription": { "problem": "p2", "solution": "s2" }
+          }
+        }
+      ]
+    }`)
+	recs, err := parseRecommendations(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recs[0].ResourceID; got != "/subscriptions/abc/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm1" {
+		t.Errorf("[0].ResourceID=%q", got)
+	}
+	if got := recs[1].ResourceID; got != "/subscriptions/abc/resourceGroups/rg-b" {
+		t.Errorf("[1].ResourceID (derived from id) = %q", got)
+	}
+}

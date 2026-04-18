@@ -6,9 +6,12 @@ assert_regex "version shows semver-ish" '^cloudnav [v0-9]' "$out"
 
 out=$("$BIN" --help 2>&1); rc=$?
 assert_exit "help exits 0" 0 "$rc"
-for sub in doctor version ls pim cost completion; do
+for sub in doctor version ls pim cost completion login install; do
   assert_contains "help lists '$sub' subcommand" "  $sub " "$out"
 done
+assert_contains "root help mentions doctor in onboarding" "cloudnav doctor" "$out"
+assert_contains "root help mentions install" "cloudnav install" "$out"
+assert_contains "root help mentions login" "cloudnav login" "$out"
 
 out=$("$BIN" doctor 2>&1); rc=$?
 assert_exit "doctor exits 0" 0 "$rc"

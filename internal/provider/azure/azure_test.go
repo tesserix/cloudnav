@@ -158,6 +158,17 @@ func TestParseResources(t *testing.T) {
 	if vm.Meta["subscriptionId"] != subID {
 		t.Errorf("subscriptionId = %q", vm.Meta["subscriptionId"])
 	}
+	if vm.Meta["createdTime"] != "2025-09-14T08:15:00Z" {
+		t.Errorf("createdTime = %q — expected the $expand=createdTime value", vm.Meta["createdTime"])
+	}
+	if vm.Meta["changedTime"] != "2026-03-01T11:42:00Z" {
+		t.Errorf("changedTime = %q", vm.Meta["changedTime"])
+	}
+	// Second resource has no createdTime — the field should be absent, not
+	// emit an empty-string entry.
+	if _, ok := nodes[1].Meta["createdTime"]; ok {
+		t.Error("resource without createdTime should not set the meta key")
+	}
 }
 
 func TestChildrenRejectsUnknownKind(t *testing.T) {

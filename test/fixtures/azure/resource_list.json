@@ -3,7 +3,9 @@
     "id": "/subscriptions/00000000-0000-0000-0000-00000000aaaa/resourceGroups/web-prod-rg/providers/Microsoft.Compute/virtualMachines/api-01",
     "location": "uksouth",
     "name": "api-01",
-    "type": "Microsoft.Compute/virtualMachines"
+    "type": "Microsoft.Compute/virtualMachines",
+    "createdTime": "2025-09-14T08:15:00Z",
+    "changedTime": "2026-03-01T11:42:00Z"
   },
   {
     "id": "/subscriptions/00000000-0000-0000-0000-00000000aaaa/resourceGroups/web-prod-rg/providers/Microsoft.Storage/storageAccounts/webprodsa",

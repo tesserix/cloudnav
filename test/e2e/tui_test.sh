@@ -21,17 +21,27 @@ stop_cn() { tmux send-keys -t "$SESSION" q 2>/dev/null || true; sleep 0.5; tmux 
 
 # T1: home renders all 3 clouds
 start_cn
+sleep 4   # give the background LoggedIn probe a moment to populate the status column
 home=$(grab)
 assert_contains "TUI home lists azure" "azure" "$home"
 assert_contains "TUI home lists gcp" "gcp" "$home"
 assert_contains "TUI home lists aws" "aws" "$home"
 assert_contains "TUI home shows sort keybinding" "sort name" "$home"
+assert_contains "TUI home shows STATUS column" "STATUS" "$home"
+assert_contains "TUI home shows HINT column" "HINT" "$home"
+# login-check runs async on startup — we should see either a check result or
+# the initial "checking..." placeholder; either is a positive signal that the
+# login-state plumbing is running.
+assert_regex "TUI home cloud rows surface login state" '(✓ logged in|✗ not logged in|✗ CLI not installed|checking\.\.\.)' "$home"
+assert_contains "TUI home keybar exposes <I> login" "<I> login" "$home"
 
 # T2: help overlay opens
 send "?"; sleep 0.5
 help=$(grab)
 assert_contains "TUI help overlay opens on ?" "keybindings" "$help"
 assert_contains "TUI help lists palette hint" "palette" "$help"
+assert_contains "TUI help covers PIM across Azure/Entra/Groups" "Entra" "$help"
+assert_contains "TUI help mentions the login key" "login" "$help"
 send " "; sleep 0.3   # close help
 
 # T3: quit works
