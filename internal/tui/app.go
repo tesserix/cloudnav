@@ -174,6 +174,9 @@ type model struct {
 	advisorName   string
 	advisorIdx    int
 	loginStatus   map[string]string // providerName → human-readable auth state
+	deleteMode    bool
+	deleteTargets []provider.Node
+	deleteInput   textinput.Model
 	width         int
 	height        int
 	keys          keys.Map
@@ -225,6 +228,12 @@ func newModel() *model {
 	pimFilt.CharLimit = 120
 	pimFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	delIn := textinput.New()
+	delIn.Prompt = "type DELETE to confirm: "
+	delIn.Placeholder = "DELETE"
+	delIn.CharLimit = 16
+	delIn.PromptStyle = lipgloss.NewStyle().Foreground(styles.Err).Bold(true)
+
 	vp := viewport.New(80, 20)
 	vp.Style = lipgloss.NewStyle()
 
@@ -241,6 +250,7 @@ func newModel() *model {
 		paletteInput: pi,
 		pimInput:     pimIn,
 		pimFilterIn:  pimFilt,
+		deleteInput:  delIn,
 		pimDuration:  8,
 		detail:       vp,
 		cfg:          cfg,
@@ -335,6 +345,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.deleteMode {
+			return m.updateDeleteConfirm(msg)
+		}
 		if m.pimMode {
 			return m.updatePIM(msg)
 		}
@@ -2181,6 +2194,9 @@ func firstErrLine(err error) string {
 }
 
 func (m *model) View() string {
+	if m.deleteMode {
+		return m.deleteConfirmView()
+	}
 	if m.showHelp {
 		return m.helpView()
 	}
@@ -2971,13 +2987,17 @@ func (m *model) selectAllVisible() {
 	m.refreshTable()
 }
 
+// promptDelete gates destructive RG deletion behind an explicit confirmation
+// overlay. Validation up front (scope, provider, non-empty selection, no
+// locks) short-circuits with a status hint; only a clean selection opens the
+// confirmation modal. The actual azure call doesn't fire until the user types
+// DELETE in executeDelete.
 func (m *model) promptDelete() tea.Cmd {
 	if !m.atRGLevel() {
 		m.status = "D works on the resource-groups view"
 		return nil
 	}
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
+	if _, ok := m.active.(*azure.Azure); !ok {
 		m.status = "delete is Azure-only"
 		return nil
 	}
@@ -2997,8 +3017,30 @@ func (m *model) promptDelete() tea.Cmd {
 			return nil
 		}
 	}
+	m.deleteMode = true
+	m.deleteTargets = targets
+	m.deleteInput.SetValue("")
+	m.deleteInput.Focus()
+	m.status = ""
+	return nil
+}
+
+// executeDelete fires the actual async deletion after the user has typed the
+// confirmation word. Runs one request per target and reports a single summary
+// message — Azure handles the multi-hour async teardown.
+func (m *model) executeDelete() tea.Cmd {
+	az, ok := m.active.(*azure.Azure)
+	if !ok || len(m.deleteTargets) == 0 {
+		m.deleteMode = false
+		return nil
+	}
+	targets := m.deleteTargets
 	subID := m.currentSubID()
 	ctx := m.ctx
+	m.deleteMode = false
+	m.deleteInput.Blur()
+	m.deleteTargets = nil
+	m.selected = map[string]bool{}
 	m.loading = true
 	m.status = fmt.Sprintf("deleting %d resource group(s) asynchronously...", len(targets))
 	return tea.Batch(
@@ -3019,6 +3061,65 @@ func (m *model) promptDelete() tea.Cmd {
 			return deletedMsg{msg: fmt.Sprintf("requested deletion of %d RG(s) — Azure is processing", len(targets))}
 		},
 	)
+}
+
+// updateDeleteConfirm handles keys inside the delete confirmation overlay.
+// Enter with "DELETE" typed fires; anything else (including esc or Enter with
+// a wrong word) cancels. Matching is case-insensitive for user comfort but
+// an empty input never proceeds — that's the safety floor.
+func (m *model) updateDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc:
+		m.deleteMode = false
+		m.deleteTargets = nil
+		m.deleteInput.Blur()
+		m.status = "deletion cancelled"
+		return m, nil
+	case keyEnter:
+		if strings.EqualFold(strings.TrimSpace(m.deleteInput.Value()), "DELETE") {
+			return m, m.executeDelete()
+		}
+		m.deleteMode = false
+		m.deleteTargets = nil
+		m.deleteInput.Blur()
+		m.status = "deletion cancelled — confirmation word did not match 'DELETE'"
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.deleteInput, cmd = m.deleteInput.Update(msg)
+	return m, cmd
+}
+
+// deleteConfirmView renders the destructive-action modal. The disclaimer is
+// blunt on purpose: the user is about to tell Azure to tear down resource
+// groups that may hold production data, and cloudnav does not have the state
+// or authority to undo that. Making the wording visible makes it harder to
+// wave away.
+func (m *model) deleteConfirmView() string {
+	lines := []string{
+		styles.Bad.Render("⚠  DELETE RESOURCE GROUPS"),
+		"",
+		styles.Header.Render("This will permanently delete:"),
+	}
+	for i, t := range m.deleteTargets {
+		line := fmt.Sprintf("  %2d. %s   %s", i+1, t.Name, styles.Help.Render(t.Location))
+		lines = append(lines, line)
+	}
+	lines = append(lines,
+		"",
+		styles.Bad.Render("Everything inside each resource group — VMs, databases, storage,"),
+		styles.Bad.Render("keys, backups — goes with it. Azure async-tears it down and the"),
+		styles.Bad.Render("operation cannot be undone once the request is accepted."),
+		"",
+		styles.Help.Render("cloudnav forwards the request to the Azure CLI. You are responsible"),
+		styles.Help.Render("for the consequences of this action. Recovery is a support ticket,"),
+		styles.Help.Render("and in most cases there is no recovery at all."),
+		"",
+		m.deleteInput.View(),
+		"",
+		styles.Help.Render("enter  proceed     esc  cancel"),
+	)
+	return styles.Box.Render(strings.Join(lines, "\n"))
 }
 
 func (m *model) cycleTenant() {
