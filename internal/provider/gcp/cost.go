@@ -34,7 +34,22 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 	}
 	table := g.billingTableResolved()
 	if table == "" {
-		return nil, fmt.Errorf("gcp cost needs a BigQuery billing-export table — set it once with:\n  cloudnav config set gcp.billing_table <project>.<dataset>.<table>\nor export %s=...\n(see cloud.google.com/billing/docs/how-to/export-data-bigquery to create the export)", billingTableEnv)
+		// Try auto-detection once before giving up.
+		if detected, acct := g.autoDetectBillingTable(ctx); detected != "" {
+			g.billingTable = detected
+			table = detected
+			_ = acct
+		}
+	}
+	if table == "" {
+		// Link directly to the billing export setup page when we know the
+		// billing account for the current default project.
+		setupURL := "https://console.cloud.google.com/billing/_/export"
+		if acct := g.primaryBillingAccount(ctx); acct != "" {
+			setupURL = fmt.Sprintf("https://console.cloud.google.com/billing/%s/export", acct)
+		}
+		return nil, fmt.Errorf("GCP per-project cost needs BigQuery billing export (Google doesn't expose a cost API without it).\n\n  1. enable it here: %s\n  2. wait a few hours for the first export to land\n  3. tell cloudnav where the table lives, once, with either:\n       export %s=<project>.<dataset>.<table>\n       or add {\"gcp\":{\"billing_table\":\"<project>.<dataset>.<table>\"}} to ~/.config/cloudnav/config.json",
+			setupURL, billingTableEnv)
 	}
 	query := fmt.Sprintf(
 		"SELECT project.id AS project_id, ROUND(SUM(cost), 2) AS total, currency "+
@@ -61,6 +76,60 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 		}
 	}
 	return parseBQCost(out)
+}
+
+// autoDetectBillingTable walks a tiny discovery chain: default project →
+// its billing account → datasets matching "billing" → the canonical
+// gcp_billing_export_v1_* table. Returns "" when anything on that chain
+// isn't set up. Best-effort and cached per-process.
+func (g *GCP) autoDetectBillingTable(ctx context.Context) (string, string) {
+	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project", "--format=value(core.project)")
+	if err != nil {
+		return "", ""
+	}
+	project := strings.TrimSpace(string(projectOut))
+	if project == "" {
+		return "", ""
+	}
+	acctOut, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
+	if err != nil {
+		return "", ""
+	}
+	acct := strings.TrimPrefix(strings.TrimSpace(string(acctOut)), "billingAccounts/")
+	if acct == "" {
+		return "", ""
+	}
+	// Billing export tables are named gcp_billing_export_v1_<ACCT> with dashes
+	// replaced by underscores. Try a lightweight `bq show` on the conventional
+	// dataset 'billing_export'; on success we know the table exists.
+	table := fmt.Sprintf("%s.billing_export.gcp_billing_export_v1_%s", project, strings.ReplaceAll(acct, "-", "_"))
+	if _, err := g.gcloud.Run(ctx, "alpha", "bq", "tables", "describe",
+		"--dataset=billing_export",
+		"--project="+project,
+		"gcp_billing_export_v1_"+strings.ReplaceAll(acct, "-", "_"),
+		"--format=value(tableReference.tableId)",
+	); err == nil {
+		return table, acct
+	}
+	return "", acct
+}
+
+// primaryBillingAccount returns the billing account for the gcloud default
+// project. Used to deep-link into the Billing → Export setup page.
+func (g *GCP) primaryBillingAccount(ctx context.Context) string {
+	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project", "--format=value(core.project)")
+	if err != nil {
+		return ""
+	}
+	project := strings.TrimSpace(string(projectOut))
+	if project == "" {
+		return ""
+	}
+	out, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "billingAccounts/")
 }
 
 func parseBQCost(data []byte) (map[string]string, error) {

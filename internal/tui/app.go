@@ -174,7 +174,8 @@ type model struct {
 	advisorName   string
 	advisorIdx    int
 	loginStatus   map[string]string // providerName → human-readable auth state
-	drilling      bool              // a drill-level load is in flight; block navigation
+	drilling       bool   // a drill-level load is in flight; block navigation
+	categoryFilter string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode    bool
 	deleteTargets []provider.Node
 	deleteInput   textinput.Model
@@ -397,6 +398,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.goBack()
 			}
 			return m, nil
+		}
+		// 0-5 cycle the category filter on the resource list view. Cheap
+		// shortcut to go from "all 500 things in this RG/project" to "just
+		// compute" without typing in the / search.
+		if m.atResourceLevel() {
+			switch msg.String() {
+			case "0":
+				return m, m.setCategoryFilter("")
+			case "1":
+				return m, m.setCategoryFilter(catCompute)
+			case "2":
+				return m, m.setCategoryFilter(catData)
+			case "3":
+				return m, m.setCategoryFilter(catNetwork)
+			case "4":
+				return m, m.setCategoryFilter(catSecurity)
+			case "5":
+				return m, m.setCategoryFilter(catOther)
+			}
 		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
@@ -1204,6 +1224,7 @@ func (m *model) resetView() {
 	m.searchMode = false
 	m.search.Blur()
 	m.tenantFilter = ""
+	m.categoryFilter = ""
 }
 
 func (m *model) goBack() tea.Cmd {
@@ -1956,11 +1977,19 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 	out := make([]provider.Node, 0, len(nodes))
 	q := strings.ToLower(m.filter)
 	tf := strings.ToLower(m.tenantFilter)
+	cat := m.categoryFilter
 	for _, n := range nodes {
 		if tf != "" && strings.ToLower(n.Meta["tenantName"]) != tf {
 			continue
 		}
-		if q == "" || strings.Contains(strings.ToLower(n.Name), q) || strings.Contains(strings.ToLower(n.Meta["tenantName"]), q) {
+		if cat != "" && n.Kind == provider.KindResource && resourceCategory(n) != cat {
+			continue
+		}
+		if q == "" ||
+			strings.Contains(strings.ToLower(n.Name), q) ||
+			strings.Contains(strings.ToLower(n.Meta["type"]), q) ||
+			strings.Contains(strings.ToLower(n.State), q) ||
+			strings.Contains(strings.ToLower(n.Meta["tenantName"]), q) {
 			out = append(out, n)
 		}
 	}
@@ -1980,6 +2009,126 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 		})
 	}
 	return out
+}
+
+// setCategoryFilter updates the active resource-category filter and triggers
+// a table refresh. Returns nil so callers can do `return m, m.setCategoryFilter(...)`.
+func (m *model) setCategoryFilter(cat string) tea.Cmd {
+	m.categoryFilter = cat
+	if cat == "" {
+		m.status = "category: all"
+	} else {
+		m.status = "category: " + cat
+	}
+	m.refreshTable()
+	return nil
+}
+
+// Resource category constants used by the category filter bar on the
+// resource-list view. Kept short so the tab row stays readable.
+const (
+	catCompute  = "compute"
+	catData     = "data"
+	catNetwork  = "network"
+	catSecurity = "security"
+	catOther    = "other"
+)
+
+// resourceCategory sorts a Node into one of ~5 buckets based on its type
+// string. The mapping is deliberately coarse — users want "show me compute"
+// not a 30-way faceted search — and covers Azure / GCP / AWS with the same
+// function so the TUI tab bar stays provider-agnostic.
+func resourceCategory(n provider.Node) string {
+	t := strings.ToLower(n.Meta["type"])
+	switch {
+	// Compute (VMs, serverless, containers, batch)
+	case strings.Contains(t, "microsoft.compute/"),
+		strings.Contains(t, "microsoft.containerservice"),
+		strings.Contains(t, "microsoft.web/"),
+		strings.Contains(t, "microsoft.containerinstance"),
+		strings.Contains(t, "microsoft.containerregistry"),
+		strings.Contains(t, "microsoft.batch"),
+		strings.Contains(t, "microsoft.dataproc"),
+		strings.Contains(t, "compute.googleapis.com"),
+		strings.Contains(t, "container.googleapis.com"),
+		strings.Contains(t, "run.googleapis.com"),
+		strings.Contains(t, "cloudfunctions.googleapis.com"),
+		strings.Contains(t, "workflows.googleapis.com"),
+		strings.Contains(t, "artifactregistry.googleapis.com"),
+		strings.HasPrefix(t, "ec2:"),
+		strings.HasPrefix(t, "lambda:"),
+		strings.HasPrefix(t, "ecs:"),
+		strings.HasPrefix(t, "eks:"),
+		strings.HasPrefix(t, "batch:"),
+		strings.HasPrefix(t, "ecr:"):
+		return catCompute
+
+	// Data (relational, NoSQL, cache, analytics, object storage)
+	case strings.Contains(t, "microsoft.sql"),
+		strings.Contains(t, "microsoft.storage"),
+		strings.Contains(t, "microsoft.documentdb"),
+		strings.Contains(t, "microsoft.cache"),
+		strings.Contains(t, "microsoft.dbforpostgresql"),
+		strings.Contains(t, "microsoft.dbformysql"),
+		strings.Contains(t, "microsoft.dbformariadb"),
+		strings.Contains(t, "microsoft.synapse"),
+		strings.Contains(t, "microsoft.datafactory"),
+		strings.Contains(t, "sqladmin.googleapis.com"),
+		strings.Contains(t, "spanner.googleapis.com"),
+		strings.Contains(t, "bigtable"),
+		strings.Contains(t, "redis.googleapis.com"),
+		strings.Contains(t, "memcache.googleapis.com"),
+		strings.Contains(t, "firestore.googleapis.com"),
+		strings.Contains(t, "storage.googleapis.com"),
+		strings.Contains(t, "bigquery.googleapis.com"),
+		strings.Contains(t, "dataflow.googleapis.com"),
+		strings.Contains(t, "dataproc.googleapis.com"),
+		strings.HasPrefix(t, "s3:"),
+		strings.HasPrefix(t, "rds:"),
+		strings.HasPrefix(t, "dynamodb:"),
+		strings.HasPrefix(t, "elasticache:"),
+		strings.HasPrefix(t, "redshift:"),
+		strings.HasPrefix(t, "glue:"):
+		return catData
+
+	// Network
+	case strings.Contains(t, "microsoft.network"),
+		strings.Contains(t, "microsoft.cdn"),
+		strings.Contains(t, "dns.googleapis.com"),
+		strings.Contains(t, "networkconnectivity.googleapis.com"),
+		strings.HasPrefix(t, "elasticloadbalancing:"),
+		strings.HasPrefix(t, "route53:"),
+		strings.HasPrefix(t, "apigateway:"),
+		strings.HasPrefix(t, "cloudfront:"),
+		strings.HasPrefix(t, "vpc:"):
+		return catNetwork
+
+	// Security (IAM, secrets, KMS)
+	case strings.Contains(t, "microsoft.keyvault"),
+		strings.Contains(t, "microsoft.managedidentity"),
+		strings.Contains(t, "microsoft.security"),
+		strings.Contains(t, "iam.googleapis.com"),
+		strings.Contains(t, "secretmanager.googleapis.com"),
+		strings.Contains(t, "cloudkms.googleapis.com"),
+		strings.HasPrefix(t, "iam:"),
+		strings.HasPrefix(t, "kms:"),
+		strings.HasPrefix(t, "secretsmanager:"),
+		strings.HasPrefix(t, "acm:"):
+		return catSecurity
+	}
+	return catOther
+}
+
+// categoryCounts aggregates visibleNodes by category for the tab bar header.
+func (m *model) categoryCounts(nodes []provider.Node) map[string]int {
+	c := map[string]int{}
+	for _, n := range nodes {
+		if n.Kind != provider.KindResource {
+			continue
+		}
+		c[resourceCategory(n)]++
+	}
+	return c
 }
 
 func isCloudLevel(nodes []provider.Node) bool {
@@ -2294,14 +2443,46 @@ func (m *model) View() string {
 	body := m.table.View()
 	if m.isDrillLoading() {
 		body = m.drillLoadingBody()
-	} else if len(m.visibleNodes) == 0 && !m.loading {
+	} else if len(m.visibleNodes) == 0 && !m.loading && m.categoryFilter == "" {
 		body = m.emptyBody()
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.headerView(),
-		body,
-		m.footerView(),
-	)
+	chunks := []string{m.headerView()}
+	if bar := m.categoryBar(); bar != "" {
+		chunks = append(chunks, bar)
+	}
+	chunks = append(chunks, body, m.footerView())
+	return lipgloss.JoinVertical(lipgloss.Left, chunks...)
+}
+
+// categoryBar renders the resource-category filter tabs. Only shown on the
+// resource-list view (KindResource frames) where categories are meaningful.
+// Counts reflect the parent frame's nodes (before filtering) so the numbers
+// don't collapse to 0 when you're already filtering.
+func (m *model) categoryBar() string {
+	if len(m.stack) == 0 {
+		return ""
+	}
+	top := &m.stack[len(m.stack)-1]
+	if kindOf(top) != provider.KindResource {
+		return ""
+	}
+	counts := m.categoryCounts(top.nodes)
+	tab := func(key, label, cat string, n int) string {
+		text := fmt.Sprintf("%s %s (%d)", key, label, n)
+		if m.categoryFilter == cat {
+			return styles.Selected.Render(" " + text + " ")
+		}
+		return styles.Help.Render(" " + text + " ")
+	}
+	tabs := strings.Join([]string{
+		tab("0", "all", "", len(top.nodes)),
+		tab("1", "compute", catCompute, counts[catCompute]),
+		tab("2", "data", catData, counts[catData]),
+		tab("3", "network", catNetwork, counts[catNetwork]),
+		tab("4", "security", catSecurity, counts[catSecurity]),
+		tab("5", "other", catOther, counts[catOther]),
+	}, "")
+	return " " + tabs
 }
 
 // drillLoadingBody is the big in-your-face loading panel shown while the
@@ -3348,6 +3529,7 @@ func (m *model) helpView() string {
 		styles.Header.Render("View") + "   i info   o portal   c costs   s sort   t tenant",
 		styles.Header.Render("Auth") + "   I login (runs az/gcloud/aws login inside the TUI)",
 		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
+		styles.Header.Render("Filter") + " 0-5 on resource views — 0 all / 1 compute / 2 data / 3 network / 4 security / 5 other",
 		styles.Header.Render("Ops") + "    A advisor (Azure / GCP) — cost / security / reliability / perf / ops",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",
