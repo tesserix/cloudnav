@@ -16,7 +16,7 @@ var loginCmd = &cobra.Command{
 	Use:       "login [cloud]",
 	Short:     "Run the selected cloud CLI's interactive login (az / gcloud / aws)",
 	Long:      "Launches the cloud CLI's native login flow so first-time users can get credentials without memorizing which command each cloud uses. Pass 'azure', 'aws', or 'gcp'.",
-	Args:      cobra.ExactValidArgs(1),
+	Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
 	ValidArgs: []string{"azure", "aws", "gcp"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var p provider.Provider
