@@ -11,9 +11,19 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "cloudnav",
-	Short:         "Multi-cloud TUI for Azure, GCP, and AWS",
-	Long:          "cloudnav is a fast, keyboard-driven TUI that drills through tenants, subscriptions, projects, accounts, resources, costs, and IAM across Azure, GCP, and AWS — using the credentials your cloud CLIs are already logged in with.",
+	Use:   "cloudnav",
+	Short: "Multi-cloud TUI for Azure, GCP, and AWS",
+	Long: `cloudnav is a fast, keyboard-driven TUI that drills through tenants,
+subscriptions, projects, accounts, resources, costs, and IAM across Azure,
+GCP, and AWS — using the credentials your cloud CLIs are already logged in
+with.
+
+First time?  Run 'cloudnav doctor' to see which clouds need attention.
+If a cloud isn't logged in yet, either:
+  cloudnav login azure        # wraps 'az login'
+  cloudnav login gcp          # wraps 'gcloud auth login'
+  cloudnav login aws          # wraps 'aws sso login'
+or open the TUI and press 'I' on the cloud row.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -22,6 +22,7 @@ type Map struct {
 	Palette   key.Binding
 	Tenant    key.Binding
 	Lock      key.Binding
+	Login     key.Binding
 	Select    key.Binding
 	SelectAll key.Binding
 	ClearSel  key.Binding
@@ -49,6 +50,7 @@ func Default() Map {
 		Palette:   key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "palette")),
 		Tenant:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tenant")),
 		Lock:      key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "lock")),
+		Login:     key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "login")),
 		Select:    key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "select")),
 		SelectAll: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "select all")),
 		ClearSel:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "clear sel")),

@@ -42,6 +42,18 @@ type Provider interface {
 	Details(ctx context.Context, n Node) ([]byte, error)
 }
 
+// Loginer is implemented by providers that know how to invoke their CLI's
+// login flow. The TUI uses this to drive `az login` / `gcloud auth login` /
+// `aws sso login` from inside the app so first-time users can get credentials
+// without leaving the tool. Returning nil argv means the cloud has no login
+// handoff and should be instructed manually.
+type Loginer interface {
+	LoginCommand() (bin string, args []string)
+	// InstallHint returns a short human string the UI can show when the CLI
+	// itself isn't installed — e.g. "brew install azure-cli".
+	InstallHint() string
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {

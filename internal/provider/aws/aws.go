@@ -30,6 +30,17 @@ func (a *AWS) LoggedIn(ctx context.Context) error {
 	return err
 }
 
+// LoginCommand returns the argv that runs AWS SSO login. Falls back to the
+// classic credentials prompt (`aws configure`) when the user isn't using SSO.
+func (a *AWS) LoginCommand() (string, []string) {
+	return "aws", []string{"sso", "login"}
+}
+
+// InstallHint points first-time users at the AWS CLI installer.
+func (a *AWS) InstallHint() string {
+	return "install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+}
+
 type callerJSON struct {
 	UserID  string `json:"UserId"`
 	Account string `json:"Account"`

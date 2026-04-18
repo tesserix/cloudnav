@@ -38,6 +38,16 @@ func (g *GCP) LoggedIn(ctx context.Context) error {
 	return nil
 }
 
+// LoginCommand returns the argv that runs gcloud's interactive login.
+func (g *GCP) LoginCommand() (string, []string) {
+	return "gcloud", []string{"auth", "login"}
+}
+
+// InstallHint points first-time users at the Google Cloud SDK installer.
+func (g *GCP) InstallHint() string {
+	return "install Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
+}
+
 type projectJSON struct {
 	ProjectID      string `json:"projectId"`
 	Name           string `json:"name"`

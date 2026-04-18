@@ -124,6 +124,16 @@ func (a *Azure) LoggedIn(ctx context.Context) error {
 	return err
 }
 
+// LoginCommand returns the argv that runs Azure CLI's interactive login.
+func (a *Azure) LoginCommand() (string, []string) {
+	return "az", []string{"login"}
+}
+
+// InstallHint points first-time users at the Azure CLI installer.
+func (a *Azure) InstallHint() string {
+	return "install Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli"
+}
+
 // doTenantRequest sends a Management API call using a bearer token scoped to
 // the subscription's home tenant. This avoids the "wrong tenant context"
 // failures that `az rest` hits on cross-tenant subscriptions (e.g. a Prod

@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -74,6 +75,8 @@ type (
 		scope     string
 		scopeName string
 	}
+	loginDoneMsg    struct{ cloud string }
+	loginStatusMsg  struct{ status map[string]string }
 	pimActivatedMsg struct {
 		role      string
 		roleID    string
@@ -170,6 +173,7 @@ type model struct {
 	advisorScope  string
 	advisorName   string
 	advisorIdx    int
+	loginStatus   map[string]string // providerName → human-readable auth state
 	width         int
 	height        int
 	keys          keys.Map
@@ -244,6 +248,7 @@ func newModel() *model {
 		entities:     map[string][]provider.Node{},
 		locks:        map[string]map[string][]azure.Lock{},
 		selected:     map[string]bool{},
+		loginStatus:  map[string]string{},
 		keys:         keys.Default(),
 		table:        t,
 		showCost:     true,
@@ -265,7 +270,51 @@ func (m *model) pushHome() {
 }
 
 func (m *model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, m.checkLogins())
+}
+
+// checkLogins pings each provider's LoggedIn() concurrently and reports back
+// via loginStatusMsg so the home cloud list can badge each row with the
+// user's current auth state. Purely informational — drilling into a cloud
+// still triggers Root() which surfaces fresh errors.
+func (m *model) checkLogins() tea.Cmd {
+	providers := m.providers
+	ctx := m.ctx
+	return func() tea.Msg {
+		result := map[string]string{}
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, p := range providers {
+			p := p
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				status := loginStateFor(ctx, p)
+				mu.Lock()
+				result[p.Name()] = status
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+		return loginStatusMsg{status: result}
+	}
+}
+
+// loginStateFor returns a short UI-ready status string: the CLI missing, the
+// signed-in identity, or a "not logged in" hint.
+func loginStateFor(ctx context.Context, p provider.Provider) string {
+	if l, ok := p.(provider.Loginer); ok {
+		bin, _ := l.LoginCommand()
+		if _, err := exec.LookPath(bin); err != nil {
+			return "CLI not installed"
+		}
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := p.LoggedIn(cctx); err != nil {
+		return "not logged in"
+	}
+	return "logged in"
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -355,6 +404,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadDetail()
 		case key.Matches(msg, m.keys.PIM):
 			return m, m.loadPIM()
+		case key.Matches(msg, m.keys.Login):
+			return m, m.loginCurrentCloud()
 		case key.Matches(msg, m.keys.Advisor):
 			return m, m.loadAdvisor()
 		case key.Matches(msg, m.keys.Exec):
@@ -456,6 +507,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pimActivate = false
 		m.syncPIMDurationToPolicy()
 		m.status = fmt.Sprintf("%d eligible role assignment(s)", len(msg.roles))
+		return m, nil
+
+	case loginDoneMsg:
+		m.status = "✓ " + msg.cloud + " login complete — drill in to load"
+		// Re-push home so the cloud list re-renders with updated login state.
+		m.pushHome()
+		return m, m.checkLogins()
+
+	case loginStatusMsg:
+		for k, v := range msg.status {
+			m.loginStatus[k] = v
+		}
+		m.refreshTable()
 		return m, nil
 
 	case advisorLoadedMsg:
@@ -1562,6 +1626,60 @@ func scopeDisplay(r provider.PIMRole) string {
 	return r.Scope
 }
 
+// loginCurrentCloud runs the active cloud's CLI login interactively. Suspends
+// the TUI via tea.ExecProcess so the browser redirect / device-code prompt
+// the cloud CLI prints land in the user's terminal. On return the TUI
+// refreshes so the cloud's nodes populate without a manual relaunch.
+func (m *model) loginCurrentCloud() tea.Cmd {
+	prov := m.loginTargetProvider()
+	if prov == nil {
+		m.status = "move the cursor to a cloud row and press I to login"
+		return nil
+	}
+	loginer, ok := prov.(provider.Loginer)
+	if !ok {
+		m.status = prov.Name() + ": login flow not implemented"
+		return nil
+	}
+	bin, args := loginer.LoginCommand()
+	if _, err := exec.LookPath(bin); err != nil {
+		m.status = fmt.Sprintf("%s CLI not found in PATH — %s", prov.Name(), loginer.InstallHint())
+		return nil
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Env = os.Environ()
+	m.status = "launching " + bin + " " + strings.Join(args, " ") + "..."
+	providerName := prov.Name()
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return errMsg{fmt.Errorf("%s login failed: %w", providerName, err)}
+		}
+		return loginDoneMsg{cloud: providerName}
+	})
+}
+
+// loginTargetProvider picks which provider the login key targets. When the
+// user is on the home (cloud list) view, the cursor row chooses. Once drilled
+// into a cloud, the active provider is used so the user can re-auth without
+// going back.
+func (m *model) loginTargetProvider() provider.Provider {
+	if len(m.stack) > 0 {
+		top := &m.stack[len(m.stack)-1]
+		if kindOf(top) == provider.KindCloud || kindOf(top) == provider.KindCloudDisabled {
+			c := m.table.Cursor()
+			if c >= 0 && c < len(m.visibleNodes) {
+				name := m.visibleNodes[c].Name
+				for _, p := range m.providers {
+					if p.Name() == name {
+						return p
+					}
+				}
+			}
+		}
+	}
+	return m.active
+}
+
 func (m *model) execShell() tea.Cmd {
 	if m.active == nil {
 		return nil
@@ -1739,7 +1857,11 @@ func isCloudLevel(nodes []provider.Node) bool {
 func (m *model) columnsFor(f *frame) []table.Column {
 	switch kindOf(f) {
 	case provider.KindCloud, provider.KindCloudDisabled:
-		return []table.Column{{Title: "CLOUD", Width: 40}}
+		return []table.Column{
+			{Title: "CLOUD", Width: 20},
+			{Title: "STATUS", Width: 40},
+			{Title: "HINT", Width: 60},
+		}
 	case provider.KindSubscription:
 		cols := []table.Column{
 			{Title: "NAME", Width: 40},
@@ -1825,7 +1947,8 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	for _, n := range nodes {
 		switch n.Kind {
 		case provider.KindCloud, provider.KindCloudDisabled:
-			rows = append(rows, table.Row{n.Name})
+			status, hint := m.cloudRowStatus(n.Name)
+			rows = append(rows, table.Row{n.Name, status, hint})
 		case provider.KindSubscription:
 			tenant := n.Meta["tenantName"]
 			if tenant == "" {
@@ -2125,6 +2248,45 @@ func (m *model) advisorView() string {
 	}
 	lines = append(lines, "", styles.Help.Render("↑↓/jk move   o portal   esc/A close"))
 	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+// cloudRowStatus returns (status, hint) for the cloud-list view. status says
+// what the background LoggedIn probe found; hint tells a brand-new user what
+// to do — ideally press I inside the TUI, or run the command from a shell.
+func (m *model) cloudRowStatus(name string) (string, string) {
+	st := m.loginStatus[name]
+	switch st {
+	case "":
+		return "checking...", ""
+	case "logged in":
+		return "✓ logged in", "press ↵ to drill"
+	case "CLI not installed":
+		if p := m.providerByName(name); p != nil {
+			if l, ok := p.(provider.Loginer); ok {
+				return "✗ CLI not installed", l.InstallHint()
+			}
+		}
+		return "✗ CLI not installed", ""
+	case "not logged in":
+		if p := m.providerByName(name); p != nil {
+			if l, ok := p.(provider.Loginer); ok {
+				bin, args := l.LoginCommand()
+				return "✗ not logged in", "press I to run '" + bin + " " + strings.Join(args, " ") + "'"
+			}
+		}
+		return "✗ not logged in", "press I to login"
+	default:
+		return st, ""
+	}
+}
+
+func (m *model) providerByName(name string) provider.Provider {
+	for _, p := range m.providers {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
 }
 
 // pimSourceBadge renders a short, color-tagged label for the PIM surface.
@@ -2469,6 +2631,9 @@ func (m *model) keybar() string {
 	if m.active != nil && m.active.Name() == pimSrcAzure {
 		pairs = append(pairs, pair{"A", "advisor"})
 	}
+	if m.atCloudLevel() {
+		pairs = append(pairs, pair{"I", "login"})
+	}
 	if m.atSubscriptionLevel() {
 		label := "tenant: all"
 		if m.tenantFilter != "" {
@@ -2506,6 +2671,14 @@ func (m *model) atSubscriptionLevel() bool {
 	}
 	top := &m.stack[len(m.stack)-1]
 	return kindOf(top) == provider.KindSubscription
+}
+
+func (m *model) atCloudLevel() bool {
+	if len(m.stack) == 0 {
+		return false
+	}
+	top := &m.stack[len(m.stack)-1]
+	return top.title == "clouds"
 }
 
 func (m *model) atRGLevel() bool {
@@ -2902,6 +3075,7 @@ func (m *model) helpView() string {
 		styles.Title.Render("cloudnav keybindings"),
 		styles.Header.Render("Nav") + "    ↵/l drill   esc/h back   jk move   / filter   : palette   f flag   r refresh",
 		styles.Header.Render("View") + "   i info   o portal   c costs   s sort   t tenant",
+		styles.Header.Render("Auth") + "   I login (runs az/gcloud/aws login inside the TUI)",
 		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
 		styles.Header.Render("Ops") + "    A advisor (Azure) — cost / security / reliability / perf / ops",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups   0/1/2/3 filter source",

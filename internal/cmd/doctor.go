@@ -27,15 +27,19 @@ var doctorCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 		defer cancel()
 
+		missing := []string{}
+		notAuthed := []string{}
 		for _, c := range checks {
 			path, err := exec.LookPath(c.bin)
 			if err != nil {
 				fmt.Printf("✗ %-6s %s not installed  · %s\n", c.name, c.bin, c.installed)
+				missing = append(missing, c.name)
 				continue
 			}
 			out, err := exec.CommandContext(ctx, c.bin, c.loginArgs...).CombinedOutput()
 			if err != nil {
-				fmt.Printf("✗ %-6s installed (%s) — not logged in\n", c.name, path)
+				fmt.Printf("✗ %-6s installed (%s) — not logged in → `cloudnav login %s`\n", c.name, path, c.name)
+				notAuthed = append(notAuthed, c.name)
 				continue
 			}
 			who := string(bytesTrim(out))
@@ -43,6 +47,16 @@ var doctorCmd = &cobra.Command{
 				who = "logged in"
 			}
 			fmt.Printf("✓ %-6s %s\n", c.name, firstLine(who))
+		}
+		if len(missing) == 0 && len(notAuthed) == 0 {
+			return nil
+		}
+		fmt.Println()
+		if len(missing) > 0 {
+			fmt.Println("next step — install the missing CLIs using the links above, then rerun `cloudnav doctor`.")
+		}
+		if len(notAuthed) > 0 {
+			fmt.Printf("next step — run `cloudnav login <cloud>` for: %v\n", notAuthed)
 		}
 		return nil
 	},
