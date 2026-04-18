@@ -124,19 +124,6 @@ func isPAMNotEnabled(err error) bool {
 			strings.Contains(s, "not enabled"))
 }
 
-type pamEntitlement struct {
-	Name                      string `json:"name"` // projects/X/locations/L/entitlements/E
-	MaxRequestDuration        string `json:"maxRequestDuration"`
-	PrivilegedAccess          any    `json:"privilegedAccess"`
-	EligibleUsers             []any  `json:"eligibleUsers"`
-	PrivilegedAccessRoleBinds []struct {
-		Role string `json:"role"`
-	} `json:"-"` // populated by decode below
-	RoleBindings []struct {
-		Role string `json:"role"`
-	} `json:"roleBindings"`
-}
-
 func parsePAMEntitlements(data []byte, projectID string) ([]provider.PIMRole, error) {
 	var items []struct {
 		Name               string `json:"name"`
