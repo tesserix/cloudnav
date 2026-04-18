@@ -127,61 +127,61 @@ type paletteItem struct {
 }
 
 type model struct {
-	ctx           context.Context
-	providers     []provider.Provider
-	active        provider.Provider
-	stack         []frame
-	visibleNodes  []provider.Node
-	table         table.Model
-	spinner       spinner.Model
-	search        textinput.Model
-	detail        viewport.Model
-	detailTitle   string
-	detailMode    bool
-	searchMode    bool
-	filter        string
-	sort          sortMode
-	loading       bool
-	err           error
-	status        string
-	showHelp      bool
-	paletteMode   bool
-	paletteInput  textinput.Model
-	paletteItems  []paletteItem
-	paletteIdx    int
-	cfg           *config.Config
-	showCost      bool
-	costs         map[string]map[string]string       // subID → lowercased rg name → cost
-	tenantFilter  string                             // only show subs whose Meta[tenantName] == this (empty = all)
-	locks         map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
-	selected      map[string]bool                    // node ID → selected
-	restorePath   []config.Crumb                     // remaining crumbs to drill into during bookmark restore
-	restoreLabel  string                             // label shown while restoring (for status)
-	entities      map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
-	pimMode       bool
-	pimRoles      []provider.PIMRole
-	pimCursor     int
-	pimActivate   bool
-	pimInput      textinput.Model
-	pimFilter     string
-	pimFilterOn   bool
-	pimFilterIn   textinput.Model
-	pimDuration   int
-	pimSourceFilt string // "" = all, pimSrc{Azure,Entra,Group}
-	advisorMode   bool
-	advisorRecs   []provider.Recommendation
-	advisorScope  string
-	advisorName   string
-	advisorIdx    int
-	loginStatus   map[string]string // providerName → human-readable auth state
-	drilling       bool   // a drill-level load is in flight; block navigation
-	categoryFilter string // resource category on the resource list (compute / data / network / security / other)
-	deleteMode    bool
-	deleteTargets []provider.Node
-	deleteInput   textinput.Model
-	width         int
-	height        int
-	keys          keys.Map
+	ctx            context.Context
+	providers      []provider.Provider
+	active         provider.Provider
+	stack          []frame
+	visibleNodes   []provider.Node
+	table          table.Model
+	spinner        spinner.Model
+	search         textinput.Model
+	detail         viewport.Model
+	detailTitle    string
+	detailMode     bool
+	searchMode     bool
+	filter         string
+	sort           sortMode
+	loading        bool
+	err            error
+	status         string
+	showHelp       bool
+	paletteMode    bool
+	paletteInput   textinput.Model
+	paletteItems   []paletteItem
+	paletteIdx     int
+	cfg            *config.Config
+	showCost       bool
+	costs          map[string]map[string]string       // subID → lowercased rg name → cost
+	tenantFilter   string                             // only show subs whose Meta[tenantName] == this (empty = all)
+	locks          map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
+	selected       map[string]bool                    // node ID → selected
+	restorePath    []config.Crumb                     // remaining crumbs to drill into during bookmark restore
+	restoreLabel   string                             // label shown while restoring (for status)
+	entities       map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
+	pimMode        bool
+	pimRoles       []provider.PIMRole
+	pimCursor      int
+	pimActivate    bool
+	pimInput       textinput.Model
+	pimFilter      string
+	pimFilterOn    bool
+	pimFilterIn    textinput.Model
+	pimDuration    int
+	pimSourceFilt  string // "" = all, pimSrc{Azure,Entra,Group}
+	advisorMode    bool
+	advisorRecs    []provider.Recommendation
+	advisorScope   string
+	advisorName    string
+	advisorIdx     int
+	loginStatus    map[string]string // providerName → human-readable auth state
+	drilling       bool              // a drill-level load is in flight; block navigation
+	categoryFilter string            // resource category on the resource list (compute / data / network / security / other)
+	deleteMode     bool
+	deleteTargets  []provider.Node
+	deleteInput    textinput.Model
+	width          int
+	height         int
+	keys           keys.Map
 }
 
 func newModel() *model {
