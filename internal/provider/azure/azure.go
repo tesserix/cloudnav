@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,37 @@ func (a *Azure) LoginCommand() (string, []string) {
 // InstallHint points first-time users at the Azure CLI installer.
 func (a *Azure) InstallHint() string {
 	return "install Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli"
+}
+
+// InstallPlan returns the right native install command for the current OS.
+// Prefers Homebrew on macOS (and Linux when available) because it doesn't
+// need sudo and cleans up neatly.
+func (a *Azure) InstallPlan(goos string) ([]provider.InstallStep, bool) {
+	switch goos {
+	case "darwin":
+		return []provider.InstallStep{{
+			Description: "brew install azure-cli",
+			Bin:         "brew", Args: []string{"install", "azure-cli"},
+		}}, true
+	case "linux":
+		if _, err := exec.LookPath("brew"); err == nil {
+			return []provider.InstallStep{{
+				Description: "brew install azure-cli",
+				Bin:         "brew", Args: []string{"install", "azure-cli"},
+			}}, true
+		}
+		return []provider.InstallStep{{
+			Description: "curl | bash installer from Microsoft (will prompt for sudo)",
+			Bin:         "sh", Args: []string{"-c", "curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash"},
+			NeedsSudo: true,
+		}}, true
+	case "windows":
+		return []provider.InstallStep{{
+			Description: "winget install Microsoft.AzureCLI",
+			Bin:         "winget", Args: []string{"install", "-e", "--id", "Microsoft.AzureCLI"},
+		}}, true
+	}
+	return nil, false
 }
 
 // doTenantRequest sends a Management API call using a bearer token scoped to

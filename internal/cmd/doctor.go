@@ -53,7 +53,7 @@ var doctorCmd = &cobra.Command{
 		}
 		fmt.Println()
 		if len(missing) > 0 {
-			fmt.Println("next step — install the missing CLIs using the links above, then rerun `cloudnav doctor`.")
+			fmt.Printf("next step — `cloudnav install <cloud>` for: %v\n", missing)
 		}
 		if len(notAuthed) > 0 {
 			fmt.Printf("next step — run `cloudnav login <cloud>` for: %v\n", notAuthed)

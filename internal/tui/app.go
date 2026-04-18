@@ -1629,7 +1629,9 @@ func scopeDisplay(r provider.PIMRole) string {
 // loginCurrentCloud runs the active cloud's CLI login interactively. Suspends
 // the TUI via tea.ExecProcess so the browser redirect / device-code prompt
 // the cloud CLI prints land in the user's terminal. On return the TUI
-// refreshes so the cloud's nodes populate without a manual relaunch.
+// refreshes so the cloud's nodes populate without a manual relaunch. When
+// the CLI itself is missing we run the install plan first (single TUI
+// suspension), then fall through to the login step.
 func (m *model) loginCurrentCloud() tea.Cmd {
 	prov := m.loginTargetProvider()
 	if prov == nil {
@@ -1642,20 +1644,67 @@ func (m *model) loginCurrentCloud() tea.Cmd {
 		return nil
 	}
 	bin, args := loginer.LoginCommand()
+	providerName := prov.Name()
 	if _, err := exec.LookPath(bin); err != nil {
-		m.status = fmt.Sprintf("%s CLI not found in PATH — %s", prov.Name(), loginer.InstallHint())
-		return nil
+		return m.installThenLogin(prov, loginer, bin, args)
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Env = os.Environ()
 	m.status = "launching " + bin + " " + strings.Join(args, " ") + "..."
-	providerName := prov.Name()
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
 			return errMsg{fmt.Errorf("%s login failed: %w", providerName, err)}
 		}
 		return loginDoneMsg{cloud: providerName}
 	})
+}
+
+// installThenLogin chains install + login into a single sh -c so both run in
+// one TUI suspension. Falls back to a clear error if no install recipe
+// exists for the current OS.
+func (m *model) installThenLogin(prov provider.Provider, loginer provider.Loginer, loginBin string, loginArgs []string) tea.Cmd {
+	installer, ok := prov.(provider.Installer)
+	if !ok {
+		m.status = prov.Name() + ": " + loginer.InstallHint()
+		return nil
+	}
+	steps, ok := installer.InstallPlan(runtime.GOOS)
+	if !ok {
+		m.status = fmt.Sprintf("no install recipe for %s on %s — %s", prov.Name(), runtime.GOOS, loginer.InstallHint())
+		return nil
+	}
+	// Chain install steps then login into one shell so the TUI suspends
+	// exactly once and the user sees the full output in order.
+	var parts []string
+	for _, s := range steps {
+		parts = append(parts, shellQuote(s.Bin, s.Args))
+	}
+	parts = append(parts, shellQuote(loginBin, loginArgs))
+	script := strings.Join(parts, " && ")
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = os.Environ()
+	m.status = "installing " + prov.Name() + " CLI..."
+	providerName := prov.Name()
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return errMsg{fmt.Errorf("%s install/login failed: %w", providerName, err)}
+		}
+		return loginDoneMsg{cloud: providerName}
+	})
+}
+
+// shellQuote produces a single shell-safe command string. Sufficient for the
+// handful of argv's InstallPlan returns — none contain quotes or globs.
+func shellQuote(bin string, args []string) string {
+	parts := []string{bin}
+	for _, a := range args {
+		if strings.ContainsAny(a, " \t'\"") {
+			parts = append(parts, "'"+strings.ReplaceAll(a, "'", "'\\''")+"'")
+		} else {
+			parts = append(parts, a)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // loginTargetProvider picks which provider the login key targets. When the
@@ -2262,6 +2311,11 @@ func (m *model) cloudRowStatus(name string) (string, string) {
 		return "✓ logged in", "press ↵ to drill"
 	case "CLI not installed":
 		if p := m.providerByName(name); p != nil {
+			if inst, ok := p.(provider.Installer); ok {
+				if _, can := inst.InstallPlan(runtime.GOOS); can {
+					return "✗ CLI not installed", "press I to auto-install + login"
+				}
+			}
 			if l, ok := p.(provider.Loginer); ok {
 				return "✗ CLI not installed", l.InstallHint()
 			}

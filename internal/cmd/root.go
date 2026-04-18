@@ -19,11 +19,19 @@ GCP, and AWS — using the credentials your cloud CLIs are already logged in
 with.
 
 First time?  Run 'cloudnav doctor' to see which clouds need attention.
-If a cloud isn't logged in yet, either:
+
+  cloudnav install azure      # installs Azure CLI (brew / apt / winget)
+  cloudnav install gcp        # installs Google Cloud SDK
+  cloudnav install aws        # installs AWS CLI v2
+
   cloudnav login azure        # wraps 'az login'
   cloudnav login gcp          # wraps 'gcloud auth login'
   cloudnav login aws          # wraps 'aws sso login'
-or open the TUI and press 'I' on the cloud row.`,
+
+Or just open the TUI and press 'I' on a cloud row — it will install the
+CLI (if missing) and run login in one step. Credentials land in the
+cloud CLI's default location (~/.azure, ~/.config/gcloud, ~/.aws) which
+cloudnav reads transparently — nothing is stored by cloudnav itself.`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/tesserix/cloudnav/internal/cli"
@@ -39,6 +40,39 @@ func (a *AWS) LoginCommand() (string, []string) {
 // InstallHint points first-time users at the AWS CLI installer.
 func (a *AWS) InstallHint() string {
 	return "install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+}
+
+// InstallPlan picks a per-OS install method, prefering Homebrew where
+// available (no sudo, clean uninstall).
+func (a *AWS) InstallPlan(goos string) ([]provider.InstallStep, bool) {
+	switch goos {
+	case "darwin":
+		return []provider.InstallStep{{
+			Description: "brew install awscli",
+			Bin:         "brew", Args: []string{"install", "awscli"},
+		}}, true
+	case "linux":
+		if _, err := exec.LookPath("brew"); err == nil {
+			return []provider.InstallStep{{
+				Description: "brew install awscli",
+				Bin:         "brew", Args: []string{"install", "awscli"},
+			}}, true
+		}
+		return []provider.InstallStep{{
+			Description: "download and install AWS CLI v2 (will prompt for sudo)",
+			Bin:         "sh", Args: []string{
+				"-c",
+				`set -e; tmp=$(mktemp -d); cd "$tmp"; curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip; unzip -q awscliv2.zip; sudo ./aws/install; cd /; rm -rf "$tmp"`,
+			},
+			NeedsSudo: true,
+		}}, true
+	case "windows":
+		return []provider.InstallStep{{
+			Description: "winget install Amazon.AWSCLI",
+			Bin:         "winget", Args: []string{"install", "-e", "--id", "Amazon.AWSCLI"},
+		}}, true
+	}
+	return nil, false
 }
 
 type callerJSON struct {

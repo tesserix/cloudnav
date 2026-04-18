@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -46,6 +47,34 @@ func (g *GCP) LoginCommand() (string, []string) {
 // InstallHint points first-time users at the Google Cloud SDK installer.
 func (g *GCP) InstallHint() string {
 	return "install Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
+}
+
+// InstallPlan picks a per-OS install method for gcloud.
+func (g *GCP) InstallPlan(goos string) ([]provider.InstallStep, bool) {
+	switch goos {
+	case "darwin":
+		return []provider.InstallStep{{
+			Description: "brew install --cask google-cloud-sdk",
+			Bin:         "brew", Args: []string{"install", "--cask", "google-cloud-sdk"},
+		}}, true
+	case "linux":
+		if _, err := exec.LookPath("brew"); err == nil {
+			return []provider.InstallStep{{
+				Description: "brew install --cask google-cloud-sdk",
+				Bin:         "brew", Args: []string{"install", "--cask", "google-cloud-sdk"},
+			}}, true
+		}
+		return []provider.InstallStep{{
+			Description: "run the official Google Cloud SDK install script (interactive)",
+			Bin:         "sh", Args: []string{"-c", "curl -sSL https://sdk.cloud.google.com | bash"},
+		}}, true
+	case "windows":
+		return []provider.InstallStep{{
+			Description: "winget install Google.CloudSDK",
+			Bin:         "winget", Args: []string{"install", "-e", "--id", "Google.CloudSDK"},
+		}}, true
+	}
+	return nil, false
 }
 
 type projectJSON struct {

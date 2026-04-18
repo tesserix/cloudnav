@@ -54,6 +54,28 @@ type Loginer interface {
 	InstallHint() string
 }
 
+// InstallStep describes one step in installing a cloud CLI. Multi-step
+// installs (download + unzip + install) are expressed as a slice.
+type InstallStep struct {
+	// Description is the short label shown to the user before the step runs.
+	Description string
+	// Bin + Args form the command to execute.
+	Bin  string
+	Args []string
+	// NeedsSudo hints that the step should be launched with sudo. The runner
+	// leaves sudo to the user rather than injecting it silently, so users
+	// keep the prompt they expect from their platform.
+	NeedsSudo bool
+}
+
+// Installer is implemented by providers that can install their own CLI
+// non-interactively on the current OS. Returning ok=false means the provider
+// doesn't have an automated recipe for this OS and the user should follow the
+// InstallHint manually.
+type Installer interface {
+	InstallPlan(goos string) (steps []InstallStep, ok bool)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {
