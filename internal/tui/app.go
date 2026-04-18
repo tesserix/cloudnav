@@ -402,7 +402,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshTable()
 			return m, nil
 		case key.Matches(msg, m.keys.Delete):
-			return m, m.promptDelete()
+			m.promptDelete()
+			return m, nil
 		case key.Matches(msg, m.keys.Flag):
 			m.saveBookmark()
 			return m, nil
@@ -2992,14 +2993,14 @@ func (m *model) selectAllVisible() {
 // locks) short-circuits with a status hint; only a clean selection opens the
 // confirmation modal. The actual azure call doesn't fire until the user types
 // DELETE in executeDelete.
-func (m *model) promptDelete() tea.Cmd {
+func (m *model) promptDelete() {
 	if !m.atRGLevel() {
 		m.status = "D works on the resource-groups view"
-		return nil
+		return
 	}
 	if _, ok := m.active.(*azure.Azure); !ok {
 		m.status = "delete is Azure-only"
-		return nil
+		return
 	}
 	targets := []provider.Node{}
 	for _, n := range m.visibleNodes {
@@ -3009,12 +3010,12 @@ func (m *model) promptDelete() tea.Cmd {
 	}
 	if len(targets) == 0 {
 		m.status = "nothing selected — use space to select rows, [ to select all, D to delete"
-		return nil
+		return
 	}
 	for _, t := range targets {
 		if lv := m.rgLockLevel(t.Name); lv != "" {
 			m.status = fmt.Sprintf("refused — %s has a %s lock; press L to remove it first", t.Name, lv)
-			return nil
+			return
 		}
 	}
 	m.deleteMode = true
@@ -3022,7 +3023,6 @@ func (m *model) promptDelete() tea.Cmd {
 	m.deleteInput.SetValue("")
 	m.deleteInput.Focus()
 	m.status = ""
-	return nil
 }
 
 // executeDelete fires the actual async deletion after the user has typed the
