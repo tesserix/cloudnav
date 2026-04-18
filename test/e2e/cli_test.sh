@@ -52,7 +52,10 @@ out=$("$BIN" pim list --cloud aws 2>&1); rc=$?
 assert_regex "pim list aws either lists profiles or explains 'aws configure sso'" '(aws configure sso|^[[:space:]]*1\.)' "$out"
 
 out=$("$BIN" pim list --cloud gcp 2>&1); rc=$?
-assert_regex "pim list gcp surfaces the conditional-binding hint" 'add-iam-policy-binding' "$out"
+# GCP PIM now tries Privileged Access Manager first. When PAM is enabled we
+# see numbered entitlements; when it isn't, the error points at conditional
+# IAM. Either response proves the wiring is in place.
+assert_regex "pim list gcp returns PAM entitlements or conditional-IAM fallback" '(add-iam-policy-binding|^[[:space:]]*1\.|no PAM entitlements)' "$out"
 
 out=$("$BIN" pim activate 999 --reason test 2>&1); rc=$?
 assert_regex "pim activate out-of-range fails cleanly" 'out of range' "$out"

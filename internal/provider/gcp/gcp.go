@@ -100,15 +100,19 @@ func parseProjects(data []byte) ([]provider.Node, error) {
 	}
 	nodes := make([]provider.Node, 0, len(ps))
 	for _, p := range ps {
+		meta := map[string]string{
+			"projectNumber": p.ProjectNumber,
+			"createTime":    p.CreateTime,
+		}
+		if p.CreateTime != "" {
+			meta["createdTime"] = p.CreateTime
+		}
 		nodes = append(nodes, provider.Node{
 			ID:    p.ProjectID,
 			Name:  p.Name,
 			Kind:  provider.KindProject,
 			State: p.LifecycleState,
-			Meta: map[string]string{
-				"projectNumber": p.ProjectNumber,
-				"createTime":    p.CreateTime,
-			},
+			Meta:  meta,
 		})
 	}
 	return nodes, nil
@@ -127,6 +131,8 @@ type assetJSON struct {
 	Location    string `json:"location"`
 	DisplayName string `json:"displayName"`
 	Project     string `json:"project"`
+	CreateTime  string `json:"createTime"`
+	UpdateTime  string `json:"updateTime"`
 }
 
 func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.Node, error) {
@@ -155,6 +161,16 @@ func parseAssets(data []byte, project provider.Node) ([]provider.Node, error) {
 		if name == "" {
 			name = shortName(a.Name)
 		}
+		meta := map[string]string{
+			"type":    a.AssetType,
+			"project": project.ID,
+		}
+		if a.CreateTime != "" {
+			meta["createdTime"] = a.CreateTime
+		}
+		if a.UpdateTime != "" {
+			meta["changedTime"] = a.UpdateTime
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       a.Name,
 			Name:     name,
@@ -162,10 +178,7 @@ func parseAssets(data []byte, project provider.Node) ([]provider.Node, error) {
 			Location: a.Location,
 			State:    shortType(a.AssetType),
 			Parent:   &parent,
-			Meta: map[string]string{
-				"type":    a.AssetType,
-				"project": project.ID,
-			},
+			Meta:     meta,
 		})
 	}
 	return nodes, nil

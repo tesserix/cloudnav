@@ -71,7 +71,7 @@ type (
 	pimLoadedMsg struct{ roles []provider.PIMRole }
 
 	advisorLoadedMsg struct {
-		recs      []azure.Recommendation
+		recs      []provider.Recommendation
 		scope     string
 		scopeName string
 	}
@@ -169,7 +169,7 @@ type model struct {
 	pimDuration   int
 	pimSourceFilt string // "" = all, pimSrc{Azure,Entra,Group}
 	advisorMode   bool
-	advisorRecs   []azure.Recommendation
+	advisorRecs   []provider.Recommendation
 	advisorScope  string
 	advisorName   string
 	advisorIdx    int
@@ -1272,47 +1272,81 @@ func (m *model) loadDetail() tea.Cmd {
 	)
 }
 
-// loadAdvisor fetches Azure Advisor recommendations for the subscription that
-// contains the cursor row, filters them to the current scope (sub / RG /
-// resource) so the user only sees what applies to what they're looking at,
-// and opens the advisor overlay.
+// loadAdvisor fetches cloud-native advisor recommendations for the scope
+// under the cursor and opens the advisor overlay. Azure goes to ARM Advisor,
+// GCP goes to Cloud Recommender. The provider.Advisor interface lets future
+// clouds drop in without touching the TUI.
 func (m *model) loadAdvisor() tea.Cmd {
-	az, ok := m.active.(*azure.Azure)
+	adv, ok := m.active.(provider.Advisor)
 	if !ok {
-		m.status = "advisor is Azure-only for now"
+		m.status = m.active.Name() + ": advisor not supported"
 		return nil
 	}
-	subID, rgName, resourceID, displayName := m.advisorTarget()
-	if subID == "" {
-		m.status = "advisor needs a subscription / RG / resource scope — drill in first"
+	scopeID, filterScope, displayName := m.advisorScopeForActive()
+	if scopeID == "" {
+		m.status = "advisor needs a subscription / project scope — drill in first"
 		return nil
 	}
 	m.loading = true
-	m.status = "loading Azure Advisor recommendations..."
+	m.status = "loading " + m.active.Name() + " advisor recommendations..."
 	ctx := m.ctx
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			recs, err := az.Recommendations(ctx, subID)
+			recs, err := adv.Recommendations(ctx, scopeID)
 			if err != nil {
 				return errMsg{err}
 			}
-			scope := "/subscriptions/" + subID
-			if rgName != "" {
-				scope += "/resourceGroups/" + rgName
-			}
-			if resourceID != "" {
-				scope = resourceID
-			}
-			filtered := filterAdvisorByScope(recs, scope)
-			return advisorLoadedMsg{recs: filtered, scope: scope, scopeName: displayName}
+			filtered := filterAdvisorByScope(recs, filterScope)
+			return advisorLoadedMsg{recs: filtered, scope: filterScope, scopeName: displayName}
 		},
 	)
 }
 
-func filterAdvisorByScope(recs []azure.Recommendation, scope string) []azure.Recommendation {
+// advisorScopeForActive resolves the advisor scope for the current provider.
+// Returns (apiScope, filterScope, display) where apiScope is what gets
+// passed to the provider (e.g. the sub id / project id) and filterScope is
+// the string client-side filtering uses to narrow results to the cursor.
+func (m *model) advisorScopeForActive() (string, string, string) {
+	switch m.active.Name() {
+	case pimSrcAzure:
+		subID, rgName, resourceID, name := m.advisorTarget()
+		filter := "/subscriptions/" + subID
+		if rgName != "" {
+			filter += "/resourceGroups/" + rgName
+		}
+		if resourceID != "" {
+			filter = resourceID
+		}
+		return subID, filter, name
+	case "gcp":
+		projID, name := m.gcpAdvisorTarget()
+		return projID, "projects/" + projID, name
+	}
+	return "", "", ""
+}
+
+func (m *model) gcpAdvisorTarget() (string, string) {
+	if len(m.stack) == 0 {
+		return "", ""
+	}
+	top := &m.stack[len(m.stack)-1]
+	c := m.table.Cursor()
+	if kindOf(top) == provider.KindProject {
+		if c >= 0 && c < len(m.visibleNodes) {
+			return m.visibleNodes[c].ID, m.visibleNodes[c].Name
+		}
+	}
+	// Already drilled into a project — use the parent.
+	if top.parent != nil && top.parent.Kind == provider.KindProject {
+		return top.parent.ID, top.parent.Name
+	}
+	return "", ""
+}
+
+func filterAdvisorByScope(recs []provider.Recommendation, scope string) []provider.Recommendation {
 	scopeLow := strings.ToLower(scope)
-	out := make([]azure.Recommendation, 0, len(recs))
+	out := make([]provider.Recommendation, 0, len(recs))
 	for _, r := range recs {
 		target := strings.ToLower(r.ResourceID)
 		if target == "" || strings.HasPrefix(target, scopeLow) {
@@ -1466,6 +1500,11 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "3":
 		m.pimSourceFilt = pimSrcGroup
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
+	case "4":
+		m.pimSourceFilt = pimSrcGCP
 		m.pimCursor = 0
 		m.syncPIMDurationToPolicy()
 		return m, nil
@@ -1956,9 +1995,10 @@ func (m *model) columnsFor(f *frame) []table.Column {
 		return cols
 	case provider.KindProject:
 		cols := []table.Column{
-			{Title: "NAME", Width: 40},
+			{Title: "NAME", Width: 36},
 			{Title: "PROJECT ID", Width: 28},
-			{Title: "STATE", Width: 14},
+			{Title: "STATE", Width: 12},
+			{Title: "CREATED", Width: 12},
 		}
 		if m.showCost {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 16})
@@ -2040,7 +2080,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, row)
 		case provider.KindProject:
-			row := table.Row{n.Name, n.ID, n.State}
+			row := table.Row{n.Name, n.ID, n.State, shortDate(n.Meta["createdTime"])}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
@@ -2140,6 +2180,7 @@ const (
 	pimSrcAzure     = "azure"
 	pimSrcEntra     = "entra"
 	pimSrcGroup     = "group"
+	pimSrcGCP       = "gcp-pam"
 	cliNotInstalled = "✗ CLI not installed"
 )
 
@@ -2408,6 +2449,8 @@ func pimSourceBadge(src string) string {
 		return styles.AccentS.Render("entra")
 	case pimSrcGroup:
 		return styles.WarnS.Render("group")
+	case pimSrcGCP:
+		return styles.Good.Render("gcp-pam")
 	case pimSrcAzure, "":
 		return styles.Help.Render(pimSrcAzure)
 	default:
@@ -2491,6 +2534,7 @@ func (m *model) pimView() string {
 		tab("1", "Azure", pimSrcAzure, counts[pimSrcAzure]),
 		tab("2", "Entra", pimSrcEntra, counts[pimSrcEntra]),
 		tab("3", "Groups", pimSrcGroup, counts[pimSrcGroup]),
+		tab("4", "GCP PAM", pimSrcGCP, counts[pimSrcGCP]),
 	}, "")
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
@@ -2740,7 +2784,7 @@ func (m *model) keybar() string {
 		{"c", "costs"},
 		{"s", "sort " + m.sort.String()},
 	}
-	if m.active != nil && m.active.Name() == pimSrcAzure {
+	if _, ok := m.active.(provider.Advisor); ok && m.active != nil {
 		pairs = append(pairs, pair{"A", "advisor"})
 	}
 	if m.atCloudLevel() {
@@ -3288,8 +3332,8 @@ func (m *model) helpView() string {
 		styles.Header.Render("View") + "   i info   o portal   c costs   s sort   t tenant",
 		styles.Header.Render("Auth") + "   I login (runs az/gcloud/aws login inside the TUI)",
 		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
-		styles.Header.Render("Ops") + "    A advisor (Azure) — cost / security / reliability / perf / ops",
-		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups   0/1/2/3 filter source",
+		styles.Header.Render("Ops") + "    A advisor (Azure / GCP) — cost / security / reliability / perf / ops",
+		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",
 		styles.Header.Render("Misc") + "   x exec   ? help   q quit",
 		"",

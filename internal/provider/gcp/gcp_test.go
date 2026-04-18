@@ -27,11 +27,16 @@ func TestParseProjects(t *testing.T) {
 	if nodes[0].State != "ACTIVE" {
 		t.Errorf("state=%q", nodes[0].State)
 	}
+	// createTime propagated into Meta["createdTime"] so the TUI's shortDate
+	// helper renders it in the CREATED column.
+	if nodes[0].Meta["createdTime"] != "2025-01-01T00:00:00Z" {
+		t.Errorf("createdTime meta = %q", nodes[0].Meta["createdTime"])
+	}
 }
 
 func TestParseAssets(t *testing.T) {
 	data := []byte(`[
-      {"name":"//compute.googleapis.com/projects/p/zones/us-central1-a/instances/web-01","assetType":"compute.googleapis.com/Instance","location":"us-central1-a","displayName":"web-01","project":"projects/p"},
+      {"name":"//compute.googleapis.com/projects/p/zones/us-central1-a/instances/web-01","assetType":"compute.googleapis.com/Instance","location":"us-central1-a","displayName":"web-01","project":"projects/p","createTime":"2025-03-10T08:00:00Z","updateTime":"2026-01-11T10:00:00Z"},
       {"name":"//storage.googleapis.com/projects/_/buckets/my-bucket","assetType":"storage.googleapis.com/Bucket","location":"us","project":"projects/p"}
     ]`)
 	parent := provider.Node{ID: "p", Kind: provider.KindProject}
@@ -53,6 +58,12 @@ func TestParseAssets(t *testing.T) {
 	}
 	if nodes[1].State != "Bucket" {
 		t.Errorf("[1].State=%q", nodes[1].State)
+	}
+	if nodes[0].Meta["createdTime"] != "2025-03-10T08:00:00Z" {
+		t.Errorf("[0] createdTime = %q", nodes[0].Meta["createdTime"])
+	}
+	if _, ok := nodes[1].Meta["createdTime"]; ok {
+		t.Error("asset without createTime should not populate the meta key")
 	}
 }
 

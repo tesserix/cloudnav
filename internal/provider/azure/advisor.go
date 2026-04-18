@@ -5,18 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/tesserix/cloudnav/internal/provider"
 )
 
-type Recommendation struct {
-	Category     string `json:"category"`
-	Impact       string `json:"impact"`
-	Problem      string `json:"problem"`
-	Solution     string `json:"solution"`
-	ImpactedName string `json:"impacted"`
-	ImpactedType string `json:"type"`
-	ResourceID   string `json:"resourceId"`
-	LastUpdated  string `json:"lastUpdated"`
-}
+// Recommendation is re-exported from the shared provider package so the TUI
+// and CLI keep their existing azure.Recommendation references working while
+// every cloud implementation uses the same underlying struct.
+type Recommendation = provider.Recommendation
 
 func (a *Azure) Recommendations(ctx context.Context, subID string) ([]Recommendation, error) {
 	url := fmt.Sprintf(

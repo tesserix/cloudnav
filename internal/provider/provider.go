@@ -76,6 +76,28 @@ type Installer interface {
 	InstallPlan(goos string) (steps []InstallStep, ok bool)
 }
 
+// Recommendation is a cost / security / reliability / performance tip
+// produced by a cloud's advisor-style service — Azure Advisor, Google Cloud
+// Recommender, AWS Trusted Advisor etc. Each cloud implements Advisor to
+// surface these under the same TUI keybinding.
+type Recommendation struct {
+	Category     string `json:"category"` // Cost / Security / Reliability / Performance / OperationalExcellence
+	Impact       string `json:"impact"`   // High / Medium / Low
+	Problem      string `json:"problem"`
+	Solution     string `json:"solution"`
+	ImpactedName string `json:"impacted,omitempty"`
+	ImpactedType string `json:"type,omitempty"`
+	ResourceID   string `json:"resourceId,omitempty"`
+	LastUpdated  string `json:"lastUpdated,omitempty"`
+}
+
+// Advisor is implemented by providers that can return recommendations for a
+// given scope — a subscription, project, or account identifier. The TUI's
+// advisor overlay is wired to this.
+type Advisor interface {
+	Recommendations(ctx context.Context, scopeID string) ([]Recommendation, error)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tesserix/cloudnav/internal/provider/azure"
+	"github.com/tesserix/cloudnav/internal/provider"
 )
 
 func TestParentRGName(t *testing.T) {
@@ -68,7 +68,7 @@ func TestShellQuote(t *testing.T) {
 }
 
 func TestFilterAdvisorByScope(t *testing.T) {
-	recs := []azure.Recommendation{
+	recs := []provider.Recommendation{
 		{ResourceID: "/subscriptions/abc/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm1", Problem: "p1"},
 		{ResourceID: "/subscriptions/abc/resourceGroups/rg-b/providers/Microsoft.Storage/storageAccounts/s1", Problem: "p2"},
 		{ResourceID: "/subscriptions/xyz/resourceGroups/rg-c", Problem: "p3"},
