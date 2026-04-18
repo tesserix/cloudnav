@@ -245,7 +245,7 @@ func newModel() *model {
 
 	m := &model{
 		ctx:          context.Background(),
-		providers:    []provider.Provider{azure.New(), gcp.New(), aws.New()},
+		providers:    buildProviders(cfg),
 		spinner:      sp,
 		search:       ti,
 		paletteInput: pi,
@@ -278,6 +278,17 @@ func (m *model) pushHome() {
 	}
 	m.stack = []frame{home}
 	m.refreshTable()
+}
+
+// buildProviders constructs the three cloud providers and threads user config
+// into the ones that need it. Keeping the wiring in a helper keeps newModel
+// from growing a big switch statement every time a provider adds a setting.
+func buildProviders(cfg *config.Config) []provider.Provider {
+	g := gcp.New()
+	if cfg != nil && cfg.GCP.BillingTable != "" {
+		g.SetBillingTable(cfg.GCP.BillingTable)
+	}
+	return []provider.Provider{azure.New(), g, aws.New()}
 }
 
 func (m *model) Init() tea.Cmd {

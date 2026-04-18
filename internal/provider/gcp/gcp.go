@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -14,7 +15,8 @@ import (
 )
 
 type GCP struct {
-	gcloud *cli.Runner
+	gcloud       *cli.Runner
+	billingTable string // populated via SetBillingTable from cfg; env var still overrides
 }
 
 func New() *GCP {
@@ -143,6 +145,101 @@ type assetJSON struct {
 // list for.
 const assetPageLimit = 500
 
+// assetTypeWhitelist is the default set of first-party GCP asset types the
+// resource view lists. Kubernetes workload resources (Pod, Deployment,
+// ReplicaSet, Endpoints, Service) live under k8s.io/* and apps.k8s.io/*
+// asset types — listing them here would drown out the actual GCP resources
+// (GKE clusters, Cloud SQL, VMs, buckets, etc.) on any project with a busy
+// GKE cluster. Users who need them run kubectl instead.
+//
+// The env var CLOUDNAV_GCP_ASSET_TYPES="*" opts back into the unfiltered
+// view when someone actually does want the k8s rows.
+var assetTypeWhitelist = []string{
+	// Compute
+	"compute.googleapis.com/Instance",
+	"compute.googleapis.com/InstanceGroup",
+	"compute.googleapis.com/InstanceGroupManager",
+	"compute.googleapis.com/InstanceTemplate",
+	"compute.googleapis.com/Disk",
+	"compute.googleapis.com/Network",
+	"compute.googleapis.com/Subnetwork",
+	"compute.googleapis.com/Firewall",
+	"compute.googleapis.com/Address",
+	"compute.googleapis.com/ForwardingRule",
+	"compute.googleapis.com/TargetPool",
+	"compute.googleapis.com/BackendService",
+	"compute.googleapis.com/UrlMap",
+	"compute.googleapis.com/SslCertificate",
+	"compute.googleapis.com/Router",
+	"compute.googleapis.com/VpnTunnel",
+	// Containers
+	"container.googleapis.com/Cluster",
+	"container.googleapis.com/NodePool",
+	// Serverless
+	"run.googleapis.com/Service",
+	"run.googleapis.com/Revision",
+	"run.googleapis.com/Job",
+	"cloudfunctions.googleapis.com/Function",
+	"workflows.googleapis.com/Workflow",
+	// Data stores
+	"sqladmin.googleapis.com/Instance",
+	"sqladmin.googleapis.com/Database",
+	"spanner.googleapis.com/Instance",
+	"spanner.googleapis.com/Database",
+	"bigtableadmin.googleapis.com/Instance",
+	"bigtableadmin.googleapis.com/Cluster",
+	"bigtableadmin.googleapis.com/Table",
+	"redis.googleapis.com/Instance",
+	"memcache.googleapis.com/Instance",
+	"firestore.googleapis.com/Database",
+	"storage.googleapis.com/Bucket",
+	// Analytics & ML
+	"bigquery.googleapis.com/Dataset",
+	"bigquery.googleapis.com/Table",
+	"dataflow.googleapis.com/Job",
+	"dataproc.googleapis.com/Cluster",
+	"composer.googleapis.com/Environment",
+	"aiplatform.googleapis.com/Endpoint",
+	"aiplatform.googleapis.com/Model",
+	"aiplatform.googleapis.com/Notebook",
+	// Messaging
+	"pubsub.googleapis.com/Topic",
+	"pubsub.googleapis.com/Subscription",
+	// DevOps / registries
+	"artifactregistry.googleapis.com/Repository",
+	"cloudbuild.googleapis.com/BuildTrigger",
+	"sourcerepo.googleapis.com/Repository",
+	// Networking
+	"dns.googleapis.com/ManagedZone",
+	"cloudcdn.googleapis.com/CdnPolicy",
+	// Security / IAM
+	"iam.googleapis.com/ServiceAccount",
+	"iam.googleapis.com/Role",
+	"secretmanager.googleapis.com/Secret",
+	"cloudkms.googleapis.com/KeyRing",
+	"cloudkms.googleapis.com/CryptoKey",
+	// Observability
+	"monitoring.googleapis.com/AlertPolicy",
+	"monitoring.googleapis.com/Dashboard",
+	"monitoring.googleapis.com/NotificationChannel",
+	// Billing / project
+	"cloudresourcemanager.googleapis.com/Project",
+	"cloudresourcemanager.googleapis.com/Folder",
+}
+
+// resolveAssetTypes returns the --asset-types argument to pass to gcloud.
+// CLOUDNAV_GCP_ASSET_TYPES wins when set: "*" (or "all") means unfiltered,
+// any comma-separated list overrides the default whitelist.
+func resolveAssetTypes() string {
+	if v := strings.TrimSpace(os.Getenv("CLOUDNAV_GCP_ASSET_TYPES")); v != "" {
+		if v == "*" || strings.EqualFold(v, "all") {
+			return ""
+		}
+		return v
+	}
+	return strings.Join(assetTypeWhitelist, ",")
+}
+
 func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.Node, error) {
 	// Cloud Asset API (cloudasset.googleapis.com) has to be enabled on the
 	// project. The `--limit` bounds very large projects that would otherwise
@@ -157,13 +254,17 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 	// --page-size raises the server page from the 100 default so the 500
 	// cap lands in one round trip instead of six. On a 5k-asset project
 	// this drops drill time from ~32s to ~3s.
-	out, err := g.gcloud.Run(callCtx,
+	args := []string{
 		"asset", "search-all-resources",
-		"--scope=projects/"+project.ID,
+		"--scope=projects/" + project.ID,
 		fmt.Sprintf("--limit=%d", assetPageLimit+1),
 		fmt.Sprintf("--page-size=%d", assetPageLimit),
 		"--format=json",
-	)
+	}
+	if at := resolveAssetTypes(); at != "" {
+		args = append(args, "--asset-types="+at)
+	}
+	out, err := g.gcloud.Run(callCtx, args...)
 	if err != nil {
 		return nil, translateAssetError(err, project.ID)
 	}

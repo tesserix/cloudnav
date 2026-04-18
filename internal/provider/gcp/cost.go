@@ -12,13 +12,29 @@ import (
 
 const billingTableEnv = "CLOUDNAV_GCP_BILLING_TABLE"
 
+// SetBillingTable lets a caller (typically the TUI on startup) override the
+// BQ billing-export table after construction. The env var still wins so
+// CI/scripts keep working without rewriting config.
+func (g *GCP) SetBillingTable(table string) {
+	g.billingTable = table
+}
+
+// billingTableResolved picks the first non-empty source: explicit override
+// from config, then the CLOUDNAV_GCP_BILLING_TABLE env var.
+func (g *GCP) billingTableResolved() string {
+	if v := os.Getenv(billingTableEnv); v != "" {
+		return v
+	}
+	return g.billingTable
+}
+
 func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]string, error) {
 	if parent.Kind != provider.KindCloud {
 		return nil, fmt.Errorf("gcp: cost is per-project across accessible billing export")
 	}
-	table := os.Getenv(billingTableEnv)
+	table := g.billingTableResolved()
 	if table == "" {
-		return nil, fmt.Errorf("gcp cost: set %s=project.dataset.table (requires BigQuery billing export; see cloud.google.com/billing/docs/how-to/export-data-bigquery)", billingTableEnv)
+		return nil, fmt.Errorf("gcp cost needs a BigQuery billing-export table — set it once with:\n  cloudnav config set gcp.billing_table <project>.<dataset>.<table>\nor export %s=...\n(see cloud.google.com/billing/docs/how-to/export-data-bigquery to create the export)", billingTableEnv)
 	}
 	query := fmt.Sprintf(
 		"SELECT project.id AS project_id, ROUND(SUM(cost), 2) AS total, currency "+

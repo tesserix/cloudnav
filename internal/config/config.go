@@ -28,6 +28,16 @@ type Config struct {
 	DefaultProvider string     `json:"default_provider,omitempty"`
 	Theme           string     `json:"theme,omitempty"`
 	Bookmarks       []Bookmark `json:"bookmarks,omitempty"`
+	GCP             GCPConfig  `json:"gcp,omitempty"`
+}
+
+// GCPConfig holds GCP-specific preferences. Optional; environment variables
+// of the same meaning still win so CI / scripts don't have to rewrite files.
+type GCPConfig struct {
+	// BillingTable is the BigQuery billing-export table in "project.dataset.table"
+	// form. Month-to-date cost in the projects view pulls from here; if not
+	// set, cost fails open and shows a hint instead.
+	BillingTable string `json:"billing_table,omitempty"`
 }
 
 // Path returns the resolved config file path.
