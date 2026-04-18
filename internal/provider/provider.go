@@ -98,6 +98,29 @@ type Advisor interface {
 	Recommendations(ctx context.Context, scopeID string) ([]Recommendation, error)
 }
 
+// CostLine is a single row in the billing breakdown overlay — one service,
+// region, or project depending on the cloud. Current and LastMonth are in
+// the same currency (Currency). The TUI renders delta arrows from these.
+type CostLine struct {
+	Label     string  `json:"label"`
+	Current   float64 `json:"current"`
+	LastMonth float64 `json:"lastMonth"`
+	Currency  string  `json:"currency"`
+	Note      string  `json:"note,omitempty"` // e.g. "no BQ export" or portal link hint
+}
+
+// Billing is implemented by providers that can produce a flat cost
+// breakdown for the current auth scope:
+//
+//	Azure → subscriptions
+//	AWS   → services under the account
+//	GCP   → projects under the billing export
+//
+// Drives the `B` (billing) overlay.
+type Billing interface {
+	Billing(ctx context.Context) ([]CostLine, error)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {

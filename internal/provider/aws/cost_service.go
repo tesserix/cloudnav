@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/tesserix/cloudnav/internal/provider"
 )
 
 type ServiceCost struct {
@@ -31,6 +33,26 @@ func (a *AWS) ServiceCosts(ctx context.Context) ([]ServiceCost, error) {
 			}
 		}
 		out = append(out, sc)
+	}
+	return out, nil
+}
+
+// Billing returns AWS cost per service (this month + last) so the TUI's `B`
+// overlay can render a portfolio-style breakdown with MoM deltas. Implements
+// provider.Billing.
+func (a *AWS) Billing(ctx context.Context) ([]provider.CostLine, error) {
+	services, err := a.ServiceCosts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]provider.CostLine, 0, len(services))
+	for _, s := range services {
+		out = append(out, provider.CostLine{
+			Label:     s.Service,
+			Current:   s.Current,
+			LastMonth: s.LastMonth,
+			Currency:  s.Currency,
+		})
 	}
 	return out, nil
 }

@@ -77,4 +77,5 @@ func TestAzureSatisfiesProviderInterfaces(t *testing.T) {
 	var _ provider.PIMer = (*Azure)(nil)
 	var _ provider.Coster = (*Azure)(nil)
 	var _ provider.VMOps = (*Azure)(nil)
+	var _ provider.Billing = (*Azure)(nil)
 }

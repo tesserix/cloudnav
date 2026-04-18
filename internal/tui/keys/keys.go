@@ -15,6 +15,7 @@ type Map struct {
 	Detail    key.Binding
 	PIM       key.Binding
 	Advisor   key.Binding
+	Billing   key.Binding
 	Exec      key.Binding
 	Refresh   key.Binding
 	Sort      key.Binding
@@ -43,6 +44,7 @@ func Default() Map {
 		Detail:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "info")),
 		PIM:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "PIM")),
 		Advisor:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "advisor")),
+		Billing:   key.NewBinding(key.WithKeys("B"), key.WithHelp("B", "billing")),
 		Exec:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "exec")),
 		Refresh:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),

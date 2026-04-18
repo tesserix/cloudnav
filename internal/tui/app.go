@@ -75,8 +75,12 @@ type (
 		scope     string
 		scopeName string
 	}
-	loginDoneMsg    struct{ cloud string }
-	loginStatusMsg  struct{ status map[string]string }
+	loginDoneMsg     struct{ cloud string }
+	loginStatusMsg   struct{ status map[string]string }
+	billingLoadedMsg struct {
+		lines []provider.CostLine
+		scope string
+	}
 	pimActivatedMsg struct {
 		role      string
 		roleID    string
@@ -174,8 +178,12 @@ type model struct {
 	advisorName    string
 	advisorIdx     int
 	loginStatus    map[string]string // providerName → human-readable auth state
-	drilling       bool              // a drill-level load is in flight; block navigation
-	categoryFilter string            // resource category on the resource list (compute / data / network / security / other)
+	billingMode    bool
+	billingLines   []provider.CostLine
+	billingScope   string // provider name that produced billingLines
+	billingIdx     int
+	drilling       bool   // a drill-level load is in flight; block navigation
+	categoryFilter string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode     bool
 	deleteTargets  []provider.Node
 	deleteInput    textinput.Model
@@ -363,6 +371,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.advisorMode {
 			return m.updateAdvisor(msg)
 		}
+		if m.billingMode {
+			return m.updateBilling(msg)
+		}
 		if m.detailMode {
 			if msg.String() == keyEsc || msg.String() == "q" {
 				m.detailMode = false
@@ -469,6 +480,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loginCurrentCloud()
 		case key.Matches(msg, m.keys.Advisor):
 			return m, m.loadAdvisor()
+		case key.Matches(msg, m.keys.Billing):
+			return m, m.loadBilling()
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -587,6 +600,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loginStatus[k] = v
 		}
 		m.refreshTable()
+		return m, nil
+
+	case billingLoadedMsg:
+		m.loading = false
+		m.err = nil
+		// Sort descending by current spend so the biggest line items land on top.
+		sort.SliceStable(msg.lines, func(i, j int) bool { return msg.lines[i].Current > msg.lines[j].Current })
+		m.billingLines = msg.lines
+		m.billingScope = msg.scope
+		m.billingIdx = 0
+		m.billingMode = true
+		m.status = fmt.Sprintf("%d billing line(s) for %s", len(msg.lines), msg.scope)
 		return m, nil
 
 	case advisorLoadedMsg:
@@ -1307,6 +1332,31 @@ func (m *model) loadDetail() tea.Cmd {
 				return errMsg{err}
 			}
 			return detailLoadedMsg{title: cur.Name, body: string(data)}
+		},
+	)
+}
+
+// loadBilling fires the active provider's Billing() call and opens the
+// billing overlay. Implements the `B` key. Falls through with a status hint
+// when the active provider doesn't implement provider.Billing.
+func (m *model) loadBilling() tea.Cmd {
+	b, ok := m.active.(provider.Billing)
+	if !ok {
+		m.status = m.active.Name() + ": billing overview not supported"
+		return nil
+	}
+	m.loading = true
+	m.status = "loading " + m.active.Name() + " billing..."
+	ctx := m.ctx
+	scope := m.active.Name()
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			lines, err := b.Billing(ctx)
+			if err != nil {
+				return errMsg{err}
+			}
+			return billingLoadedMsg{lines: lines, scope: scope}
 		},
 	)
 }
@@ -2438,6 +2488,9 @@ func (m *model) View() string {
 	if m.advisorMode {
 		return m.advisorView()
 	}
+	if m.billingMode {
+		return m.billingView()
+	}
 	if m.paletteMode {
 		return m.paletteView()
 	}
@@ -2512,6 +2565,144 @@ func (m *model) drillLoadingBody() string {
 		styles.Help.Render("  input is disabled until this finishes — press esc to go back, q to quit"),
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m *model) updateBilling(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc, "q", "B":
+		m.billingMode = false
+		m.status = ""
+		return m, nil
+	case keyUp, "k":
+		if m.billingIdx > 0 {
+			m.billingIdx--
+		}
+		return m, nil
+	case keyDown, "j":
+		if m.billingIdx < len(m.billingLines)-1 {
+			m.billingIdx++
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// billingView renders the cloud's portfolio-style cost breakdown: services
+// (AWS), subscriptions (Azure), projects (GCP). Delta arrows reuse the same
+// logic as the inline cost column so behaviour matches.
+func (m *model) billingView() string {
+	total := 0.0
+	totalLast := 0.0
+	currency := ""
+	for _, l := range m.billingLines {
+		total += l.Current
+		totalLast += l.LastMonth
+		if currency == "" {
+			currency = l.Currency
+		}
+	}
+	totalArrow := billingDelta(total, totalLast)
+	totalCell := fmt.Sprintf("%s → %s%s%s", cliCurrencySymbol(currency)+fmt.Sprintf("%.2f", totalLast), cliCurrencySymbol(currency), fmt.Sprintf("%.2f", total), totalArrow)
+
+	header := styles.Title.Render("billing — "+m.billingScope) + "  " +
+		styles.Help.Render(fmt.Sprintf("%d line(s)   TOTAL %s", len(m.billingLines), totalCell))
+
+	if len(m.billingLines) == 0 {
+		return styles.Box.Render(strings.Join([]string{
+			header,
+			"",
+			styles.Help.Render("No billing data yet."),
+			"",
+			styles.Help.Render("esc close   B toggle"),
+		}, "\n"))
+	}
+
+	window := 14
+	if m.height > 12 {
+		window = m.height - 12
+	}
+	if window < 5 {
+		window = 5
+	}
+	start := 0
+	if m.billingIdx >= window {
+		start = m.billingIdx - window + 1
+	}
+	end := start + window
+	if end > len(m.billingLines) {
+		end = len(m.billingLines)
+	}
+
+	lines := []string{header, ""}
+	if start > 0 {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	}
+	for i := start; i < end; i++ {
+		l := m.billingLines[i]
+		cur := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.Current)
+		last := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.LastMonth)
+		arrow := billingDelta(l.Current, l.LastMonth)
+		note := ""
+		if l.Note != "" {
+			note = "   " + styles.Help.Render(l.Note)
+		}
+		row := fmt.Sprintf("%2d. %-40s   last %-12s   now %-12s  %s%s",
+			i+1, shorten(l.Label, 40), last, cur, arrow, note)
+		if i == m.billingIdx {
+			row = styles.Selected.Render("> " + row)
+		} else {
+			row = "  " + row
+		}
+		lines = append(lines, row)
+	}
+	if end < len(m.billingLines) {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(m.billingLines)-end)))
+	}
+	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/B close"))
+	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+// billingDelta mirrors the inline-column arrow formatting so users see the
+// same up/down/flat indicators across the cost column and the billing view.
+func billingDelta(current, last float64) string {
+	if last == 0 {
+		if current == 0 {
+			return emDash
+		}
+		return styles.Good.Render("new")
+	}
+	d := (current - last) / last * 100
+	switch {
+	case d > 2:
+		return styles.Bad.Render(fmt.Sprintf("↑%d%%", int(d+0.5)))
+	case d < -2:
+		return styles.Good.Render(fmt.Sprintf("↓%d%%", int(-d+0.5)))
+	default:
+		return styles.Help.Render("→")
+	}
+}
+
+// cliCurrencySymbol is a copy of the per-provider currencySymbol so the
+// billing view doesn't need to reach into the azure package.
+func cliCurrencySymbol(code string) string {
+	switch strings.ToUpper(code) {
+	case "USD", "":
+		return "$"
+	case "GBP":
+		return "£"
+	case "EUR":
+		return "€"
+	case "INR":
+		return "₹"
+	case "JPY":
+		return "¥"
+	case "AUD":
+		return "A$"
+	case "CAD":
+		return "C$"
+	default:
+		return code + " "
+	}
 }
 
 func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -2991,6 +3182,9 @@ func (m *model) keybar() string {
 	}
 	if _, ok := m.active.(provider.Advisor); ok && m.active != nil {
 		pairs = append(pairs, pair{"A", "advisor"})
+	}
+	if _, ok := m.active.(provider.Billing); ok && m.active != nil {
+		pairs = append(pairs, pair{"B", "billing"})
 	}
 	if m.atCloudLevel() {
 		pairs = append(pairs, pair{"I", "login"})
@@ -3609,6 +3803,7 @@ func (m *model) helpView() string {
 		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
 		styles.Header.Render("Filter") + " 0-5 on resource views — 0 all / 1 compute / 2 data / 3 network / 4 security / 5 other",
 		styles.Header.Render("Ops") + "    A advisor (Azure / GCP) — cost / security / reliability / perf / ops",
+		styles.Header.Render("Billing") + " B portfolio view — per-sub (Azure), per-service (AWS), per-project (GCP)",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",
 		styles.Header.Render("Misc") + "   x exec   ? help   q quit",

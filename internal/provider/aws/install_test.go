@@ -45,4 +45,5 @@ func TestAWSSatisfiesProviderInterfaces(t *testing.T) {
 	var _ provider.Provider = (*AWS)(nil)
 	var _ provider.Loginer = (*AWS)(nil)
 	var _ provider.Installer = (*AWS)(nil)
+	var _ provider.Billing = (*AWS)(nil)
 }
