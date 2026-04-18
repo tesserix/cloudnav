@@ -164,7 +164,7 @@ type model struct {
 	pimFilterOn   bool
 	pimFilterIn   textinput.Model
 	pimDuration   int
-	pimSourceFilt string // "" = all, "azure", "entra", "group"
+	pimSourceFilt string // "" = all, pimSrc{Azure,Entra,Group}
 	advisorMode   bool
 	advisorRecs   []azure.Recommendation
 	advisorScope  string
@@ -942,7 +942,7 @@ func (m *model) costScope() (provider.Node, bool) {
 
 func (m *model) costHint() string {
 	switch m.active.Name() {
-	case "azure":
+	case pimSrcAzure:
 		return "cost column on — drill into a subscription's resource groups"
 	case "aws":
 		return "cost column on — drill into the account's regions"
@@ -1359,17 +1359,17 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncPIMDurationToPolicy()
 		return m, nil
 	case "1":
-		m.pimSourceFilt = "azure"
+		m.pimSourceFilt = pimSrcAzure
 		m.pimCursor = 0
 		m.syncPIMDurationToPolicy()
 		return m, nil
 	case "2":
-		m.pimSourceFilt = "entra"
+		m.pimSourceFilt = pimSrcEntra
 		m.pimCursor = 0
 		m.syncPIMDurationToPolicy()
 		return m, nil
 	case "3":
-		m.pimSourceFilt = "group"
+		m.pimSourceFilt = pimSrcGroup
 		m.pimCursor = 0
 		m.syncPIMDurationToPolicy()
 		return m, nil
@@ -1471,7 +1471,7 @@ func (m *model) pimSourceCounts() map[string]int {
 	for _, r := range m.pimRoles {
 		src := r.Source
 		if src == "" {
-			src = "azure"
+			src = pimSrcAzure
 		}
 		out[src]++
 	}
@@ -1932,7 +1932,12 @@ func shortID(s string) string {
 	return s
 }
 
-const emDash = "—"
+const (
+	emDash      = "—"
+	pimSrcAzure = "azure"
+	pimSrcEntra = "entra"
+	pimSrcGroup = "group"
+)
 
 func costOrDash(c string) string {
 	if c == "" {
@@ -2125,12 +2130,12 @@ func (m *model) advisorView() string {
 // pimSourceBadge renders a short, color-tagged label for the PIM surface.
 func pimSourceBadge(src string) string {
 	switch src {
-	case "entra":
+	case pimSrcEntra:
 		return styles.AccentS.Render("entra")
-	case "group":
+	case pimSrcGroup:
 		return styles.WarnS.Render("group")
-	case "azure", "":
-		return styles.Help.Render("azure")
+	case pimSrcAzure, "":
+		return styles.Help.Render(pimSrcAzure)
 	default:
 		return styles.Help.Render(src)
 	}
@@ -2209,9 +2214,9 @@ func (m *model) pimView() string {
 	}
 	tabs := strings.Join([]string{
 		tab("0", "all", "", len(m.pimRoles)),
-		tab("1", "Azure", "azure", counts["azure"]),
-		tab("2", "Entra", "entra", counts["entra"]),
-		tab("3", "Groups", "group", counts["group"]),
+		tab("1", "Azure", pimSrcAzure, counts[pimSrcAzure]),
+		tab("2", "Entra", pimSrcEntra, counts[pimSrcEntra]),
+		tab("3", "Groups", pimSrcGroup, counts[pimSrcGroup]),
 	}, "")
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
@@ -2461,7 +2466,7 @@ func (m *model) keybar() string {
 		{"c", "costs"},
 		{"s", "sort " + m.sort.String()},
 	}
-	if m.active != nil && m.active.Name() == "azure" {
+	if m.active != nil && m.active.Name() == pimSrcAzure {
 		pairs = append(pairs, pair{"A", "advisor"})
 	}
 	if m.atSubscriptionLevel() {

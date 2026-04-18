@@ -10,6 +10,8 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
+const groupAccessMember = "member"
+
 // listGroupPIM returns PIM-for-Groups eligible memberships ("Groups" tab in
 // the portal) for the signed-in user.
 func (a *Azure) listGroupPIM(ctx context.Context, tid string, client *http.Client) ([]provider.PIMRole, error) {
@@ -49,7 +51,7 @@ type groupEnvelope struct {
 		ID          string `json:"id"`
 		PrincipalID string `json:"principalId"`
 		GroupID     string `json:"groupId"`
-		AccessID    string `json:"accessId"` // "member" or "owner"
+		AccessID    string `json:"accessId"` // groupAccessMember or "owner"
 		EndDateTime string `json:"endDateTime"`
 		Group       struct {
 			ID          string `json:"id"`
@@ -67,7 +69,7 @@ func parseGroupEligible(body []byte, tid, oid string) ([]provider.PIMRole, error
 	for _, v := range env.Value {
 		access := v.AccessID
 		if access == "" {
-			access = "member"
+			access = groupAccessMember
 		}
 		displayName := v.Group.DisplayName
 		if displayName == "" {
@@ -75,7 +77,7 @@ func parseGroupEligible(body []byte, tid, oid string) ([]provider.PIMRole, error
 		}
 		out = append(out, provider.PIMRole{
 			ID:               v.ID,
-			RoleName:         access, // "member" / "owner"
+			RoleName:         access, // groupAccessMember / "owner"
 			Scope:            "/groups/" + v.GroupID,
 			ScopeName:        displayName,
 			TenantID:         tid,
@@ -102,7 +104,7 @@ func parseGroupActive(body []byte) map[string]string {
 	for _, v := range env.Value {
 		access := v.AccessID
 		if access == "" {
-			access = "member"
+			access = groupAccessMember
 		}
 		out[v.GroupID+"|"+access] = v.EndDateTime
 	}
@@ -121,7 +123,7 @@ func (a *Azure) activateGroupRole(ctx context.Context, role provider.PIMRole, ju
 	}
 	access := role.RoleName
 	if access == "" {
-		access = "member"
+		access = groupAccessMember
 	}
 	body := map[string]any{
 		"accessId":      access,
