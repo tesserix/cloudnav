@@ -78,8 +78,9 @@ type (
 	loginDoneMsg     struct{ cloud string }
 	loginStatusMsg   struct{ status map[string]string }
 	billingLoadedMsg struct {
-		lines []provider.CostLine
-		scope string
+		lines     []provider.CostLine
+		scope     string
+		gcpStatus *gcp.BillingStatus
 	}
 	pimActivatedMsg struct {
 		role      string
@@ -182,8 +183,9 @@ type model struct {
 	billingLines   []provider.CostLine
 	billingScope   string // provider name that produced billingLines
 	billingIdx     int
-	drilling       bool   // a drill-level load is in flight; block navigation
-	categoryFilter string // resource category on the resource list (compute / data / network / security / other)
+	billingGCP     *gcp.BillingStatus // optional GCP setup diagnostic
+	drilling       bool               // a drill-level load is in flight; block navigation
+	categoryFilter string             // resource category on the resource list (compute / data / network / security / other)
 	deleteMode     bool
 	deleteTargets  []provider.Node
 	deleteInput    textinput.Model
@@ -609,6 +611,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sort.SliceStable(msg.lines, func(i, j int) bool { return msg.lines[i].Current > msg.lines[j].Current })
 		m.billingLines = msg.lines
 		m.billingScope = msg.scope
+		m.billingGCP = msg.gcpStatus
 		m.billingIdx = 0
 		m.billingMode = true
 		m.status = fmt.Sprintf("%d billing line(s) for %s", len(msg.lines), msg.scope)
@@ -1338,7 +1341,9 @@ func (m *model) loadDetail() tea.Cmd {
 
 // loadBilling fires the active provider's Billing() call and opens the
 // billing overlay. Implements the `B` key. Falls through with a status hint
-// when the active provider doesn't implement provider.Billing.
+// when the active provider doesn't implement provider.Billing. For GCP we
+// also pull BillingStatus so the overlay can render a setup checklist when
+// the BQ export isn't live yet.
 func (m *model) loadBilling() tea.Cmd {
 	b, ok := m.active.(provider.Billing)
 	if !ok {
@@ -1349,6 +1354,22 @@ func (m *model) loadBilling() tea.Cmd {
 	m.status = "loading " + m.active.Name() + " billing..."
 	ctx := m.ctx
 	scope := m.active.Name()
+	var gcpStatus *gcp.BillingStatus
+	if gp, ok := m.active.(*gcp.GCP); ok {
+		prov := gp
+		return tea.Batch(
+			m.spinner.Tick,
+			func() tea.Msg {
+				lines, err := b.Billing(ctx)
+				if err != nil {
+					return errMsg{err}
+				}
+				status, _ := prov.BillingStatus(ctx)
+				return billingLoadedMsg{lines: lines, scope: scope, gcpStatus: status}
+			},
+		)
+	}
+	_ = gcpStatus
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
@@ -2583,6 +2604,13 @@ func (m *model) updateBilling(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.billingIdx++
 		}
 		return m, nil
+	case "o":
+		// In GCP setup mode, o opens the Cloud Billing export console.
+		if m.billingGCP != nil && m.billingGCP.SetupURL != "" {
+			go openURL(m.billingGCP.SetupURL)
+			m.status = "opened " + m.billingGCP.SetupURL
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -2606,6 +2634,13 @@ func (m *model) billingView() string {
 
 	header := styles.Title.Render("billing — "+m.billingScope) + "  " +
 		styles.Help.Render(fmt.Sprintf("%d line(s)   TOTAL %s", len(m.billingLines), totalCell))
+
+	// For GCP, if the BQ export isn't live yet we have a rich diagnostic we
+	// can show instead of an empty pane — walks the user through the exact
+	// remaining steps to enable the export.
+	if m.billingScope == "gcp" && !m.gcpExportLive() && m.billingGCP != nil {
+		return m.gcpBillingSetupView(header)
+	}
 
 	if len(m.billingLines) == 0 {
 		return styles.Box.Render(strings.Join([]string{
@@ -2660,6 +2695,71 @@ func (m *model) billingView() string {
 	}
 	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/B close"))
 	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+// gcpExportLive reports whether the BQ billing-export table is already live
+// for the caller. When false the billing overlay renders a setup checklist
+// instead of an empty "0 line(s)" pane.
+func (m *model) gcpExportLive() bool {
+	return m.billingGCP != nil && m.billingGCP.ExportTable != ""
+}
+
+// gcpBillingSetupView renders the step-by-step diagnostic for GCP BQ billing
+// export: billing account, IAM roles, dataset, export table. Each line is a
+// ✓ or ✗ so the user can tell at a glance which step is pending.
+func (m *model) gcpBillingSetupView(header string) string {
+	st := m.billingGCP
+	check := func(ok bool) string {
+		if ok {
+			return styles.Good.Render("✓")
+		}
+		return styles.Bad.Render("✗")
+	}
+	lines := []string{header, "", styles.Header.Render("GCP billing-export setup")}
+	lines = append(lines, fmt.Sprintf("  %s project             %s", check(st.Project != ""), st.Project))
+	lines = append(lines, fmt.Sprintf("  %s billing account     %s", check(st.BillingAccount != ""), nonempty(st.BillingAccount, "unknown")))
+	lines = append(lines, fmt.Sprintf("  %s billing enabled     %v", check(st.BillingEnabled), st.BillingEnabled))
+	if len(st.Roles) > 0 {
+		lines = append(lines, fmt.Sprintf("  %s your roles          %v", check(true), st.Roles))
+	} else {
+		lines = append(lines, fmt.Sprintf("  %s your roles          (unknown — need billing.viewer to read IAM)", check(false)))
+	}
+	lines = append(lines, fmt.Sprintf("  %s can admin billing   %v (need roles/billing.admin to enable export)", check(st.CanAdminBilling), st.CanAdminBilling))
+	lines = append(lines, fmt.Sprintf("  %s dataset %q   exists=%v", check(st.DatasetExists), st.Dataset, st.DatasetExists))
+	lines = append(lines, fmt.Sprintf("  %s export table        %s", check(st.ExportTable != ""), nonemptyOrDash(st.ExportTable)))
+	lines = append(lines, "")
+	lines = append(lines, styles.Header.Render("next steps"))
+	if !st.DatasetExists && st.CanAdminBilling {
+		lines = append(lines, "  1. run `cloudnav billing init` to create the billing_export dataset")
+	}
+	lines = append(lines, fmt.Sprintf("  %d. press o to open the setup page:", stepNum(st)))
+	lines = append(lines, "       "+styles.Help.Render(st.SetupURL))
+	lines = append(lines, "     choose project "+st.Project+", dataset "+st.Dataset+", detailed usage cost export")
+	lines = append(lines, fmt.Sprintf("  %d. wait a few hours for first export data to land, then press B again", stepNum(st)+1))
+	lines = append(lines, "")
+	lines = append(lines, styles.Help.Render("  o open console   esc/B close"))
+	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+func stepNum(st *gcp.BillingStatus) int {
+	if st.DatasetExists {
+		return 1
+	}
+	return 2
+}
+
+func nonempty(a, fallback string) string {
+	if a == "" {
+		return fallback
+	}
+	return a
+}
+
+func nonemptyOrDash(s string) string {
+	if s == "" {
+		return emDash
+	}
+	return s
 }
 
 // billingDelta mirrors the inline-column arrow formatting so users see the

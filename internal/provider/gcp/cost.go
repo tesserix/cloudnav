@@ -83,7 +83,7 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 // gcp_billing_export_v1_* table. Returns "" when anything on that chain
 // isn't set up. Best-effort and cached per-process.
 func (g *GCP) autoDetectBillingTable(ctx context.Context) (string, string) {
-	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project", "--format=value(core.project)")
+	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project")
 	if err != nil {
 		return "", ""
 	}
@@ -117,7 +117,7 @@ func (g *GCP) autoDetectBillingTable(ctx context.Context) (string, string) {
 // primaryBillingAccount returns the billing account for the gcloud default
 // project. Used to deep-link into the Billing → Export setup page.
 func (g *GCP) primaryBillingAccount(ctx context.Context) string {
-	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project", "--format=value(core.project)")
+	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project")
 	if err != nil {
 		return ""
 	}
