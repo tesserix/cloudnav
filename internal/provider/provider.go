@@ -57,6 +57,14 @@ type PIMRole struct {
 	Active           bool   // caller currently has an active assignment matching (roleDef, scope)
 	ActiveUntil      string // ISO-8601 expiry of the active assignment when Active is true
 	MaxDurationHours int    // max activation duration allowed by the PIM policy (0 if unknown)
+	// Source narrows which PIM surface this role lives on. Values: "azure"
+	// (Azure resource RBAC), "entra" (Microsoft Entra directory roles),
+	// "group" (PIM for Groups membership). Default is "azure" for legacy
+	// providers that don't set it.
+	Source string
+	// GroupID is populated when Source == "group" and identifies the PIM-
+	// enabled group this eligibility activates membership of.
+	GroupID string
 }
 
 // PIMer is an optional capability implemented by providers that expose

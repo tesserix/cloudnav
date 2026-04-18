@@ -19,10 +19,11 @@ import (
 type Azure struct {
 	az *cli.Runner
 
-	mu         sync.RWMutex
-	tenants    map[string]string // tenantId → displayName
-	subs       map[string]string // subscriptionId → name
-	subTenants map[string]string // subscriptionId → tenantId
+	mu           sync.RWMutex
+	tenants      map[string]string // tenantId → displayName
+	subs         map[string]string // subscriptionId → name
+	subTenants   map[string]string // subscriptionId → tenantId
+	signedInOIDs map[string]string // tenantId → signed-in user's object-id (Graph)
 }
 
 func New() *Azure {

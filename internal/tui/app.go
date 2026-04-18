@@ -124,54 +124,55 @@ type paletteItem struct {
 }
 
 type model struct {
-	ctx          context.Context
-	providers    []provider.Provider
-	active       provider.Provider
-	stack        []frame
-	visibleNodes []provider.Node
-	table        table.Model
-	spinner      spinner.Model
-	search       textinput.Model
-	detail       viewport.Model
-	detailTitle  string
-	detailMode   bool
-	searchMode   bool
-	filter       string
-	sort         sortMode
-	loading      bool
-	err          error
-	status       string
-	showHelp     bool
-	paletteMode  bool
-	paletteInput textinput.Model
-	paletteItems []paletteItem
-	paletteIdx   int
-	cfg          *config.Config
-	showCost     bool
-	costs        map[string]map[string]string       // subID → lowercased rg name → cost
-	tenantFilter string                             // only show subs whose Meta[tenantName] == this (empty = all)
-	locks        map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
-	selected     map[string]bool                    // node ID → selected
-	restorePath  []config.Crumb                     // remaining crumbs to drill into during bookmark restore
-	restoreLabel string                             // label shown while restoring (for status)
-	entities     map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
-	pimMode      bool
-	pimRoles     []provider.PIMRole
-	pimCursor    int
-	pimActivate  bool
-	pimInput     textinput.Model
-	pimFilter    string
-	pimFilterOn  bool
-	pimFilterIn  textinput.Model
-	pimDuration  int
-	advisorMode  bool
-	advisorRecs  []azure.Recommendation
-	advisorScope string
-	advisorName  string
-	advisorIdx   int
-	width        int
-	height       int
-	keys         keys.Map
+	ctx           context.Context
+	providers     []provider.Provider
+	active        provider.Provider
+	stack         []frame
+	visibleNodes  []provider.Node
+	table         table.Model
+	spinner       spinner.Model
+	search        textinput.Model
+	detail        viewport.Model
+	detailTitle   string
+	detailMode    bool
+	searchMode    bool
+	filter        string
+	sort          sortMode
+	loading       bool
+	err           error
+	status        string
+	showHelp      bool
+	paletteMode   bool
+	paletteInput  textinput.Model
+	paletteItems  []paletteItem
+	paletteIdx    int
+	cfg           *config.Config
+	showCost      bool
+	costs         map[string]map[string]string       // subID → lowercased rg name → cost
+	tenantFilter  string                             // only show subs whose Meta[tenantName] == this (empty = all)
+	locks         map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
+	selected      map[string]bool                    // node ID → selected
+	restorePath   []config.Crumb                     // remaining crumbs to drill into during bookmark restore
+	restoreLabel  string                             // label shown while restoring (for status)
+	entities      map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
+	pimMode       bool
+	pimRoles      []provider.PIMRole
+	pimCursor     int
+	pimActivate   bool
+	pimInput      textinput.Model
+	pimFilter     string
+	pimFilterOn   bool
+	pimFilterIn   textinput.Model
+	pimDuration   int
+	pimSourceFilt string // "" = all, "azure", "entra", "group"
+	advisorMode   bool
+	advisorRecs   []azure.Recommendation
+	advisorScope  string
+	advisorName   string
+	advisorIdx    int
+	width         int
+	height        int
+	keys          keys.Map
 }
 
 func newModel() *model {
@@ -1352,6 +1353,26 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.pimDuration--
 		}
 		return m, nil
+	case "0":
+		m.pimSourceFilt = ""
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
+	case "1":
+		m.pimSourceFilt = "azure"
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
+	case "2":
+		m.pimSourceFilt = "entra"
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
+	case "3":
+		m.pimSourceFilt = "group"
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
 	}
 	return m, nil
 }
@@ -1423,18 +1444,36 @@ func (m *model) pimDurationCap() int {
 }
 
 func (m *model) filteredPIM() []provider.PIMRole {
-	if m.pimFilter == "" {
-		return m.pimRoles
-	}
 	q := strings.ToLower(m.pimFilter)
+	src := m.pimSourceFilt
 	out := make([]provider.PIMRole, 0, len(m.pimRoles))
 	for _, r := range m.pimRoles {
-		if strings.Contains(strings.ToLower(r.RoleName), q) ||
-			strings.Contains(strings.ToLower(r.ScopeName), q) ||
-			strings.Contains(strings.ToLower(r.Scope), q) ||
-			strings.Contains(strings.ToLower(r.TenantID), q) {
-			out = append(out, r)
+		if src != "" && r.Source != src {
+			continue
 		}
+		if q != "" &&
+			!strings.Contains(strings.ToLower(r.RoleName), q) &&
+			!strings.Contains(strings.ToLower(r.ScopeName), q) &&
+			!strings.Contains(strings.ToLower(r.Scope), q) &&
+			!strings.Contains(strings.ToLower(r.TenantID), q) &&
+			!strings.Contains(strings.ToLower(r.Source), q) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// pimSourceCounts returns { "azure": N, "entra": M, "group": K } so the tab
+// bar can show totals per source in the header.
+func (m *model) pimSourceCounts() map[string]int {
+	out := map[string]int{}
+	for _, r := range m.pimRoles {
+		src := r.Source
+		if src == "" {
+			src = "azure"
+		}
+		out[src]++
 	}
 	return out
 }
@@ -1741,10 +1780,10 @@ func (m *model) columnsFor(f *frame) []table.Column {
 	case provider.KindResourceGroup:
 		cols := []table.Column{
 			{Title: " ", Width: 3},
-			{Title: "NAME", Width: 40},
+			{Title: "NAME", Width: 38},
 			{Title: "LOCATION", Width: 14},
 			{Title: "STATE", Width: 10},
-			{Title: "LOCK", Width: 14},
+			{Title: "LOCK", Width: 18},
 			{Title: "CREATED", Width: 12},
 		}
 		if m.showCost {
@@ -2083,6 +2122,20 @@ func (m *model) advisorView() string {
 	return styles.Box.Render(strings.Join(lines, "\n"))
 }
 
+// pimSourceBadge renders a short, color-tagged label for the PIM surface.
+func pimSourceBadge(src string) string {
+	switch src {
+	case "entra":
+		return styles.AccentS.Render("entra")
+	case "group":
+		return styles.WarnS.Render("group")
+	case "azure", "":
+		return styles.Help.Render("azure")
+	default:
+		return styles.Help.Render(src)
+	}
+}
+
 func categoryBadge(c string) string {
 	switch strings.ToLower(c) {
 	case "cost":
@@ -2146,9 +2199,24 @@ func (m *model) pimView() string {
 			durHint = fmt.Sprintf("duration %dh (policy not readable, default 8h)", m.pimDuration)
 		}
 	}
+	counts := m.pimSourceCounts()
+	tab := func(key, label, src string, n int) string {
+		text := fmt.Sprintf("%s %s (%d)", key, label, n)
+		if m.pimSourceFilt == src {
+			return styles.Selected.Render(" " + text + " ")
+		}
+		return styles.Help.Render(" " + text + " ")
+	}
+	tabs := strings.Join([]string{
+		tab("0", "all", "", len(m.pimRoles)),
+		tab("1", "Azure", "azure", counts["azure"]),
+		tab("2", "Entra", "entra", counts["entra"]),
+		tab("3", "Groups", "group", counts["group"]),
+	}, "")
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
 			styles.Help.Render(fmt.Sprintf("%s  %s (use +/- to change)", headerCount, durHint)),
+		tabs,
 		"",
 	}
 	if m.pimFilterOn {
@@ -2201,11 +2269,13 @@ func (m *model) pimView() string {
 		if r.Active {
 			state = "  " + styles.Good.Render("● ACTIVE until "+humanUntil(r.ActiveUntil))
 		}
-		body := fmt.Sprintf("  %2d. %-40s  on  %-30s%s", i+1, r.RoleName, scopeDisplay(r), state)
+		src := padRight(pimSourceBadge(r.Source), 8)
+		rowText := fmt.Sprintf("%2d. %s %-36s  on  %-30s", i+1, src, shorten(r.RoleName, 36), shorten(scopeDisplay(r), 30))
 		if i == m.pimCursor {
-			body = styles.Selected.Render(fmt.Sprintf("> %2d. %-40s  on  %-30s", i+1, r.RoleName, scopeDisplay(r))) + state
+			lines = append(lines, styles.Selected.Render("> "+rowText)+state)
+		} else {
+			lines = append(lines, "  "+rowText+state)
 		}
-		lines = append(lines, body)
 	}
 	if end < len(filt) {
 		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(filt)-end)))
@@ -2235,7 +2305,7 @@ func (m *model) pimView() string {
 			"",
 			"  "+styles.Good.Render(m.status),
 			styles.Help.Render("  PIM activations can take up to a minute to become effective in Azure"),
-			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  esc close"),
+			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  0/1/2/3 source  esc close"),
 		)
 	default:
 		lines = append(lines,
@@ -2386,11 +2456,13 @@ func (m *model) keybar() string {
 		{":", "palette"},
 		{"f", "flag"},
 		{"p", "PIM"},
-		{"A", "advisor"},
 		{"i", "info"},
 		{"o", "portal"},
 		{"c", "costs"},
 		{"s", "sort " + m.sort.String()},
+	}
+	if m.active != nil && m.active.Name() == "azure" {
+		pairs = append(pairs, pair{"A", "advisor"})
 	}
 	if m.atSubscriptionLevel() {
 		label := "tenant: all"
@@ -2403,24 +2475,15 @@ func (m *model) keybar() string {
 		pairs = append(pairs,
 			pair{"L", "lock"},
 			pair{"␣", "select"},
-			pair{"[", "select-all"},
 		)
 		if n := len(m.selected); n > 0 {
 			pairs = append(pairs, pair{"D", fmt.Sprintf("delete %d", n)})
-			pairs = append(pairs, pair{"]", "clear-sel"})
 		}
 	}
 	if m.atResourceLevel() {
-		pairs = append(pairs,
-			pair{"␣", "select"},
-			pair{"[", "select-all"},
-		)
-		if n := len(m.selected); n > 0 {
-			pairs = append(pairs, pair{"]", "clear-sel"})
-		}
+		pairs = append(pairs, pair{"␣", "select"})
 	}
 	pairs = append(pairs,
-		pair{"?", "help"},
 		pair{"r", "refresh"},
 		pair{"esc", "back"},
 		pair{"q", "quit"},
@@ -2777,6 +2840,14 @@ func (m *model) footerView() string {
 	if m.searchMode {
 		return " " + m.search.View()
 	}
+	// Filter context (tenant / search) always wins over the loading spinner
+	// so the user can see what filter is active even while costs stream in.
+	if filt := m.filterFooter(); filt != "" {
+		if m.loading {
+			return " " + m.spinner.View() + " " + styles.Help.Render(filt)
+		}
+		return " " + styles.Help.Render(filt)
+	}
 	if m.loading {
 		return " " + m.spinner.View() + " " + styles.Help.Render(m.status)
 	}
@@ -2793,14 +2864,7 @@ func (m *model) footerView() string {
 	if len(m.stack) > 0 {
 		total = len(m.stack[len(m.stack)-1].nodes)
 	}
-	shown := len(m.visibleNodes)
 	switch {
-	case m.filter != "" && m.tenantFilter != "":
-		right = fmt.Sprintf("tenant: %s  filter: %s  %d/%d", m.tenantFilter, m.filter, shown, total)
-	case m.filter != "":
-		right = fmt.Sprintf("filter: %s  %d/%d", m.filter, shown, total)
-	case m.tenantFilter != "":
-		right = fmt.Sprintf("tenant: %s  %d/%d", m.tenantFilter, shown, total)
 	case m.status != "":
 		right = m.status
 	case total > 0:
@@ -2809,48 +2873,35 @@ func (m *model) footerView() string {
 	return " " + styles.Help.Render(right)
 }
 
+// filterFooter renders the tenant / search filter strip with an N/total
+// counter. Returns "" when no filter is active.
+func (m *model) filterFooter() string {
+	total := 0
+	if len(m.stack) > 0 {
+		total = len(m.stack[len(m.stack)-1].nodes)
+	}
+	shown := len(m.visibleNodes)
+	switch {
+	case m.filter != "" && m.tenantFilter != "":
+		return fmt.Sprintf("tenant: %s  filter: %s  %d/%d", m.tenantFilter, m.filter, shown, total)
+	case m.filter != "":
+		return fmt.Sprintf("filter: %s  %d/%d", m.filter, shown, total)
+	case m.tenantFilter != "":
+		return fmt.Sprintf("tenant: %s  %d/%d", m.tenantFilter, shown, total)
+	}
+	return ""
+}
+
 func (m *model) helpView() string {
 	body := strings.Join([]string{
 		styles.Title.Render("cloudnav keybindings"),
-		"",
-		styles.Header.Render("Navigation"),
-		"  ↵ / l          drill down into the selected row",
-		"  esc / h        go back one level",
-		"  j k / ↑ ↓      move the cursor",
-		"  /              filter the current view",
-		"  :              palette — jump to any sub/project/account, switch cloud, recall bookmark",
-		"  f              bookmark the current view (persisted)",
-		"  r              refresh current view",
-		"",
-		styles.Header.Render("Views"),
-		"  i              show full JSON detail for the selected resource",
-		"  o              open selected in the cloud portal (browser)",
-		"  c              toggle cost column (MoM delta when available)",
-		"  s              cycle sort (name / state / location)",
-		"  t              tenant filter (on subscription view, Azure only)",
-		"",
-		styles.Header.Render("Multi-select (RG and resource views)"),
-		"  ␣  (space)     toggle selection on the cursor row",
-		"  [              select all visible rows",
-		"  ]              clear all selections",
-		"  D              delete every selected resource group (Azure, with confirm)",
-		"  L              toggle lock on the cursor resource group (Azure)",
-		"",
-		styles.Header.Render("Advisor (Azure)"),
-		"  A              open Azure Advisor for the cursor scope (sub / RG / resource)",
-		"                 — cost, security, reliability, performance and ops-excellence tips",
-		"",
-		styles.Header.Render("PIM (Azure)"),
-		"  p              open PIM eligible roles",
-		"  j / k / ↑ / ↓  move inside PIM list",
-		"  /              filter PIM roles by tenant / sub / role name",
-		"  a or ↵         activate the selected role — justification prompt follows",
-		"  + / -          increase / decrease duration (capped by policy max)",
-		"",
-		styles.Header.Render("Misc"),
-		"  x              exec provider CLI inside the selected scope",
-		"  ?              show / hide this help",
-		"  q / ctrl+c     quit",
+		styles.Header.Render("Nav") + "    ↵/l drill   esc/h back   jk move   / filter   : palette   f flag   r refresh",
+		styles.Header.Render("View") + "   i info   o portal   c costs   s sort   t tenant",
+		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
+		styles.Header.Render("Ops") + "    A advisor (Azure) — cost / security / reliability / perf / ops",
+		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups   0/1/2/3 filter source",
+		"         / filter   a activate   +/- duration   j/k move",
+		styles.Header.Render("Misc") + "   x exec   ? help   q quit",
 		"",
 		styles.Help.Render("press any key to close"),
 	}, "\n")

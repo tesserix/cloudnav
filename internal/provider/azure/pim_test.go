@@ -3,7 +3,7 @@ package azure
 import "testing"
 
 func TestParsePIMEmpty(t *testing.T) {
-	roles, err := parsePIM([]byte(`{"value":[]}`))
+	roles, err := parseAzurePIM([]byte(`{"value":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestParsePIM(t *testing.T) {
         }
       }
     ]}`)
-	roles, err := parsePIM(payload)
+	roles, err := parseAzurePIM(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestParsePIM(t *testing.T) {
 }
 
 func TestParsePIMBadJSON(t *testing.T) {
-	if _, err := parsePIM([]byte("not json")); err == nil {
+	if _, err := parseAzurePIM([]byte("not json")); err == nil {
 		t.Error("expected error for invalid JSON")
 	}
 }
