@@ -32,6 +32,16 @@ import (
 // parallelism still turns a 30-call sequential walk into a handful of waves.
 const pimFanout = 8
 
+// PIM source tags. These match the provider.PIMRole.Source strings the TUI
+// switches on for its Azure / Entra / Groups tabs — kept as package-local
+// constants so goconst doesn't flag the four-way-repeated literals and
+// tests have a single place to pivot on.
+const (
+	pimSrcAzure = "azure"
+	pimSrcEntra = "entra"
+	pimSrcGroup = "group"
+)
+
 // ListEligibleRoles merges PIM eligibilities across all three Azure surfaces
 // (resources, Entra directory roles, Groups) over every tenant the caller
 // has visibility into — subscription-owning tenants *and* directory-only
@@ -53,9 +63,9 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		fn     pimLister
 	}
 	listers := []listerEntry{
-		{"azure", a.listAzurePIM},
-		{"entra", a.listEntraPIM},
-		{"group", a.listGroupPIM},
+		{pimSrcAzure, a.listAzurePIM},
+		{pimSrcEntra, a.listEntraPIM},
+		{pimSrcGroup, a.listGroupPIM},
 	}
 
 	type tenantResult struct {
@@ -235,11 +245,11 @@ func (a *Azure) diagnosticRole(tid, source string, err error) provider.PIMRole {
 // coupling the provider layer to the UI.
 func sourceLabel(src string) string {
 	switch src {
-	case "entra":
+	case pimSrcEntra:
 		return "Entra"
-	case "group":
+	case pimSrcGroup:
 		return "Groups"
-	case "azure":
+	case pimSrcAzure:
 		return "Azure resources"
 	default:
 		return src
@@ -250,11 +260,11 @@ func sourceLabel(src string) string {
 // up with the UI (Azure → Entra → Groups).
 func pimSourceOrder(src string) int {
 	switch src {
-	case "azure", "":
+	case pimSrcAzure, "":
 		return 0
-	case "entra":
+	case pimSrcEntra:
 		return 1
-	case "group":
+	case pimSrcGroup:
 		return 2
 	}
 	return 3
@@ -318,9 +328,9 @@ func (a *Azure) ActivateRole(ctx context.Context, role provider.PIMRole, justifi
 		return fmt.Errorf("this row is a diagnostic — run `az login --tenant %s` and reopen PIM", role.TenantID)
 	}
 	switch role.Source {
-	case "entra":
+	case pimSrcEntra:
 		return a.activateEntraRole(ctx, role, justification, durationHours)
-	case "group":
+	case pimSrcGroup:
 		return a.activateGroupRole(ctx, role, justification, durationHours)
 	default:
 		return a.activateAzureRole(ctx, role, justification, durationHours)

@@ -85,7 +85,7 @@ func parseGroupEligible(body []byte, tid, oid string) ([]provider.PIMRole, error
 			GroupID:          v.GroupID,
 			RoleDefinitionID: "group-" + access,
 			EndDateTime:      v.EndDateTime,
-			Source:           "group",
+			Source:           pimSrcGroup,
 			MaxDurationHours: 8,
 		})
 	}

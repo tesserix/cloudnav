@@ -84,7 +84,7 @@ func parseEntraEligible(body []byte, tid, oid string) ([]provider.PIMRole, error
 			PrincipalID:      ifEmpty(v.PrincipalID, oid),
 			RoleDefinitionID: v.RoleDefinitionID,
 			EndDateTime:      v.EndDateTime,
-			Source:           "entra",
+			Source:           pimSrcEntra,
 			MaxDurationHours: 8,
 		})
 	}
