@@ -142,9 +142,14 @@ func formatCostWithDelta(current, last costSample) string {
 	}
 }
 
+// defaultCurrency is the fallback currency code used when an AWS API
+// response doesn't echo one back and when BillingSummary() initialises its
+// scope before calling forecast / budget endpoints.
+const defaultCurrency = "USD"
+
 func currencySymbol(code string) string {
 	switch strings.ToUpper(code) {
-	case "USD":
+	case defaultCurrency:
 		return "$"
 	case "GBP":
 		return "£"

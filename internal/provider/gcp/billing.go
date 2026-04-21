@@ -20,7 +20,7 @@ import (
 func (g *GCP) Billing(ctx context.Context) ([]provider.CostLine, error) {
 	table := g.billingTableResolved()
 	if table == "" {
-		if detected, _ := g.autoDetectBillingTable(ctx); detected != "" {
+		if detected := g.autoDetectBillingTable(ctx); detected != "" {
 			g.billingTable = detected
 			table = detected
 		}

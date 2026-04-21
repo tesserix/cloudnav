@@ -35,10 +35,9 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 	table := g.billingTableResolved()
 	if table == "" {
 		// Try auto-detection once before giving up.
-		if detected, acct := g.autoDetectBillingTable(ctx); detected != "" {
+		if detected := g.autoDetectBillingTable(ctx); detected != "" {
 			g.billingTable = detected
 			table = detected
-			_ = acct
 		}
 	}
 	if table == "" {
@@ -82,22 +81,22 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 // its billing account → datasets matching "billing" → the canonical
 // gcp_billing_export_v1_* table. Returns "" when anything on that chain
 // isn't set up. Best-effort and cached per-process.
-func (g *GCP) autoDetectBillingTable(ctx context.Context) (string, string) {
+func (g *GCP) autoDetectBillingTable(ctx context.Context) string {
 	projectOut, err := g.gcloud.Run(ctx, "config", "get-value", "project")
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	project := strings.TrimSpace(string(projectOut))
 	if project == "" {
-		return "", ""
+		return ""
 	}
 	acctOut, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	acct := strings.TrimPrefix(strings.TrimSpace(string(acctOut)), "billingAccounts/")
 	if acct == "" {
-		return "", ""
+		return ""
 	}
 	// Billing export tables are named gcp_billing_export_v1_<ACCT> with dashes
 	// replaced by underscores. Try a lightweight `bq show` on the conventional
@@ -109,9 +108,9 @@ func (g *GCP) autoDetectBillingTable(ctx context.Context) (string, string) {
 		"gcp_billing_export_v1_"+strings.ReplaceAll(acct, "-", "_"),
 		"--format=value(tableReference.tableId)",
 	); err == nil {
-		return table, acct
+		return table
 	}
-	return "", acct
+	return ""
 }
 
 // primaryBillingAccount returns the billing account for the gcloud default

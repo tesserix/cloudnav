@@ -180,7 +180,8 @@ type resourcesJSON struct {
 func formatAWSTags(tags []struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
-}) string {
+},
+) string {
 	if len(tags) == 0 {
 		return ""
 	}

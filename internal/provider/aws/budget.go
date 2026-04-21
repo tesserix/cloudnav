@@ -25,7 +25,7 @@ func (a *AWS) BillingSummary(ctx context.Context) (provider.BillingScope, error)
 	// Currency — Cost Explorer reports in the account's default currency
 	// which we can't resolve without a round trip. Default to USD but let
 	// forecast and budget calls override below.
-	out.Currency = "USD"
+	out.Currency = defaultCurrency
 
 	if forecast, currency, ok := a.fetchCostForecast(ctx); ok {
 		out.Forecast = forecast
