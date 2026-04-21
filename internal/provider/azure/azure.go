@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -427,9 +428,10 @@ func (a *Azure) Children(ctx context.Context, parent provider.Node) ([]provider.
 }
 
 type rgJSON struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Location   string `json:"location"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags"`
 	Properties struct {
 		ProvisioningState string `json:"provisioningState"`
 	} `json:"properties"`
@@ -455,6 +457,13 @@ func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
 	nodes := make([]provider.Node, 0, len(rgs))
 	parent := sub
 	for _, r := range rgs {
+		meta := map[string]string{
+			"tenantId":       sub.Meta["tenantId"],
+			"subscriptionId": sub.ID,
+		}
+		if tagsStr := formatTags(r.Tags); tagsStr != "" {
+			meta["tags"] = tagsStr
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ID,
 			Name:     r.Name,
@@ -462,22 +471,20 @@ func parseRGs(data []byte, sub provider.Node) ([]provider.Node, error) {
 			Location: r.Location,
 			State:    r.Properties.ProvisioningState,
 			Parent:   &parent,
-			Meta: map[string]string{
-				"tenantId":       sub.Meta["tenantId"],
-				"subscriptionId": sub.ID,
-			},
+			Meta:     meta,
 		})
 	}
 	return nodes, nil
 }
 
 type resJSON struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Location    string `json:"location"`
-	Type        string `json:"type"`
-	CreatedTime string `json:"createdTime"`
-	ChangedTime string `json:"changedTime"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Location    string            `json:"location"`
+	Type        string            `json:"type"`
+	CreatedTime string            `json:"createdTime"`
+	ChangedTime string            `json:"changedTime"`
+	Tags        map[string]string `json:"tags"`
 }
 
 func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Node, error) {
@@ -532,6 +539,9 @@ func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Nod
 		if r.ChangedTime != "" {
 			meta["changedTime"] = r.ChangedTime
 		}
+		if tagsStr := formatTags(r.Tags); tagsStr != "" {
+			meta["tags"] = tagsStr
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ID,
 			Name:     r.Name,
@@ -576,6 +586,34 @@ func (a *Azure) Details(ctx context.Context, n provider.Node) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("azure: no detail view for kind %q", n.Kind)
 	}
+}
+
+// formatTags renders an Azure tags map as a stable, compact "k=v, k=v"
+// string that fits nicely in a TUI column. Keys are sorted so the output
+// is deterministic (tests and diffs) and two calls produce the same
+// rendering regardless of Go's randomised map iteration order.
+func formatTags(tags map[string]string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(k)
+		v := tags[k]
+		if v != "" {
+			b.WriteByte('=')
+			b.WriteString(v)
+		}
+	}
+	return b.String()
 }
 
 // shortType trims "Microsoft.Compute/virtualMachines" to "virtualMachines".

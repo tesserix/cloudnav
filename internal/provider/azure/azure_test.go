@@ -178,3 +178,31 @@ func TestChildrenRejectsUnknownKind(t *testing.T) {
 		t.Error("expected error for unsupported kind")
 	}
 }
+
+func TestFormatTagsSorted(t *testing.T) {
+	// Keys sort alphabetically so two identical tag maps always render the
+	// same way, regardless of Go's randomised map iteration.
+	got := formatTags(map[string]string{"env": "prod", "owner": "platform", "cost-center": "R&D"})
+	want := "cost-center=R&D, env=prod, owner=platform"
+	if got != want {
+		t.Errorf("formatTags = %q, want %q", got, want)
+	}
+}
+
+func TestFormatTagsEmpty(t *testing.T) {
+	if got := formatTags(nil); got != "" {
+		t.Errorf("nil tags = %q, want empty", got)
+	}
+	if got := formatTags(map[string]string{}); got != "" {
+		t.Errorf("empty tags = %q, want empty", got)
+	}
+}
+
+func TestFormatTagsValuelessKey(t *testing.T) {
+	// Keys with empty values render as just the key (no trailing '=') so
+	// we don't emit "mykey=" in the column.
+	got := formatTags(map[string]string{"mykey": ""})
+	if got != "mykey" {
+		t.Errorf("valueless tag = %q, want %q", got, "mykey")
+	}
+}

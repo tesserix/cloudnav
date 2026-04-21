@@ -41,6 +41,8 @@ func (a *Azure) Billing(ctx context.Context) ([]provider.CostLine, error) {
 			LastMonth: r.LastMonth,
 			Currency:  r.Currency,
 			Note:      note,
+			Forecast:  r.Forecast,
+			Budget:    r.Budget,
 		})
 	}
 	return result, nil

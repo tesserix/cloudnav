@@ -235,3 +235,103 @@ func TestPIMSourceLabelIsPlain(t *testing.T) {
 		}
 	}
 }
+
+func TestShortenTags(t *testing.T) {
+	if got := shortenTags("", 10); got != emDash {
+		t.Errorf("empty tags should render as emDash, got %q", got)
+	}
+	if got := shortenTags("env=prod", 20); got != "env=prod" {
+		t.Errorf("short enough should pass through, got %q", got)
+	}
+	if got := shortenTags("env=prod, owner=platform, tier=gold", 15); got != "env=prod, owne…" {
+		t.Errorf("truncation: got %q", got)
+	}
+	if got := shortenTags("anything", 1); got != "…" {
+		t.Errorf("max=1 should render ellipsis only, got %q", got)
+	}
+}
+
+func TestBudgetIndicator(t *testing.T) {
+	cases := []struct {
+		current, budget float64
+		wantEmpty       bool
+		wantEmoji       string
+	}{
+		{100, 0, true, ""},       // no budget set → blank
+		{100, 1000, false, "🟢"},  // 10% of budget
+		{760, 1000, false, "🟡"},  // 76% → warn
+		{1000, 1000, false, "🔴"}, // exactly at budget → over
+		{1500, 1000, false, "🔴"}, // over budget → red
+	}
+	for _, c := range cases {
+		got := budgetIndicator(c.current, c.budget)
+		if c.wantEmpty {
+			if strings.TrimSpace(got) != "" {
+				t.Errorf("budget %v / %v = %q, want blank", c.current, c.budget, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, c.wantEmoji) {
+			t.Errorf("budget %v / %v = %q, want emoji %q", c.current, c.budget, got, c.wantEmoji)
+		}
+	}
+}
+
+func TestForecastCell(t *testing.T) {
+	if got := forecastCell(0, "USD"); got != emDash {
+		t.Errorf("zero forecast should render as emDash, got %q", got)
+	}
+	if got := forecastCell(-5, "USD"); got != emDash {
+		t.Errorf("negative forecast should render as emDash, got %q", got)
+	}
+	if got := forecastCell(1234.567, "USD"); got != "$1234.57" {
+		t.Errorf("forecast render: got %q", got)
+	}
+	if got := forecastCell(42.5, "GBP"); got != "£42.50" {
+		t.Errorf("GBP symbol: got %q", got)
+	}
+}
+
+func TestBillingDeltaAnomalyPrefix(t *testing.T) {
+	// Below threshold: no ⚠ prefix.
+	if got := billingDelta(110, 100); strings.Contains(got, "⚠") {
+		t.Errorf("10%% delta should not be flagged, got %q", got)
+	}
+	// Above +25%: ⚠ prefix on upward spike.
+	if got := billingDelta(130, 100); !strings.Contains(got, "⚠") {
+		t.Errorf("30%% up should be flagged, got %q", got)
+	}
+	// Below -25%: ⚠ prefix on downward drop.
+	if got := billingDelta(70, 100); !strings.Contains(got, "⚠") {
+		t.Errorf("-30%% should be flagged, got %q", got)
+	}
+	// Zero last-month: "new" marker, not ⚠.
+	if got := billingDelta(100, 0); strings.Contains(got, "⚠") {
+		t.Errorf("new spend should not be flagged, got %q", got)
+	}
+}
+
+func TestAdvisorMatchesFilter(t *testing.T) {
+	r := provider.Recommendation{
+		Category:     "Cost",
+		Impact:       "High",
+		Problem:      "Unattached managed disk",
+		Solution:     "Delete unattached disks",
+		ImpactedType: "Microsoft.Compute/disks",
+		ResourceID:   "/subscriptions/abc/resourceGroups/rg-foo/providers/Microsoft.Compute/disks/disk1",
+	}
+	cases := map[string]bool{
+		"cost":       true,  // category
+		"high":       true,  // impact
+		"unattached": true,  // problem
+		"delete":     true,  // solution
+		"disks":      true,  // type
+		"rg-foo":     true,  // resource id
+		"security":   false, // not in any field
+	}
+	for q, want := range cases {
+		if got := advisorMatchesFilter(r, q); got != want {
+			t.Errorf("filter %q = %v, want %v", q, got, want)
+		}
+	}
+}

@@ -16,6 +16,13 @@ type SubscriptionCost struct {
 	LastMonth        float64
 	Currency         string
 	Error            string
+	// Forecast is the projected *total* month-end spend (current MTD plus
+	// the provider's estimate of the remainder). Zero means no forecast
+	// was available — the TUI renders "—" rather than "$0".
+	Forecast float64
+	// Budget is the monthly ceiling configured for this subscription (via
+	// Microsoft.Consumption/budgets). Zero means no budget is set.
+	Budget float64
 }
 
 func (a *Azure) SubscriptionCosts(ctx context.Context, subIDs []string) ([]SubscriptionCost, error) {
@@ -51,6 +58,16 @@ func (a *Azure) SubscriptionCosts(ctx context.Context, subIDs []string) ([]Subsc
 			res.Currency = cur.currency
 			if last, err := a.querySubTotal(ctx, id, &fromLast, &toLast); err == nil {
 				res.LastMonth = last.amount
+			}
+			// Forecast and budget are strictly additive — failures leave
+			// the fields zero and the UI falls back to the plain MTD view.
+			// They run serially inside the already-capped semaphore slot
+			// so we don't fan out past 8 concurrent Cost Management calls.
+			if remainder, err := a.querySubForecast(ctx, id); err == nil && remainder > 0 {
+				res.Forecast = res.Current + remainder
+			}
+			if budget, err := a.querySubBudget(ctx, id); err == nil && budget > 0 {
+				res.Budget = budget
 			}
 			results <- result{cost: res}
 		}()

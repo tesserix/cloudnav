@@ -107,6 +107,16 @@ type CostLine struct {
 	LastMonth float64 `json:"lastMonth"`
 	Currency  string  `json:"currency"`
 	Note      string  `json:"note,omitempty"` // e.g. "no BQ export" or portal link hint
+	// Forecast is the projected total spend for the current billing month —
+	// current MTD plus the provider's estimate for the remainder of the
+	// month. Zero means "no forecast available" (provider doesn't support
+	// it, call failed, or first of the month). The TUI renders it as a
+	// third value next to last-month / now.
+	Forecast float64 `json:"forecast,omitempty"`
+	// Budget is the monthly budget ceiling configured on the scope, in the
+	// same Currency. Zero means no budget is set. When non-zero the TUI
+	// surfaces a 🟢/🟡/🔴 indicator based on Current vs Budget.
+	Budget float64 `json:"budget,omitempty"`
 }
 
 // Billing is implemented by providers that can produce a flat cost

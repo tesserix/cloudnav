@@ -132,66 +132,69 @@ type paletteItem struct {
 }
 
 type model struct {
-	ctx            context.Context
-	providers      []provider.Provider
-	active         provider.Provider
-	stack          []frame
-	visibleNodes   []provider.Node
-	table          table.Model
-	spinner        spinner.Model
-	search         textinput.Model
-	detail         viewport.Model
-	detailTitle    string
-	detailMode     bool
-	searchMode     bool
-	filter         string
-	sort           sortMode
-	loading        bool
-	err            error
-	status         string
-	showHelp       bool
-	paletteMode    bool
-	paletteInput   textinput.Model
-	paletteItems   []paletteItem
-	paletteIdx     int
-	cfg            *config.Config
-	showCost       bool
-	costs          map[string]map[string]string       // subID → lowercased rg name → cost
-	tenantFilter   string                             // only show subs whose Meta[tenantName] == this (empty = all)
-	locks          map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
-	selected       map[string]bool                    // node ID → selected
-	restorePath    []config.Crumb                     // remaining crumbs to drill into during bookmark restore
-	restoreLabel   string                             // label shown while restoring (for status)
-	entities       map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
-	pimMode        bool
-	pimRoles       []provider.PIMRole
-	pimCursor      int
-	pimActivate    bool
-	pimInput       textinput.Model
-	pimFilter      string
-	pimFilterOn    bool
-	pimFilterIn    textinput.Model
-	pimDuration    int
-	pimSourceFilt  string // "" = all, pimSrc{Azure,Entra,Group}
-	advisorMode    bool
-	advisorRecs    []provider.Recommendation
-	advisorScope   string
-	advisorName    string
-	advisorIdx     int
-	loginStatus    map[string]string // providerName → human-readable auth state
-	billingMode    bool
-	billingLines   []provider.CostLine
-	billingScope   string // provider name that produced billingLines
-	billingIdx     int
-	billingGCP     *gcp.BillingStatus // optional GCP setup diagnostic
-	drilling       bool               // a drill-level load is in flight; block navigation
-	categoryFilter string             // resource category on the resource list (compute / data / network / security / other)
-	deleteMode     bool
-	deleteTargets  []provider.Node
-	deleteInput    textinput.Model
-	width          int
-	height         int
-	keys           keys.Map
+	ctx             context.Context
+	providers       []provider.Provider
+	active          provider.Provider
+	stack           []frame
+	visibleNodes    []provider.Node
+	table           table.Model
+	spinner         spinner.Model
+	search          textinput.Model
+	detail          viewport.Model
+	detailTitle     string
+	detailMode      bool
+	searchMode      bool
+	filter          string
+	sort            sortMode
+	loading         bool
+	err             error
+	status          string
+	showHelp        bool
+	paletteMode     bool
+	paletteInput    textinput.Model
+	paletteItems    []paletteItem
+	paletteIdx      int
+	cfg             *config.Config
+	showCost        bool
+	costs           map[string]map[string]string       // subID → lowercased rg name → cost
+	tenantFilter    string                             // only show subs whose Meta[tenantName] == this (empty = all)
+	locks           map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
+	selected        map[string]bool                    // node ID → selected
+	restorePath     []config.Crumb                     // remaining crumbs to drill into during bookmark restore
+	restoreLabel    string                             // label shown while restoring (for status)
+	entities        map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
+	pimMode         bool
+	pimRoles        []provider.PIMRole
+	pimCursor       int
+	pimActivate     bool
+	pimInput        textinput.Model
+	pimFilter       string
+	pimFilterOn     bool
+	pimFilterIn     textinput.Model
+	pimDuration     int
+	pimSourceFilt   string // "" = all, pimSrc{Azure,Entra,Group}
+	advisorMode     bool
+	advisorRecs     []provider.Recommendation
+	advisorScope    string
+	advisorName     string
+	advisorIdx      int
+	advisorFilter   string            // lowercased substring applied across category/impact/problem/target
+	advisorFilterOn bool              // true while the user is typing in the filter input
+	advisorFilterIn textinput.Model   // dedicated input; mirrors pimFilterIn
+	loginStatus     map[string]string // providerName → human-readable auth state
+	billingMode     bool
+	billingLines    []provider.CostLine
+	billingScope    string // provider name that produced billingLines
+	billingIdx      int
+	billingGCP      *gcp.BillingStatus // optional GCP setup diagnostic
+	drilling        bool               // a drill-level load is in flight; block navigation
+	categoryFilter  string             // resource category on the resource list (compute / data / network / security / other)
+	deleteMode      bool
+	deleteTargets   []provider.Node
+	deleteInput     textinput.Model
+	width           int
+	height          int
+	keys            keys.Map
 }
 
 func newModel() *model {
@@ -240,6 +243,12 @@ func newModel() *model {
 	pimFilt.CharLimit = 120
 	pimFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
 
+	advFilt := textinput.New()
+	advFilt.Prompt = "filter Advisor: "
+	advFilt.Placeholder = "cost / security / high / sql / ..."
+	advFilt.CharLimit = 120
+	advFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
+
 	delIn := textinput.New()
 	delIn.Prompt = "type DELETE to confirm: "
 	delIn.Placeholder = "DELETE"
@@ -255,25 +264,26 @@ func newModel() *model {
 	}
 
 	m := &model{
-		ctx:          context.Background(),
-		providers:    buildProviders(cfg),
-		spinner:      sp,
-		search:       ti,
-		paletteInput: pi,
-		pimInput:     pimIn,
-		pimFilterIn:  pimFilt,
-		deleteInput:  delIn,
-		pimDuration:  8,
-		detail:       vp,
-		cfg:          cfg,
-		costs:        map[string]map[string]string{},
-		entities:     map[string][]provider.Node{},
-		locks:        map[string]map[string][]azure.Lock{},
-		selected:     map[string]bool{},
-		loginStatus:  map[string]string{},
-		keys:         keys.Default(),
-		table:        t,
-		showCost:     true,
+		ctx:             context.Background(),
+		providers:       buildProviders(cfg),
+		spinner:         sp,
+		search:          ti,
+		paletteInput:    pi,
+		pimInput:        pimIn,
+		pimFilterIn:     pimFilt,
+		advisorFilterIn: advFilt,
+		deleteInput:     delIn,
+		pimDuration:     8,
+		detail:          vp,
+		cfg:             cfg,
+		costs:           map[string]map[string]string{},
+		entities:        map[string][]provider.Node{},
+		locks:           map[string]map[string][]azure.Lock{},
+		selected:        map[string]bool{},
+		loginStatus:     map[string]string{},
+		keys:            keys.Default(),
+		table:           t,
+		showCost:        true,
 	}
 	m.pushHome()
 	return m
@@ -2273,6 +2283,7 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			{Title: "LOCATION", Width: 16},
 			{Title: "STATE", Width: 12},
 			{Title: "LOCK", Width: 20},
+			{Title: "TAGS", Width: tagsColWidth},
 		}
 		if m.showCost {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
@@ -2285,6 +2296,7 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			{Title: "TYPE", Width: 30},
 			{Title: "LOCATION", Width: 14},
 			{Title: "CREATED", Width: 12},
+			{Title: "TAGS", Width: tagsColWidth},
 		}
 		if f.aggregated {
 			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: 32})
@@ -2345,13 +2357,13 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
 			lock := lockBadgePlain(m.rgLockLevel(n.Name))
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock, shortenTags(n.Meta["tags"], tagsColWidth-1)}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"])}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"]), shortenTags(n.Meta["tags"], tagsColWidth-1)}
 			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
 				row = append(row, n.Meta["originRG"])
 			}
@@ -2433,7 +2445,28 @@ const (
 	pimSrcGCP       = "gcp-pam"
 	cliNotInstalled = "✗ CLI not installed"
 	providerGCP     = "gcp"
+	// tagsColWidth bounds the TAGS column on the RG and resource views.
+	// Wide enough to read the first key=value pair; longer strings get a
+	// trailing "…" so the row stays single-line.
+	tagsColWidth = 22
 )
+
+// shortenTags renders a pre-formatted "k=v, k=v" tag string so it fits in
+// the TAGS column. Empty input renders as the em-dash placeholder so the
+// column doesn't look broken for untagged resources.
+func shortenTags(s string, max int) string {
+	if s == "" {
+		return emDash
+	}
+	if max <= 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-1]) + "…"
+}
 
 func costOrDash(c string) string {
 	if c == "" {
@@ -2628,16 +2661,25 @@ func (m *model) updateBilling(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) billingView() string {
 	total := 0.0
 	totalLast := 0.0
+	totalForecast := 0.0
 	currency := ""
 	for _, l := range m.billingLines {
 		total += l.Current
 		totalLast += l.LastMonth
+		totalForecast += l.Forecast
 		if currency == "" {
 			currency = l.Currency
 		}
 	}
 	totalArrow := billingDelta(total, totalLast)
-	totalCell := fmt.Sprintf("%s → %s%s%s", cliCurrencySymbol(currency)+fmt.Sprintf("%.2f", totalLast), cliCurrencySymbol(currency), fmt.Sprintf("%.2f", total), totalArrow)
+	symbol := cliCurrencySymbol(currency)
+	totalCell := fmt.Sprintf("%s → %s%s%s", symbol+fmt.Sprintf("%.2f", totalLast), symbol, fmt.Sprintf("%.2f", total), totalArrow)
+	if totalForecast > 0 {
+		// Forecast is optional — only surface it in the summary when at
+		// least one row produced a projection so the column doesn't read
+		// "proj $0.00" on clouds that don't support forecasting yet.
+		totalCell += "   proj " + symbol + fmt.Sprintf("%.2f", totalForecast)
+	}
 
 	header := styles.Title.Render("billing — "+m.billingScope) + "  " +
 		styles.Help.Render(fmt.Sprintf("%d line(s)   TOTAL %s", len(m.billingLines), totalCell))
@@ -2683,13 +2725,23 @@ func (m *model) billingView() string {
 		l := m.billingLines[i]
 		cur := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.Current)
 		last := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.LastMonth)
+		proj := forecastCell(l.Forecast, l.Currency)
 		arrow := billingDelta(l.Current, l.LastMonth)
+		indicator := budgetIndicator(l.Current, l.Budget)
 		note := ""
-		if l.Note != "" {
+		switch {
+		case l.Note != "":
 			note = "   " + styles.Help.Render(l.Note)
+		case l.Budget > 0:
+			pct := int(l.Current/l.Budget*100 + 0.5)
+			note = "   " + styles.Help.Render(fmt.Sprintf("budget %s%.0f (%d%%)", cliCurrencySymbol(l.Currency), l.Budget, pct))
 		}
-		row := fmt.Sprintf("%2d. %-40s   last %-12s   now %-12s  %s%s",
-			i+1, shorten(l.Label, 40), last, cur, arrow, note)
+		// The selection prefix expects a stable column count so rows align
+		// whether or not the sub has a budget configured. "indicator" is
+		// either an emoji or a padding space — both render at roughly one
+		// cell's width in monospace terminals.
+		row := fmt.Sprintf("%s %2d. %-40s   last %-12s   now %-12s   proj %-12s  %s%s",
+			indicator, i+1, shorten(l.Label, 40), last, cur, proj, arrow, note)
 		if i == m.billingIdx {
 			row = styles.Selected.Render("> " + row)
 		} else {
@@ -2769,8 +2821,15 @@ func nonemptyOrDash(s string) string {
 	return s
 }
 
+// anomalyThresholdPct is the MoM swing (in percent) at which the delta
+// arrow earns a ⚠ prefix so the user's eye snaps to it. Tuned conservatively
+// so typical week-over-week growth doesn't trip it.
+const anomalyThresholdPct = 25.0
+
 // billingDelta mirrors the inline-column arrow formatting so users see the
 // same up/down/flat indicators across the cost column and the billing view.
+// Deltas whose magnitude exceeds anomalyThresholdPct get a ⚠ prefix to flag
+// potential cost spikes or unexpected drop-offs.
 func billingDelta(current, last float64) string {
 	if last == 0 {
 		if current == 0 {
@@ -2779,14 +2838,52 @@ func billingDelta(current, last float64) string {
 		return styles.Good.Render("new")
 	}
 	d := (current - last) / last * 100
+	anomaly := d >= anomalyThresholdPct || d <= -anomalyThresholdPct
 	switch {
 	case d > 2:
-		return styles.Bad.Render(fmt.Sprintf("↑%d%%", int(d+0.5)))
+		body := fmt.Sprintf("↑%d%%", int(d+0.5))
+		if anomaly {
+			return styles.Bad.Render("⚠ " + body)
+		}
+		return styles.Bad.Render(body)
 	case d < -2:
-		return styles.Good.Render(fmt.Sprintf("↓%d%%", int(-d+0.5)))
+		body := fmt.Sprintf("↓%d%%", int(-d+0.5))
+		if anomaly {
+			return styles.Good.Render("⚠ " + body)
+		}
+		return styles.Good.Render(body)
 	default:
 		return styles.Help.Render("→")
 	}
+}
+
+// budgetIndicator returns a single-rune traffic-light showing how close MTD
+// spend is to the configured monthly budget. Empty when no budget is set
+// so the column doesn't look noisy for un-budgeted subs.
+func budgetIndicator(current, budget float64) string {
+	if budget <= 0 {
+		return " "
+	}
+	ratio := current / budget
+	switch {
+	case ratio >= 1.0:
+		return styles.Bad.Render("🔴")
+	case ratio >= 0.75:
+		return styles.WarnS.Render("🟡")
+	default:
+		return styles.Good.Render("🟢")
+	}
+}
+
+// forecastCell formats the projected month-end total cell for the billing
+// overlay. Zero means "no forecast available" (first-of-month, caller lacks
+// Cost Management access, or the provider doesn't compute forecasts) and
+// renders as an em-dash so the column stays aligned.
+func forecastCell(forecast float64, currency string) string {
+	if forecast <= 0 {
+		return emDash
+	}
+	return cliCurrencySymbol(currency) + fmt.Sprintf("%.2f", forecast)
 }
 
 // cliCurrencySymbol is a copy of the per-provider currencySymbol so the
@@ -2813,10 +2910,45 @@ func cliCurrencySymbol(code string) string {
 }
 
 func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// When the filter input is active, keys feed it — mirrors the PIM
+	// filter behaviour so the two overlays feel identical to the user.
+	if m.advisorFilterOn {
+		switch msg.String() {
+		case keyEsc:
+			m.advisorFilter = ""
+			m.advisorFilterIn.SetValue("")
+			m.advisorFilterIn.Blur()
+			m.advisorFilterOn = false
+			m.advisorIdx = 0
+			return m, nil
+		case keyEnter:
+			m.advisorFilterIn.Blur()
+			m.advisorFilterOn = false
+			return m, nil
+		case keyUp, keyDown, "pgup", "pgdown":
+			// Swallow — otherwise the cursor moves mid-typing and the row
+			// that gets acted on isn't the one the user thinks they chose.
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.advisorFilterIn, cmd = m.advisorFilterIn.Update(msg)
+		m.advisorFilter = strings.ToLower(strings.TrimSpace(m.advisorFilterIn.Value()))
+		m.advisorIdx = 0
+		return m, cmd
+	}
+
+	filt := m.filteredAdvisor()
 	switch msg.String() {
 	case keyEsc, "q", "A":
 		m.advisorMode = false
+		m.advisorFilter = ""
+		m.advisorFilterIn.SetValue("")
+		m.advisorFilterOn = false
 		m.status = ""
+		return m, nil
+	case "/":
+		m.advisorFilterOn = true
+		m.advisorFilterIn.Focus()
 		return m, nil
 	case keyUp, "k":
 		if m.advisorIdx > 0 {
@@ -2824,12 +2956,12 @@ func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case keyDown, "j":
-		if m.advisorIdx < len(m.advisorRecs)-1 {
+		if m.advisorIdx < len(filt)-1 {
 			m.advisorIdx++
 		}
 		return m, nil
 	case "o":
-		if m.advisorIdx >= 0 && m.advisorIdx < len(m.advisorRecs) {
+		if m.advisorIdx >= 0 && m.advisorIdx < len(filt) {
 			go openURL("https://portal.azure.com/#blade/Microsoft_Azure_Expert/AdvisorMenuBlade/overview")
 			m.status = "opened Advisor in portal"
 		}
@@ -2838,9 +2970,51 @@ func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// filteredAdvisor returns advisor recommendations matching the current
+// filter (case-insensitive substring against category, impact, problem
+// text, solution, and resource id). Empty filter returns the full slice.
+func (m *model) filteredAdvisor() []provider.Recommendation {
+	q := m.advisorFilter
+	if q == "" {
+		return m.advisorRecs
+	}
+	out := make([]provider.Recommendation, 0, len(m.advisorRecs))
+	for _, r := range m.advisorRecs {
+		if advisorMatchesFilter(r, q) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// advisorMatchesFilter reports whether a single recommendation contains q
+// (already lowercased) in any of the fields a user would reasonably search
+// on. Kept package-local and small so it shows up in test coverage.
+func advisorMatchesFilter(r provider.Recommendation, q string) bool {
+	fields := [...]string{
+		strings.ToLower(r.Category),
+		strings.ToLower(r.Impact),
+		strings.ToLower(r.Problem),
+		strings.ToLower(r.Solution),
+		strings.ToLower(r.ImpactedName),
+		strings.ToLower(r.ImpactedType),
+		strings.ToLower(r.ResourceID),
+	}
+	for _, f := range fields {
+		if strings.Contains(f, q) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *model) advisorView() string {
-	header := styles.Title.Render("Azure Advisor") + "  " +
-		styles.Help.Render(fmt.Sprintf("%d recommendation(s) for %s", len(m.advisorRecs), m.advisorName))
+	filt := m.filteredAdvisor()
+	count := fmt.Sprintf("%d recommendation(s) for %s", len(m.advisorRecs), m.advisorName)
+	if m.advisorFilter != "" {
+		count = fmt.Sprintf("%d/%d for %s", len(filt), len(m.advisorRecs), m.advisorName)
+	}
+	header := styles.Title.Render("Azure Advisor") + "  " + styles.Help.Render(count)
 	if len(m.advisorRecs) == 0 {
 		return styles.Box.Render(strings.Join([]string{
 			header,
@@ -2855,8 +3029,23 @@ func (m *model) advisorView() string {
 	}
 
 	lines := []string{header, ""}
+	if m.advisorFilterOn {
+		lines = append(lines, m.advisorFilterIn.View(), "")
+	} else if m.advisorFilter != "" {
+		lines = append(lines, "  "+styles.Help.Render("filter: "+m.advisorFilter+"  (/ to change, esc in filter clears)"), "")
+	}
+
+	if len(filt) == 0 {
+		lines = append(lines,
+			styles.Help.Render("  no recommendations match the current filter"),
+			"",
+			styles.Help.Render("  /, type, esc   |   o portal   esc/A close"),
+		)
+		return styles.Box.Render(strings.Join(lines, "\n"))
+	}
+
 	// Render the list on top, full detail for the cursor row below.
-	max := len(m.advisorRecs)
+	max := len(filt)
 	if max > 14 {
 		max = 14
 	}
@@ -2864,8 +3053,8 @@ func (m *model) advisorView() string {
 	if m.advisorIdx >= max {
 		start = m.advisorIdx - max + 1
 	}
-	for i := start; i < start+max && i < len(m.advisorRecs); i++ {
-		r := m.advisorRecs[i]
+	for i := start; i < start+max && i < len(filt); i++ {
+		r := filt[i]
 		marker := "  "
 		if i == m.advisorIdx {
 			marker = "> "
@@ -2884,8 +3073,8 @@ func (m *model) advisorView() string {
 	}
 	lines = append(lines, "")
 
-	if m.advisorIdx >= 0 && m.advisorIdx < len(m.advisorRecs) {
-		r := m.advisorRecs[m.advisorIdx]
+	if m.advisorIdx >= 0 && m.advisorIdx < len(filt) {
+		r := filt[m.advisorIdx]
 		lines = append(lines,
 			styles.Header.Render("Details"),
 			"Category: "+categoryBadge(r.Category)+"   Impact: "+impactBadge(r.Impact),
@@ -2897,7 +3086,7 @@ func (m *model) advisorView() string {
 			lines = append(lines, "Updated:  "+shortDate(r.LastUpdated))
 		}
 	}
-	lines = append(lines, "", styles.Help.Render("↑↓/jk move   o portal   esc/A close"))
+	lines = append(lines, "", styles.Help.Render("↑↓/jk move   / filter   o portal   esc/A close"))
 	return styles.Box.Render(strings.Join(lines, "\n"))
 }
 
