@@ -73,18 +73,18 @@ func cacheTTL() time.Duration {
 	return d
 }
 
-// rootCachePath returns the file path for the Azure Root() cache, creating
-// parent dirs lazily. Falls back to os.TempDir when UserCacheDir is unavailable
-// so the cache still works in minimal environments.
-func rootCachePath() (string, error) {
+// rootCachePath returns the file path for the Azure Root() cache. Falls back
+// to os.TempDir when UserCacheDir is unavailable so the cache still works in
+// minimal environments (CI runners, scratch containers).
+func rootCachePath() string {
 	if v := os.Getenv(envCacheDir); v != "" {
-		return filepath.Join(v, "azure-root.json"), nil
+		return filepath.Join(v, "azure-root.json")
 	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, "cloudnav", "azure-root.json"), nil
+	return filepath.Join(dir, "cloudnav", "azure-root.json")
 }
 
 // azProfileFingerprint returns a stable short string derived from the Azure
@@ -106,7 +106,7 @@ func azProfileFingerprint() string {
 		return "noprofile"
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "%d:%d:%s", info.Size(), info.ModTime().UnixNano(), info.Name())
+	h.Write([]byte(fmt.Sprintf("%d:%d:%s", info.Size(), info.ModTime().UnixNano(), info.Name())))
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -118,10 +118,7 @@ func readRootDiskCache() (*rootCacheFile, bool) {
 	if cacheDisabled() {
 		return nil, false
 	}
-	p, err := rootCachePath()
-	if err != nil {
-		return nil, false
-	}
+	p := rootCachePath()
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return nil, false
@@ -151,10 +148,7 @@ func writeRootDiskCache(nodes []provider.Node, tenants, subTenants map[string]st
 	if cacheDisabled() {
 		return
 	}
-	p, err := rootCachePath()
-	if err != nil {
-		return
-	}
+	p := rootCachePath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return
 	}
@@ -185,10 +179,7 @@ func writeRootDiskCache(nodes []provider.Node, tenants, subTenants map[string]st
 // removeRootDiskCache wipes the cache file. Called by the explicit refresh
 // path so the next Root() goes to the wire.
 func removeRootDiskCache() {
-	p, err := rootCachePath()
-	if err != nil {
-		return
-	}
+	p := rootCachePath()
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// Still best-effort, but don't leak errno through.
 		return
