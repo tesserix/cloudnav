@@ -83,15 +83,88 @@ type callerJSON struct {
 	Arn     string `json:"Arn"`
 }
 
-// Root returns the caller's current AWS account as a single node. If the caller
-// has organizations:ListAccounts the full org listing would be richer, but most
-// users are scoped to one account so we keep the default quiet.
+// Root returns every account the caller can see: the full organization
+// listing when organizations:ListAccounts is permitted, falling back to
+// just the signed-in account (via sts:GetCallerIdentity) otherwise. The
+// fallback is silent because most standalone accounts don't have the
+// organization role and a noisy error there would hide the real data.
 func (a *AWS) Root(ctx context.Context) ([]provider.Node, error) {
+	if accounts, ok := a.listOrgAccounts(ctx); ok && len(accounts) > 0 {
+		return accounts, nil
+	}
 	out, err := a.aws.Run(ctx, "sts", "get-caller-identity", "--output", "json")
 	if err != nil {
 		return nil, err
 	}
 	return parseCaller(out)
+}
+
+// listOrgAccounts returns every active member account in the caller's
+// organization when the API is reachable, or (nil, false) when it isn't —
+// AccessDenied on standalone accounts, AWSOrganizationsNotInUseException
+// on unmanaged accounts, or a management-account-only scoping issue. All
+// of those are valid "single-account mode" signals, not errors to
+// surface.
+func (a *AWS) listOrgAccounts(ctx context.Context) ([]provider.Node, bool) {
+	out, err := a.aws.Run(ctx, "organizations", "list-accounts", "--output", "json")
+	if err != nil {
+		return nil, false
+	}
+	nodes, err := parseOrgAccounts(out)
+	if err != nil || len(nodes) == 0 {
+		return nil, false
+	}
+	return nodes, true
+}
+
+type orgAccountsJSON struct {
+	Accounts []struct {
+		ID              string `json:"Id"`
+		Name            string `json:"Name"`
+		Email           string `json:"Email"`
+		Status          string `json:"Status"`
+		JoinedTimestamp string `json:"JoinedTimestamp"`
+	} `json:"Accounts"`
+}
+
+// parseOrgAccounts normalises the Organizations response into Node values
+// matching what the TUI already renders for AWS. SUSPENDED accounts are
+// dropped so the list matches the "accounts you can actually work with"
+// set; the account name is preferred over the 12-digit ID for the NAME
+// column, with the ID kept in Meta for lookups.
+func parseOrgAccounts(data []byte) ([]provider.Node, error) {
+	var env orgAccountsJSON
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, fmt.Errorf("parse aws organizations list-accounts: %w", err)
+	}
+	nodes := make([]provider.Node, 0, len(env.Accounts))
+	for _, acc := range env.Accounts {
+		if !strings.EqualFold(acc.Status, "ACTIVE") {
+			continue
+		}
+		name := acc.Name
+		if name == "" {
+			name = acc.ID
+		}
+		meta := map[string]string{
+			"accountId": acc.ID,
+			"email":     acc.Email,
+		}
+		if acc.JoinedTimestamp != "" {
+			meta["createdTime"] = acc.JoinedTimestamp
+		}
+		nodes = append(nodes, provider.Node{
+			ID:    acc.ID,
+			Name:  name,
+			Kind:  provider.KindAccount,
+			State: acc.Status,
+			Meta:  meta,
+		})
+	}
+	// Stable alphabetical ordering so the list doesn't shuffle between
+	// Organizations API pagination responses.
+	sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Name < nodes[j].Name })
+	return nodes, nil
 }
 
 func parseCaller(data []byte) ([]provider.Node, error) {

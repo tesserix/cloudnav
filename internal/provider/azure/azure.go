@@ -34,6 +34,12 @@ type Azure struct {
 	rootMu       sync.Mutex
 	rootCache    []provider.Node
 	rootCachedAt time.Time
+
+	// Per-subscription Resource Health cache. One ARM call per sub covers
+	// every resource in it, so we cache the whole map rather than
+	// per-resource lookups; healthTTL bounds staleness.
+	healthMu    sync.Mutex
+	healthCache map[string]*subHealth
 }
 
 // rootCacheTTL bounds how long a Root() result is reused within one process.
@@ -499,6 +505,20 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 	// that ARM doesn't return by default. Some providers / api-versions
 	// reject this expand — fall back to the plain list so drilling always
 	// works; we just lose the CREATED column for those resources.
+	//
+	// Resource Health runs in parallel with the resource list so health
+	// badges don't add round-trip latency. Failure is non-fatal — the
+	// resource list still renders, just without the HEALTH column values.
+	var (
+		wg     sync.WaitGroup
+		health map[string]string
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		health = a.resourceHealth(ctx, subID)
+	}()
+
 	out, err := a.az.Run(ctx,
 		"resource", "list",
 		"--resource-group", rg.Name,
@@ -514,13 +534,24 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 			"-o", "json",
 		)
 		if err != nil {
+			wg.Wait() // don't leak the health goroutine
 			return nil, err
 		}
 	}
-	return parseResources(out, rg, subID)
+	wg.Wait()
+	return parseResourcesWithHealth(out, rg, subID, health)
 }
 
 func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Node, error) {
+	return parseResourcesWithHealth(data, rg, subID, nil)
+}
+
+// parseResourcesWithHealth is the internal variant that can overlay
+// per-resource health classifications onto Meta["health"]. parseResources
+// calls it with a nil map to keep the existing contract — tests stay
+// valid — and the live resources() path passes the health snapshot it
+// just fetched.
+func parseResourcesWithHealth(data []byte, rg provider.Node, subID string, health map[string]string) ([]provider.Node, error) {
 	var items []resJSON
 	if err := json.Unmarshal(data, &items); err != nil {
 		return nil, fmt.Errorf("parse az resource list: %w", err)
@@ -541,6 +572,13 @@ func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Nod
 		}
 		if tagsStr := formatTags(r.Tags); tagsStr != "" {
 			meta["tags"] = tagsStr
+		}
+		if h := health[strings.ToLower(r.ID)]; h != "" && h != HealthAvailable {
+			// Only store non-Available states — Available is the
+			// overwhelming majority and cluttering the Meta for
+			// every healthy resource wastes memory and makes the
+			// column render "Available" forever.
+			meta["health"] = h
 		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ID,

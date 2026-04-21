@@ -89,6 +89,16 @@ type projectJSON struct {
 }
 
 func (g *GCP) Root(ctx context.Context) ([]provider.Node, error) {
+	// Folder mode: when CLOUDNAV_GCP_ORG is set the top level becomes the
+	// folders directly under that org, and the user drills into a folder
+	// to see its projects. Any permission or lookup failure falls through
+	// to the flat project list so the TUI never breaks on standalone
+	// accounts that happen to have stale env config.
+	if org := orgID(); org != "" {
+		if folders, _ := g.listFolders(ctx, org); len(folders) > 0 {
+			return folders, nil
+		}
+	}
 	out, err := g.gcloud.Run(ctx, "projects", "list", "--format=json")
 	if err != nil {
 		return nil, err
@@ -122,10 +132,14 @@ func parseProjects(data []byte) ([]provider.Node, error) {
 }
 
 func (g *GCP) Children(ctx context.Context, parent provider.Node) ([]provider.Node, error) {
-	if parent.Kind != provider.KindProject {
+	switch parent.Kind {
+	case provider.KindProject:
+		return g.resources(ctx, parent)
+	case provider.KindFolder:
+		return g.folderChildren(ctx, parent)
+	default:
 		return nil, fmt.Errorf("gcp: no children for kind %q", parent.Kind)
 	}
-	return g.resources(ctx, parent)
 }
 
 type assetJSON struct {

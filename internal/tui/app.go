@@ -2279,6 +2279,12 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 16})
 		}
 		return cols
+	case provider.KindFolder:
+		return []table.Column{
+			{Title: "NAME", Width: 42},
+			{Title: "FOLDER ID", Width: 28},
+			{Title: "STATE", Width: 12},
+		}
 	case provider.KindAccount:
 		return []table.Column{
 			{Title: "ACCOUNT", Width: 18},
@@ -2315,6 +2321,7 @@ func (m *model) columnsFor(f *frame) []table.Column {
 			{Title: "TYPE", Width: 30},
 			{Title: "LOCATION", Width: 14},
 			{Title: "CREATED", Width: 12},
+			{Title: "HEALTH", Width: healthColWidth},
 			{Title: "TAGS", Width: tagsColWidth},
 		}
 		if f.aggregated {
@@ -2366,6 +2373,8 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 				row = append(row, costOrDash(n.Cost))
 			}
 			rows = append(rows, row)
+		case provider.KindFolder:
+			rows = append(rows, table.Row{n.Name, n.ID, n.State})
 		case provider.KindAccount:
 			rows = append(rows, table.Row{n.Name, shorten(n.Meta["arn"], 60), n.State})
 		case provider.KindRegion:
@@ -2382,7 +2391,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"]), shortenTags(n.Meta["tags"], tagsColWidth-1)}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"]), healthBadge(n.Meta["health"]), shortenTags(n.Meta["tags"], tagsColWidth-1)}
 			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
 				row = append(row, n.Meta["originRG"])
 			}
@@ -2468,7 +2477,29 @@ const (
 	// Wide enough to read the first key=value pair; longer strings get a
 	// trailing "…" so the row stays single-line.
 	tagsColWidth = 22
+	// healthColWidth fits the emoji + short label — "🟡 Degraded" — so the
+	// column looks aligned whether the row is healthy (blank) or not.
+	healthColWidth = 14
 )
+
+// healthBadge renders the per-resource availability status returned by
+// Azure Resource Health. The provider only stores non-Available states
+// in Meta so Available / blank rows render as em-dash without needing a
+// lookup cycle. Unknown stays blank as well — surfacing it on every
+// resource that Resource Health hasn't classified yet would drown out
+// actual degraded signals.
+func healthBadge(state string) string {
+	switch state {
+	case "Unavailable":
+		return styles.Bad.Render("🔴 Unavailable")
+	case "Degraded":
+		return styles.WarnS.Render("🟡 Degraded")
+	case "Available":
+		return styles.Good.Render("🟢 Available")
+	default:
+		return emDash
+	}
+}
 
 // shortenTags renders a pre-formatted "k=v, k=v" tag string so it fits in
 // the TAGS column. Empty input renders as the em-dash placeholder so the

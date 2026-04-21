@@ -18,6 +18,11 @@ const (
 	KindProject       Kind = "project"
 	KindAccount       Kind = "account"
 	KindRegion        Kind = "region"
+	// KindFolder is GCP-specific and sits between the cloud root and
+	// projects when the user has org-level visibility. Standalone-project
+	// users never see this kind — cloudnav falls back to a flat project
+	// list.
+	KindFolder Kind = "folder"
 )
 
 type Node struct {

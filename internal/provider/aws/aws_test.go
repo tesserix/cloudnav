@@ -208,6 +208,44 @@ func TestParseForecast(t *testing.T) {
 	}
 }
 
+func TestParseOrgAccountsDropsSuspended(t *testing.T) {
+	data := []byte(`{
+		"Accounts": [
+			{"Id":"111111111111","Name":"acme-prod","Email":"admin+prod@acme.example","Status":"ACTIVE","JoinedTimestamp":"2024-01-01T00:00:00Z"},
+			{"Id":"222222222222","Name":"acme-dev","Email":"admin+dev@acme.example","Status":"ACTIVE","JoinedTimestamp":"2024-02-01T00:00:00Z"},
+			{"Id":"333333333333","Name":"old-acme","Email":"old@acme.example","Status":"SUSPENDED","JoinedTimestamp":"2022-01-01T00:00:00Z"}
+		]
+	}`)
+	nodes, err := parseOrgAccounts(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d accounts, want 2 (suspended should drop)", len(nodes))
+	}
+	// Alphabetical ordering.
+	if nodes[0].Name != "acme-dev" || nodes[1].Name != "acme-prod" {
+		t.Errorf("order = [%s, %s], want sorted alphabetically", nodes[0].Name, nodes[1].Name)
+	}
+	// Meta propagation.
+	if nodes[0].Meta["email"] != "admin+dev@acme.example" {
+		t.Errorf("email meta = %q", nodes[0].Meta["email"])
+	}
+	if nodes[0].Meta["accountId"] != "222222222222" {
+		t.Errorf("accountId meta = %q", nodes[0].Meta["accountId"])
+	}
+}
+
+func TestParseOrgAccountsEmpty(t *testing.T) {
+	nodes, err := parseOrgAccounts([]byte(`{"Accounts":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 0 {
+		t.Errorf("len = %d, want 0", len(nodes))
+	}
+}
+
 func TestAnomalyImpactBadge(t *testing.T) {
 	cases := map[float64]string{
 		1000: "High",
