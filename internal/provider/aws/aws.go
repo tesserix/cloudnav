@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/tesserix/cloudnav/internal/cli"
@@ -165,7 +167,47 @@ func parseRegions(data []byte, account provider.Node) ([]provider.Node, error) {
 type resourcesJSON struct {
 	ResourceTagMappingList []struct {
 		ResourceARN string `json:"ResourceARN"`
+		Tags        []struct {
+			Key   string `json:"Key"`
+			Value string `json:"Value"`
+		} `json:"Tags"`
 	} `json:"ResourceTagMappingList"`
+}
+
+// formatAWSTags renders the AWS tags array as a stable, compact
+// "k=v, k=v" string for the TAGS column. Keys sort alphabetically so the
+// rendering is deterministic across runs.
+func formatAWSTags(tags []struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	m := make(map[string]string, len(tags))
+	for _, t := range tags {
+		if t.Key == "" {
+			continue
+		}
+		m[t.Key] = t.Value
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(k)
+		if v := m[k]; v != "" {
+			b.WriteByte('=')
+			b.WriteString(v)
+		}
+	}
+	return b.String()
 }
 
 func (a *AWS) resources(ctx context.Context, region provider.Node) ([]provider.Node, error) {
@@ -194,6 +236,14 @@ func parseResources(data []byte, region provider.Node) ([]provider.Node, error) 
 		if restype != "" {
 			typeCol = service + ":" + restype
 		}
+		meta := map[string]string{
+			"arn":    r.ResourceARN,
+			"region": region.ID,
+			"type":   typeCol,
+		}
+		if tagsStr := formatAWSTags(r.Tags); tagsStr != "" {
+			meta["tags"] = tagsStr
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       r.ResourceARN,
 			Name:     nameFromARN(r.ResourceARN),
@@ -201,11 +251,7 @@ func parseResources(data []byte, region provider.Node) ([]provider.Node, error) 
 			Location: region.ID,
 			State:    service,
 			Parent:   &parent,
-			Meta: map[string]string{
-				"arn":    r.ResourceARN,
-				"region": region.ID,
-				"type":   typeCol,
-			},
+			Meta:     meta,
 		})
 	}
 	return nodes, nil

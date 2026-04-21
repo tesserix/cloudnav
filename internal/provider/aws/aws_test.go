@@ -121,3 +121,102 @@ func TestPortalURL(t *testing.T) {
 		t.Errorf("PortalURL=%q want %q", got, want)
 	}
 }
+
+// TestFormatAWSTagsSorted verifies the tag renderer produces stable,
+// alphabetically-ordered output so two identical tag sets always render
+// the same way regardless of map iteration order.
+func TestFormatAWSTagsSorted(t *testing.T) {
+	type kv = struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}
+	got := formatAWSTags([]kv{
+		{Key: "env", Value: "prod"},
+		{Key: "owner", Value: "platform"},
+		{Key: "cost-center", Value: "R&D"},
+	})
+	want := "cost-center=R&D, env=prod, owner=platform"
+	if got != want {
+		t.Errorf("formatAWSTags = %q, want %q", got, want)
+	}
+}
+
+func TestFormatAWSTagsEmpty(t *testing.T) {
+	type kv = struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}
+	if got := formatAWSTags(nil); got != "" {
+		t.Errorf("nil = %q, want empty", got)
+	}
+	if got := formatAWSTags([]kv{}); got != "" {
+		t.Errorf("empty slice = %q, want empty", got)
+	}
+}
+
+func TestFormatAWSTagsValuelessAndEmptyKey(t *testing.T) {
+	type kv = struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}
+	got := formatAWSTags([]kv{
+		{Key: "", Value: "stripped"},
+		{Key: "lonely", Value: ""},
+	})
+	if got != "lonely" {
+		t.Errorf("got %q, want %q", got, "lonely")
+	}
+}
+
+func TestParseBudgetsPicksLargestMonthly(t *testing.T) {
+	data := []byte(`{
+		"Budgets": [
+			{"BudgetName":"annual","BudgetLimit":{"Amount":"120000","Unit":"USD"},"TimeUnit":"ANNUALLY"},
+			{"BudgetName":"monthly-a","BudgetLimit":{"Amount":"1000","Unit":"USD"},"TimeUnit":"MONTHLY"},
+			{"BudgetName":"monthly-b","BudgetLimit":{"Amount":"5000","Unit":"USD"},"TimeUnit":"MONTHLY"}
+		]
+	}`)
+	amount, currency, note, ok := parseBudgets(data)
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if amount != 5000 {
+		t.Errorf("amount = %v, want 5000 (largest monthly)", amount)
+	}
+	if currency != "USD" {
+		t.Errorf("currency = %q", currency)
+	}
+	if note == "" {
+		t.Error("note should mention multiple budgets")
+	}
+}
+
+func TestParseBudgetsEmpty(t *testing.T) {
+	if _, _, _, ok := parseBudgets([]byte(`{"Budgets":[]}`)); ok {
+		t.Error("empty budgets should return ok=false")
+	}
+}
+
+func TestParseForecast(t *testing.T) {
+	data := []byte(`{"Total":{"Amount":"1234.56","Unit":"USD"}}`)
+	amount, currency, ok := parseForecast(data)
+	if !ok || amount != 1234.56 || currency != "USD" {
+		t.Errorf("got amount=%v currency=%q ok=%v", amount, currency, ok)
+	}
+	if _, _, ok := parseForecast([]byte(`{"Total":{"Amount":"","Unit":"USD"}}`)); ok {
+		t.Error("empty amount should return ok=false")
+	}
+}
+
+func TestAnomalyImpactBadge(t *testing.T) {
+	cases := map[float64]string{
+		1000: "High",
+		250:  "Medium",
+		50:   "Low",
+	}
+	for delta, want := range cases {
+		if got := anomalyImpactBadge(delta); got != want {
+			t.Errorf("anomalyImpactBadge(%v) = %q, want %q", delta, got, want)
+		}
+	}
+}

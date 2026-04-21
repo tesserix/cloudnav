@@ -81,6 +81,7 @@ type (
 		lines     []provider.CostLine
 		scope     string
 		gcpStatus *gcp.BillingStatus
+		summary   provider.BillingScope // account-wide forecast + budget; zero-value when the provider doesn't implement it
 	}
 	pimActivatedMsg struct {
 		role      string
@@ -186,9 +187,10 @@ type model struct {
 	billingLines    []provider.CostLine
 	billingScope    string // provider name that produced billingLines
 	billingIdx      int
-	billingGCP      *gcp.BillingStatus // optional GCP setup diagnostic
-	drilling        bool               // a drill-level load is in flight; block navigation
-	categoryFilter  string             // resource category on the resource list (compute / data / network / security / other)
+	billingGCP      *gcp.BillingStatus    // optional GCP setup diagnostic
+	billingSummary  provider.BillingScope // account-wide forecast + budget when the provider implements BillingSummarer
+	drilling        bool                  // a drill-level load is in flight; block navigation
+	categoryFilter  string                // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
 	deleteTargets   []provider.Node
 	deleteInput     textinput.Model
@@ -622,6 +624,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.billingLines = msg.lines
 		m.billingScope = msg.scope
 		m.billingGCP = msg.gcpStatus
+		m.billingSummary = msg.summary
 		m.billingIdx = 0
 		m.billingMode = true
 		m.status = fmt.Sprintf("%d billing line(s) for %s", len(msg.lines), msg.scope)
@@ -1366,11 +1369,11 @@ func (m *model) loadBilling() tea.Cmd {
 		m.status = m.active.Name() + ": billing overview not supported"
 		return nil
 	}
+	summarer, _ := m.active.(provider.BillingSummarer)
 	m.loading = true
 	m.status = "loading " + m.active.Name() + " billing..."
 	ctx := m.ctx
 	scope := m.active.Name()
-	var gcpStatus *gcp.BillingStatus
 	if gp, ok := m.active.(*gcp.GCP); ok {
 		prov := gp
 		return tea.Batch(
@@ -1381,11 +1384,11 @@ func (m *model) loadBilling() tea.Cmd {
 					return errMsg{err}
 				}
 				status, _ := prov.BillingStatus(ctx)
-				return billingLoadedMsg{lines: lines, scope: scope, gcpStatus: status}
+				summary := scopeSummaryFrom(ctx, summarer)
+				return billingLoadedMsg{lines: lines, scope: scope, gcpStatus: status, summary: summary}
 			},
 		)
 	}
-	_ = gcpStatus
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
@@ -1393,9 +1396,25 @@ func (m *model) loadBilling() tea.Cmd {
 			if err != nil {
 				return errMsg{err}
 			}
-			return billingLoadedMsg{lines: lines, scope: scope}
+			summary := scopeSummaryFrom(ctx, summarer)
+			return billingLoadedMsg{lines: lines, scope: scope, summary: summary}
 		},
 	)
+}
+
+// scopeSummaryFrom calls the optional BillingSummary capability. Quiet on
+// error because every field is strictly additive — a failed summary just
+// means the TOTAL line reports per-row aggregates without a forecast or
+// budget indicator, same as before BillingSummarer existed.
+func scopeSummaryFrom(ctx context.Context, s provider.BillingSummarer) provider.BillingScope {
+	if s == nil {
+		return provider.BillingScope{}
+	}
+	out, err := s.BillingSummary(ctx)
+	if err != nil {
+		return provider.BillingScope{}
+	}
+	return out
 }
 
 // loadAdvisor fetches cloud-native advisor recommendations for the scope
@@ -2671,14 +2690,32 @@ func (m *model) billingView() string {
 			currency = l.Currency
 		}
 	}
+	// Account-wide summary (AWS / GCP) supplements the per-row roll-up:
+	// if the per-line forecast is zero but the provider reported a scope
+	// forecast, surface that instead. Same for budget, which then drives
+	// the TOTAL line's 🟢/🟡/🔴 indicator for providers whose budgets are
+	// account-wide rather than per-line.
+	if totalForecast == 0 && m.billingSummary.Forecast > 0 {
+		totalForecast = m.billingSummary.Forecast
+	}
+	scopeBudget := m.billingSummary.Budget
+	if currency == "" {
+		currency = m.billingSummary.Currency
+	}
+
 	totalArrow := billingDelta(total, totalLast)
 	symbol := cliCurrencySymbol(currency)
+	totalIndicator := budgetIndicator(total, scopeBudget)
 	totalCell := fmt.Sprintf("%s → %s%s%s", symbol+fmt.Sprintf("%.2f", totalLast), symbol, fmt.Sprintf("%.2f", total), totalArrow)
 	if totalForecast > 0 {
 		// Forecast is optional — only surface it in the summary when at
 		// least one row produced a projection so the column doesn't read
 		// "proj $0.00" on clouds that don't support forecasting yet.
 		totalCell += "   proj " + symbol + fmt.Sprintf("%.2f", totalForecast)
+	}
+	if scopeBudget > 0 {
+		pct := int(total/scopeBudget*100 + 0.5)
+		totalCell += fmt.Sprintf("   %s budget %s%.0f (%d%%)", strings.TrimSpace(totalIndicator), symbol, scopeBudget, pct)
 	}
 
 	header := styles.Title.Render("billing — "+m.billingScope) + "  " +

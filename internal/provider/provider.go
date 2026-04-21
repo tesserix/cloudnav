@@ -131,6 +131,29 @@ type Billing interface {
 	Billing(ctx context.Context) ([]CostLine, error)
 }
 
+// BillingScope is an account-wide aggregate that sits above the per-line
+// Billing() output. AWS and GCP configure budgets and forecasts at the
+// account / billing-account level (not per service or per project), so the
+// TUI renders these in the header TOTAL line rather than on each row.
+// Azure keeps per-CostLine fields because its budgets are sub-scoped.
+type BillingScope struct {
+	Forecast float64 `json:"forecast,omitempty"`
+	Budget   float64 `json:"budget,omitempty"`
+	Currency string  `json:"currency,omitempty"`
+	// Note is an optional single-line explanation shown next to the TOTAL
+	// when neither forecast nor budget could be resolved (e.g. "no
+	// budgets in this account" / "needs Cost Explorer access").
+	Note string `json:"note,omitempty"`
+}
+
+// BillingSummarer is an optional capability implemented alongside Billing
+// to surface account-scope aggregates. The TUI calls BillingSummary()
+// after Billing() and uses what it returns to drive the header forecast
+// cell and budget indicator.
+type BillingSummarer interface {
+	BillingSummary(ctx context.Context) (BillingScope, error)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {

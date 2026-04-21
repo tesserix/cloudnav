@@ -67,6 +67,58 @@ func TestParseAssets(t *testing.T) {
 	}
 }
 
+func TestParseAssetsLabels(t *testing.T) {
+	// Labels surface in Meta["tags"] as a sorted "k=v, k=v" string so the
+	// TUI's TAGS column reads like it does for Azure and AWS.
+	data := []byte(`[
+      {"name":"//compute.googleapis.com/projects/p/zones/z/instances/vm1","assetType":"compute.googleapis.com/Instance","displayName":"vm1","labels":{"env":"prod","team":"platform","cost-center":"RD"}}
+    ]`)
+	parent := provider.Node{ID: "p", Kind: provider.KindProject}
+	nodes, err := parseAssets(data, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nodes[0].Meta["tags"]; got != "cost-center=RD, env=prod, team=platform" {
+		t.Errorf("Meta[tags] = %q", got)
+	}
+}
+
+func TestFormatGCPLabels(t *testing.T) {
+	got := formatGCPLabels(map[string]string{"env": "prod", "owner": "platform"})
+	if got != "env=prod, owner=platform" {
+		t.Errorf("got %q", got)
+	}
+	if got := formatGCPLabels(nil); got != "" {
+		t.Errorf("nil = %q", got)
+	}
+	if got := formatGCPLabels(map[string]string{"lonely": ""}); got != "lonely" {
+		t.Errorf("valueless = %q", got)
+	}
+}
+
+func TestParseGCPBudgetsPicksLargest(t *testing.T) {
+	data := []byte(`[
+		{"displayName":"monthly-small","amount":{"specifiedAmount":{"units":"500","currencyCode":"USD"}}},
+		{"displayName":"monthly-large","amount":{"specifiedAmount":{"units":"10000","currencyCode":"USD"}}}
+	]`)
+	amount, currency, note := parseGCPBudgets(data)
+	if amount != 10000 {
+		t.Errorf("amount = %v, want 10000", amount)
+	}
+	if currency != "USD" {
+		t.Errorf("currency = %q", currency)
+	}
+	if note == "" {
+		t.Error("note should mention multiple budgets")
+	}
+}
+
+func TestParseGCPBudgetsEmpty(t *testing.T) {
+	if amount, _, _ := parseGCPBudgets([]byte(`[]`)); amount != 0 {
+		t.Errorf("empty list should yield zero, got %v", amount)
+	}
+}
+
 func TestShortType(t *testing.T) {
 	cases := map[string]string{
 		"compute.googleapis.com/Instance":       "Instance",

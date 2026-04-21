@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -128,13 +129,14 @@ func (g *GCP) Children(ctx context.Context, parent provider.Node) ([]provider.No
 }
 
 type assetJSON struct {
-	Name        string `json:"name"`
-	AssetType   string `json:"assetType"`
-	Location    string `json:"location"`
-	DisplayName string `json:"displayName"`
-	Project     string `json:"project"`
-	CreateTime  string `json:"createTime"`
-	UpdateTime  string `json:"updateTime"`
+	Name        string            `json:"name"`
+	AssetType   string            `json:"assetType"`
+	Location    string            `json:"location"`
+	DisplayName string            `json:"displayName"`
+	Project     string            `json:"project"`
+	CreateTime  string            `json:"createTime"`
+	UpdateTime  string            `json:"updateTime"`
+	Labels      map[string]string `json:"labels"`
 }
 
 // assetPageLimit caps how many resources we fetch per project drill. gcloud
@@ -341,6 +343,9 @@ func parseAssets(data []byte, project provider.Node) ([]provider.Node, error) {
 		if a.UpdateTime != "" {
 			meta["changedTime"] = a.UpdateTime
 		}
+		if tagsStr := formatGCPLabels(a.Labels); tagsStr != "" {
+			meta["tags"] = tagsStr
+		}
 		nodes = append(nodes, provider.Node{
 			ID:       a.Name,
 			Name:     name,
@@ -381,6 +386,32 @@ func (g *GCP) Details(ctx context.Context, n provider.Node) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("gcp: no detail view for kind %q", n.Kind)
 	}
+}
+
+// formatGCPLabels renders a GCP labels map as a stable, compact
+// "k=v, k=v" string for the TAGS column. Keys sort alphabetically so the
+// rendering is deterministic and matches Azure's convention.
+func formatGCPLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(k)
+		if v := labels[k]; v != "" {
+			b.WriteByte('=')
+			b.WriteString(v)
+		}
+	}
+	return b.String()
 }
 
 // shortType turns "compute.googleapis.com/Instance" into "Instance".
