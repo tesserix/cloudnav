@@ -106,7 +106,10 @@ func azProfileFingerprint() string {
 		return "noprofile"
 	}
 	h := sha256.New()
-	h.Write([]byte(fmt.Sprintf("%d:%d:%s", info.Size(), info.ModTime().UnixNano(), info.Name())))
+	// sha256.Hash.Write is infallible (documented on hash.Hash) so the
+	// error is discarded — staticcheck prefers Fprintf over Sprintf+Write,
+	// and errcheck wants the return explicitly handled.
+	_, _ = fmt.Fprintf(h, "%d:%d:%s", info.Size(), info.ModTime().UnixNano(), info.Name())
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
