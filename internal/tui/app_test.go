@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
@@ -132,5 +136,102 @@ func TestShorten(t *testing.T) {
 	}
 	if got := shorten("abcdefghijklm", 8); len(got) > 8 || !strings.Contains(got, "a") {
 		t.Errorf("trim: got %q", got)
+	}
+}
+
+// newSearchModel is a focused fixture for exercising updateSearch(). It
+// avoids the full newModel() ceremony (providers, config, etc.) — the search
+// behavior is decoupled from everything other than the table, text input, and
+// a minimal frame that refreshTable can operate on.
+func newSearchModel(rows int) *model {
+	tbl := table.New(
+		table.WithColumns([]table.Column{{Title: "name", Width: 20}}),
+		table.WithFocused(true),
+		table.WithHeight(rows+2),
+	)
+	data := make([]table.Row, rows)
+	nodes := make([]provider.Node, rows)
+	for i := 0; i < rows; i++ {
+		name := string(rune('A' + i))
+		data[i] = table.Row{name}
+		nodes[i] = provider.Node{ID: name, Name: name, Kind: provider.KindSubscription}
+	}
+	tbl.SetRows(data)
+
+	ti := textinput.New()
+	return &model{
+		table:      tbl,
+		search:     ti,
+		searchMode: true,
+		stack:      []frame{{title: "test", nodes: nodes}},
+		costs:      map[string]map[string]string{},
+		selected:   map[string]bool{},
+		width:      120,
+		height:     30,
+	}
+}
+
+func TestUpdateSearchIgnoresNavigationKeys(t *testing.T) {
+	// When the user is typing a / filter, up/down/pgup/pgdown must not move
+	// the table cursor — otherwise committing the filter lands on a row the
+	// user didn't visually select.
+	m := newSearchModel(10)
+	m.table.SetCursor(3)
+
+	nav := []tea.KeyMsg{
+		{Type: tea.KeyUp},
+		{Type: tea.KeyDown},
+		{Type: tea.KeyPgUp},
+		{Type: tea.KeyPgDown},
+	}
+	for _, msg := range nav {
+		if _, _ = m.updateSearch(msg); m.table.Cursor() != 3 {
+			t.Errorf("key %s moved cursor to %d; expected it to stay at 3", msg.String(), m.table.Cursor())
+			m.table.SetCursor(3) // reset for next iteration
+		}
+	}
+}
+
+func TestUpdateSearchEscClearsFilter(t *testing.T) {
+	m := newSearchModel(3)
+	m.filter = "foo"
+	m.search.SetValue("foo")
+
+	if _, _ = m.updateSearch(tea.KeyMsg{Type: tea.KeyEsc}); m.searchMode {
+		t.Error("Esc should exit search mode")
+	}
+	if m.filter != "" {
+		t.Errorf("Esc should clear filter, got %q", m.filter)
+	}
+	if m.search.Value() != "" {
+		t.Errorf("Esc should clear the search input, got %q", m.search.Value())
+	}
+}
+
+func TestUpdateSearchEnterKeepsFilter(t *testing.T) {
+	m := newSearchModel(3)
+	m.filter = "abc"
+	m.search.SetValue("abc")
+
+	if _, _ = m.updateSearch(tea.KeyMsg{Type: tea.KeyEnter}); m.searchMode {
+		t.Error("Enter should exit search mode")
+	}
+	if m.filter != "abc" {
+		t.Errorf("Enter should keep the filter, got %q", m.filter)
+	}
+}
+
+func TestPIMSourceLabelIsPlain(t *testing.T) {
+	// The plain label must not embed ANSI escape bytes; it's used on the
+	// selected row so the outer lipgloss Selected background can span the
+	// full row without being terminated by the badge's own reset code.
+	for _, src := range []string{"azure", "", "entra", "group", "gcp", "custom-xyz"} {
+		got := pimSourceLabel(src)
+		if strings.ContainsRune(got, '\x1b') {
+			t.Errorf("pimSourceLabel(%q) contains ANSI escape: %q", src, got)
+		}
+		if got == "" {
+			t.Errorf("pimSourceLabel(%q) should not be empty", src)
+		}
 	}
 }

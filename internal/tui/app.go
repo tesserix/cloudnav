@@ -1163,10 +1163,11 @@ func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchMode = false
 		m.search.Blur()
 		return m, nil
-	case keyUp, keyDown, "pgup", "pgdown", "home", "end":
-		var cmd tea.Cmd
-		m.table, cmd = m.table.Update(msg)
-		return m, cmd
+	case keyUp, keyDown, "pgup", "pgdown":
+		// Swallow list-navigation keys while typing a filter: moving the
+		// table cursor mid-search makes it unclear which row will be acted
+		// on when the filter is committed. Esc clears, Enter commits.
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.search, cmd = m.search.Update(msg)
@@ -1275,6 +1276,11 @@ func (m *model) goBack() tea.Cmd {
 func (m *model) reload() tea.Cmd {
 	if len(m.stack) <= 1 || m.active == nil {
 		return nil
+	}
+	// If the user hits refresh at the subscription list, they're asking
+	// for fresh data — bypass the provider's short-lived Root() cache.
+	if az, ok := m.active.(*azure.Azure); ok {
+		az.InvalidateRootCache()
 	}
 	top := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
@@ -2955,6 +2961,24 @@ func pimSourceBadge(src string) string {
 	}
 }
 
+// pimSourceLabel is the raw (unstyled) form of pimSourceBadge, for contexts
+// where an outer row style (e.g. the Selected highlight) needs to span the
+// badge without being broken by the badge's own ANSI reset.
+func pimSourceLabel(src string) string {
+	switch src {
+	case pimSrcEntra:
+		return "entra"
+	case pimSrcGroup:
+		return "group"
+	case pimSrcGCP:
+		return "gcp-pam"
+	case pimSrcAzure, "":
+		return pimSrcAzure
+	default:
+		return src
+	}
+}
+
 func categoryBadge(c string) string {
 	switch strings.ToLower(c) {
 	case "cost":
@@ -3089,7 +3113,15 @@ func (m *model) pimView() string {
 		if r.Active {
 			state = "  " + styles.Good.Render("● ACTIVE until "+humanUntil(r.ActiveUntil))
 		}
-		src := padRight(pimSourceBadge(r.Source), 8)
+		// For the selected row, use the plain source label so lipgloss's
+		// Selected background spans the full line; the badge's own ANSI
+		// reset would otherwise terminate the highlight mid-row.
+		var src string
+		if i == m.pimCursor {
+			src = padRight(pimSourceLabel(r.Source), 8)
+		} else {
+			src = padRight(pimSourceBadge(r.Source), 8)
+		}
 		rowText := fmt.Sprintf("%2d. %s %-36s  on  %-30s", i+1, src, shorten(r.RoleName, 36), shorten(scopeDisplay(r), 30))
 		if i == m.pimCursor {
 			lines = append(lines, styles.Selected.Render("> "+rowText)+state)

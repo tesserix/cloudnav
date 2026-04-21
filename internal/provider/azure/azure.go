@@ -25,7 +25,21 @@ type Azure struct {
 	subs         map[string]string // subscriptionId → name
 	subTenants   map[string]string // subscriptionId → tenantId
 	signedInOIDs map[string]string // tenantId → signed-in user's object-id (Graph)
+
+	// Short-lived Root() cache. Navigating back to the clouds screen and
+	// re-entering Azure would otherwise re-run `az account list` every
+	// time; that call costs ~1–2s of CLI startup plus an ARM round-trip,
+	// which is the bulk of the "loading azure..." wait users see.
+	rootMu       sync.Mutex
+	rootCache    []provider.Node
+	rootCachedAt time.Time
 }
+
+// rootCacheTTL bounds how long a Root() result is reused within one process.
+// Short enough that a freshly added subscription shows up quickly if the user
+// presses `r` to refresh or restarts the app; long enough to make back/forward
+// navigation feel instant.
+const rootCacheTTL = 90 * time.Second
 
 func New() *Azure {
 	r := cli.New("az")
@@ -230,12 +244,44 @@ type subJSON struct {
 }
 
 func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
-	out, err := a.az.Run(ctx, "account", "list", "-o", "json")
-	if err != nil {
-		return nil, err
+	// 1. In-memory cache — hottest path; survives back/forward in one session.
+	if cached := a.readRootMem(); cached != nil {
+		return cached, nil
 	}
-	a.fetchTenants(ctx)
-	nodes, err := parseSubs(out)
+
+	// 2. Disk cache — cold-start speedup across process restarts. Serving
+	// from disk still populates the in-memory maps the rest of the provider
+	// depends on.
+	if disk, ok := readRootDiskCache(); ok {
+		a.hydrateFromCache(disk)
+		nodes := cloneNodes(disk.Nodes)
+		a.writeRootMem(nodes)
+		return nodes, nil
+	}
+
+	// 3. Live fetch. `az account list` and the tenants API call are
+	// independent, so run them concurrently — previously the tenants fetch
+	// added a second az CLI startup to the critical path.
+	var (
+		wg      sync.WaitGroup
+		listOut []byte
+		listErr error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		listOut, listErr = a.az.Run(ctx, "account", "list", "-o", "json")
+	}()
+	go func() {
+		defer wg.Done()
+		a.fetchTenants(ctx)
+	}()
+	wg.Wait()
+
+	if listErr != nil {
+		return nil, listErr
+	}
+	nodes, err := parseSubs(listOut)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +298,86 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 	}
 	a.putSubs(subCache)
 	a.putSubTenants(tenantCache)
+
+	a.writeRootMem(nodes)
+	writeRootDiskCache(nodes, a.snapshotTenants(), tenantCache)
+
 	return nodes, nil
+}
+
+// readRootMem returns a defensive copy of the in-memory cached nodes when
+// they're still fresh, or nil when the caller should look elsewhere.
+func (a *Azure) readRootMem() []provider.Node {
+	a.rootMu.Lock()
+	defer a.rootMu.Unlock()
+	if a.rootCache == nil || time.Since(a.rootCachedAt) >= rootCacheTTL {
+		return nil
+	}
+	return cloneNodes(a.rootCache)
+}
+
+// writeRootMem stores a defensive copy so callers can mutate returned slices
+// without corrupting the cache.
+func (a *Azure) writeRootMem(nodes []provider.Node) {
+	a.rootMu.Lock()
+	a.rootCache = cloneNodes(nodes)
+	a.rootCachedAt = time.Now()
+	a.rootMu.Unlock()
+}
+
+// hydrateFromCache restores the maps that other Azure methods depend on
+// when we serve Root() entirely from disk. Without this, tenantForSub and
+// friends would start empty and trigger lazy round-trips for every lookup.
+func (a *Azure) hydrateFromCache(c *rootCacheFile) {
+	subs := make(map[string]string, len(c.Nodes))
+	for _, n := range c.Nodes {
+		subs[n.ID] = n.Name
+	}
+	a.putSubs(subs)
+	if len(c.SubTenants) > 0 {
+		a.putSubTenants(c.SubTenants)
+	}
+	if len(c.Tenants) > 0 {
+		a.putTenants(c.Tenants)
+	}
+}
+
+// snapshotTenants returns a copy of the current tenants map for inclusion in
+// the disk cache payload.
+func (a *Azure) snapshotTenants() map[string]string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if len(a.tenants) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(a.tenants))
+	for k, v := range a.tenants {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneNodes returns a shallow copy of a []provider.Node slice. Meta is not
+// deep-copied because we never mutate per-node meta after Root() builds them.
+func cloneNodes(in []provider.Node) []provider.Node {
+	if in == nil {
+		return nil
+	}
+	out := make([]provider.Node, len(in))
+	copy(out, in)
+	return out
+}
+
+// InvalidateRootCache drops any memoized Root() result (in-memory and on
+// disk) so the next call hits the az CLI fresh. Call this from the UI's
+// refresh action when the user wants to force-refetch subscriptions — e.g.
+// after an az login change or a subscription having been added.
+func (a *Azure) InvalidateRootCache() {
+	a.rootMu.Lock()
+	a.rootCache = nil
+	a.rootCachedAt = time.Time{}
+	a.rootMu.Unlock()
+	removeRootDiskCache()
 }
 
 func parseSubs(data []byte) ([]provider.Node, error) {
