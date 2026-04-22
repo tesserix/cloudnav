@@ -70,7 +70,11 @@ type (
 	}
 	pimLoadedMsg struct{ roles []provider.PIMRole }
 
-	healthLoadedMsg struct{ events []provider.HealthEvent }
+	healthLoadedMsg  struct{ events []provider.HealthEvent }
+	metricsLoadedMsg struct {
+		data  []provider.Metric
+		label string
+	}
 
 	advisorLoadedMsg struct {
 		recs      []provider.Recommendation
@@ -194,6 +198,9 @@ type model struct {
 	healthMode      bool
 	healthEvents    []provider.HealthEvent
 	healthIdx       int
+	metricsMode     bool
+	metricsData     []provider.Metric
+	metricsLabel    string // "resource-name · type" for the overlay header
 	drilling        bool   // a drill-level load is in flight; block navigation
 	categoryFilter  string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
@@ -393,6 +400,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.healthMode {
 			return m.updateHealth(msg)
 		}
+		if m.metricsMode {
+			return m.updateMetrics(msg)
+		}
 		if m.billingMode {
 			return m.updateBilling(msg)
 		}
@@ -504,6 +514,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadAdvisor()
 		case key.Matches(msg, m.keys.Health):
 			return m, m.loadHealth()
+		case key.Matches(msg, m.keys.Metrics):
+			return m, m.loadMetrics()
 		case key.Matches(msg, m.keys.Billing):
 			return m, m.loadBilling()
 		case key.Matches(msg, m.keys.Exec):
@@ -658,6 +670,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.healthIdx = 0
 		m.healthMode = true
 		m.status = fmt.Sprintf("%d active health event(s)", len(msg.events))
+		return m, nil
+
+	case metricsLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.metricsData = msg.data
+		m.metricsLabel = msg.label
+		m.metricsMode = true
+		m.status = fmt.Sprintf("%d metric series for %s", len(msg.data), msg.label)
 		return m, nil
 
 	case pimActivatedMsg:
@@ -1436,6 +1457,128 @@ func scopeSummaryFrom(ctx context.Context, s provider.BillingSummarer) provider.
 	return out
 }
 
+// loadMetrics pulls a short-window time-series for the resource under
+// the cursor. Per-resource only; the caller must be on the resource
+// view. Uses provider.Metricser when the active cloud implements it.
+func (m *model) loadMetrics() tea.Cmd {
+	met, ok := m.active.(provider.Metricser)
+	if !ok {
+		m.status = m.active.Name() + ": metrics overlay not wired yet for this cloud"
+		return nil
+	}
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return nil
+	}
+	cur := m.visibleNodes[c]
+	if cur.Kind != provider.KindResource {
+		m.status = "metrics needs a resource under the cursor"
+		return nil
+	}
+	label := cur.Name
+	if t := cur.Meta["type"]; t != "" {
+		label += " · " + t
+	}
+	m.loading = true
+	m.status = "loading metrics for " + cur.Name + "..."
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			data, err := met.Metrics(ctx, cur)
+			if err != nil {
+				return errMsg{err}
+			}
+			return metricsLoadedMsg{data: data, label: label}
+		},
+	)
+}
+
+// updateMetrics handles keys while the metrics overlay is visible.
+// Read-only overlay — only dismiss.
+func (m *model) updateMetrics(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc, "q", "M":
+		m.metricsMode = false
+		m.status = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+// metricsView renders each returned Metric as a Unicode-block sparkline
+// with min / max / last labels so the reader can tell the shape of a
+// series at a glance without needing a full chart.
+func (m *model) metricsView() string {
+	header := styles.Title.Render("metrics") + "  " + styles.Help.Render(m.metricsLabel)
+	if len(m.metricsData) == 0 {
+		return styles.Box.Render(strings.Join([]string{
+			header,
+			"",
+			styles.Help.Render("  no default metrics for this resource type yet"),
+			styles.Help.Render("  (cloudnav only whitelists a subset — VMs, App Service, SQL, Storage, AKS for now)"),
+			"",
+			styles.Help.Render("  esc/M close"),
+		}, "\n"))
+	}
+	lines := []string{header, ""}
+	for _, mm := range m.metricsData {
+		mn, mx, last := seriesStats(mm.Points)
+		unit := mm.Unit
+		if unit == "" {
+			unit = "—"
+		}
+		lines = append(lines, fmt.Sprintf("  %-30s  %s  min %8.2f  max %8.2f  last %8.2f %s",
+			shorten(mm.Name, 30), sparkline(mm.Points), mn, mx, last, unit))
+	}
+	lines = append(lines, "", styles.Help.Render("  last 60 min · 5 min bins · esc/M close"))
+	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+// sparkline renders a series as a row of Unicode block runes. Zero-length
+// or all-zero series render as a flat bottom line so the column stays
+// aligned — better than collapsing to nothing and breaking the grid.
+func sparkline(points []float64) string {
+	if len(points) == 0 {
+		return strings.Repeat("▁", 12)
+	}
+	blocks := []rune("▁▂▃▄▅▆▇█")
+	mn, mx, _ := seriesStats(points)
+	if mx == mn {
+		return strings.Repeat(string(blocks[0]), len(points))
+	}
+	b := make([]rune, len(points))
+	for i, v := range points {
+		idx := int((v - mn) / (mx - mn) * float64(len(blocks)-1))
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= len(blocks) {
+			idx = len(blocks) - 1
+		}
+		b[i] = blocks[idx]
+	}
+	return string(b)
+}
+
+// seriesStats returns (min, max, last) across a series. Min and max are
+// set to 0 for empty slices so the caller can render without NaNs.
+func seriesStats(points []float64) (float64, float64, float64) {
+	if len(points) == 0 {
+		return 0, 0, 0
+	}
+	mn, mx := points[0], points[0]
+	for _, v := range points {
+		if v < mn {
+			mn = v
+		}
+		if v > mx {
+			mx = v
+		}
+	}
+	return mn, mx, points[len(points)-1]
+}
+
 // loadHealth opens the Service Health overlay, showing active incidents
 // affecting the caller's scope. Optional provider capability — we show a
 // status hint when the active cloud doesn't implement HealthEventer.
@@ -1693,6 +1836,11 @@ func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "4":
 		m.pimSourceFilt = pimSrcGCP
+		m.pimCursor = 0
+		m.syncPIMDurationToPolicy()
+		return m, nil
+	case "5":
+		m.pimSourceFilt = pimSrcAWSSSO
 		m.pimCursor = 0
 		m.syncPIMDurationToPolicy()
 		return m, nil
@@ -2514,6 +2662,7 @@ const (
 	pimSrcEntra     = "entra"
 	pimSrcGroup     = "group"
 	pimSrcGCP       = "gcp-pam"
+	pimSrcAWSSSO    = "aws-sso"
 	cliNotInstalled = "✗ CLI not installed"
 	providerGCP     = "gcp"
 	// tagsColWidth bounds the TAGS column on the RG and resource views.
@@ -2644,6 +2793,9 @@ func (m *model) View() string {
 	}
 	if m.healthMode {
 		return m.healthView()
+	}
+	if m.metricsMode {
+		return m.metricsView()
 	}
 	if m.billingMode {
 		return m.billingView()
@@ -3381,6 +3533,8 @@ func pimSourceBadge(src string) string {
 		return styles.WarnS.Render("group")
 	case pimSrcGCP:
 		return styles.Good.Render("gcp-pam")
+	case pimSrcAWSSSO:
+		return styles.AccentS.Render("aws-sso")
 	case pimSrcAzure, "":
 		return styles.Help.Render(pimSrcAzure)
 	default:
@@ -3399,6 +3553,8 @@ func pimSourceLabel(src string) string {
 		return "group"
 	case pimSrcGCP:
 		return "gcp-pam"
+	case pimSrcAWSSSO:
+		return "aws-sso"
 	case pimSrcAzure, "":
 		return pimSrcAzure
 	default:
@@ -3483,6 +3639,7 @@ func (m *model) pimView() string {
 		tab("2", "Entra", pimSrcEntra, counts[pimSrcEntra]),
 		tab("3", "Groups", pimSrcGroup, counts[pimSrcGroup]),
 		tab("4", "GCP PAM", pimSrcGCP, counts[pimSrcGCP]),
+		tab("5", "AWS SSO", pimSrcAWSSSO, counts[pimSrcAWSSSO]),
 	}, "")
 	lines := []string{
 		styles.Title.Render("PIM eligible roles") + "  " +
@@ -4364,6 +4521,7 @@ func (m *model) helpView() string {
 		styles.Header.Render("Filter") + " 0-5 on resource views — 0 all / 1 compute / 2 data / 3 network / 4 security / 5 other",
 		styles.Header.Render("Ops") + "    A advisor (Azure / GCP / AWS via Compute Optimizer + TA) — cost / security / reliability / perf / ops",
 		styles.Header.Render("Health") + " H service-health overlay — active incidents / maintenance / advisories",
+		styles.Header.Render("Metrics") + " M metrics overlay on a resource — last 60 min sparklines (Azure Monitor for now)",
 		styles.Header.Render("Billing") + " B portfolio view — per-sub (Azure), per-service (AWS), per-project (GCP)",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",

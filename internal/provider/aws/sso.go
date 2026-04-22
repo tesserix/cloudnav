@@ -9,9 +9,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 )
+
+// pimSrcAWSSSO tags entries coming from AWS IAM Identity Center /
+// configured SSO profiles. Kept distinct from Azure PIM surfaces so the
+// TUI source badge / filter can switch on it.
+const pimSrcAWSSSO = "aws-sso"
+
+// ssoProbeTimeoutHint is surfaced in the diagnostic row when no profiles
+// have an active session. Keeps the "run this to fix it" copy in one
+// place.
+const ssoProbeTimeoutHint = "run: aws sso login --profile <name>"
 
 type ssoProfile struct {
 	name        string
@@ -23,7 +34,7 @@ type ssoProfile struct {
 	accountName string
 }
 
-func (a *AWS) ListEligibleRoles(_ context.Context) ([]provider.PIMRole, error) {
+func (a *AWS) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, error) {
 	profiles, err := loadSSOProfiles(awsConfigPath())
 	if err != nil {
 		return nil, err
@@ -31,24 +42,83 @@ func (a *AWS) ListEligibleRoles(_ context.Context) ([]provider.PIMRole, error) {
 	if len(profiles) == 0 {
 		return nil, fmt.Errorf("aws: no SSO profiles in ~/.aws/config — run `aws configure sso` first")
 	}
+
+	// Probe every profile in parallel to see which ones currently have
+	// an active SSO session. Capped so a user with 50 profiles doesn't
+	// spawn 50 concurrent aws processes — one wave of 8 is plenty and
+	// still finishes in under a second for typical session caches.
+	activeProfiles := a.probeSSOProfiles(ctx, profiles)
+
 	roles := make([]provider.PIMRole, 0, len(profiles))
+	anyActive := false
 	for _, p := range profiles {
 		scopeName := p.accountName
 		if scopeName == "" {
 			scopeName = p.accountID
 		}
-		roles = append(roles, provider.PIMRole{
+		role := provider.PIMRole{
 			ID:        p.name,
 			RoleName:  p.roleName,
 			Scope:     p.accountID,
 			ScopeName: scopeName,
-		})
+			Source:    pimSrcAWSSSO,
+		}
+		if activeProfiles[p.name] {
+			role.Active = true
+			// AWS doesn't expose the SSO session expiry through the CLI
+			// in a reliable way; leave ActiveUntil empty rather than
+			// fake a value. The UI already renders "ACTIVE" without a
+			// countdown when ActiveUntil is empty.
+			anyActive = true
+		}
+		roles = append(roles, role)
+	}
+
+	// When nothing has an active session, prepend a single diagnostic
+	// row so the user immediately sees why Activate would no-op. Same
+	// pattern the Azure multi-tenant fix uses.
+	if !anyActive {
+		roles = append([]provider.PIMRole{{
+			ID:        "diag:aws-sso:no-session",
+			RoleName:  "⚠ no active AWS SSO session",
+			ScopeName: ssoProbeTimeoutHint,
+			Source:    pimSrcAWSSSO,
+		}}, roles...)
 	}
 	return roles, nil
 }
 
+// probeSSOProfiles runs `aws sts get-caller-identity --profile X` against
+// every profile in parallel. A successful response = a valid SSO session
+// that the user can actually use; anything else (missing token, expired
+// session, unresolvable start-url) falls into the "needs login" bucket.
+func (a *AWS) probeSSOProfiles(ctx context.Context, profiles []ssoProfile) map[string]bool {
+	out := map[string]bool{}
+	var mu sync.Mutex
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for _, p := range profiles {
+		wg.Add(1)
+		go func(p ssoProfile) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := a.aws.Run(ctx, "sts", "get-caller-identity", "--profile", p.name, "--output", "json"); err == nil {
+				mu.Lock()
+				out[p.name] = true
+				mu.Unlock()
+			}
+		}(p)
+	}
+	wg.Wait()
+	return out
+}
+
 func (a *AWS) ActivateRole(ctx context.Context, role provider.PIMRole, justification string, _ int) error {
 	_ = justification
+	if strings.HasPrefix(role.ID, "diag:") {
+		return fmt.Errorf("that row is a diagnostic — %s, then reopen PIM", ssoProbeTimeoutHint)
+	}
 	if role.ID == "" {
 		return fmt.Errorf("aws: empty profile name for activation")
 	}

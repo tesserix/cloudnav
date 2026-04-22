@@ -311,6 +311,50 @@ func TestBillingDeltaAnomalyPrefix(t *testing.T) {
 	}
 }
 
+func TestSparklineFlatSeries(t *testing.T) {
+	// A constant series should render the lowest block across the whole
+	// width so the UI doesn't hide it — "everything at zero" and
+	// "everything at peak" both look different from a real workload
+	// and that's what we want.
+	got := sparkline([]float64{5, 5, 5, 5})
+	if got != "▁▁▁▁" {
+		t.Errorf("flat = %q, want ▁▁▁▁", got)
+	}
+}
+
+func TestSparklineScales(t *testing.T) {
+	// Monotonically increasing series should map to ascending blocks.
+	// Block runes are 3 bytes in UTF-8, so compare rune-count not byteLen.
+	got := sparkline([]float64{0, 1, 2, 3, 4, 5, 6, 7})
+	runes := []rune(got)
+	if len(runes) != 8 {
+		t.Fatalf("runes = %d, want 8", len(runes))
+	}
+	if runes[0] != '▁' {
+		t.Errorf("first = %q, want lowest block", runes[0])
+	}
+	if runes[len(runes)-1] != '█' {
+		t.Errorf("last = %q, want highest block", runes[len(runes)-1])
+	}
+}
+
+func TestSparklineEmpty(t *testing.T) {
+	if got := sparkline(nil); len(got) == 0 {
+		t.Error("empty series should still produce a non-empty flat line so the column stays aligned")
+	}
+}
+
+func TestSeriesStats(t *testing.T) {
+	mn, mx, last := seriesStats([]float64{3, 1, 4, 1, 5, 9, 2, 6})
+	if mn != 1 || mx != 9 || last != 6 {
+		t.Errorf("stats = (%v, %v, %v), want (1, 9, 6)", mn, mx, last)
+	}
+	mn, mx, last = seriesStats(nil)
+	if mn != 0 || mx != 0 || last != 0 {
+		t.Errorf("empty = (%v, %v, %v), want zeroes", mn, mx, last)
+	}
+}
+
 func TestAdvisorMatchesFilter(t *testing.T) {
 	r := provider.Recommendation{
 		Category:     "Cost",

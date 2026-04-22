@@ -90,24 +90,51 @@ func parseFolders(data []byte, orgParent string) ([]provider.Node, error) {
 	return nodes, nil
 }
 
-// folderChildren returns the projects that live directly under the
-// given folder. Uses `gcloud projects list --filter` to push the filter
-// server-side — the alternative is listing everything and filtering
-// client-side, which is expensive on large orgs.
+// folderChildren returns sub-folders and direct-child projects under a
+// folder. Orgs that nest teams / products inside parent folders
+// (Engineering / Finance / …) are common; a flat list wouldn't surface
+// projects more than one level deep without the user knowing to
+// CLOUDNAV_GCP_ORG=<other id>.
+//
+// Sub-folders and projects are unioned so the user sees both in one
+// view; KindFolder rows sort before KindProject rows because the TUI's
+// default ordering groups like-kinds together.
 func (g *GCP) folderChildren(ctx context.Context, folder provider.Node) ([]provider.Node, error) {
-	// folder.ID is "folders/123". gcloud's filter syntax for
-	// `projects list` accepts `parent.id=<num>` and `parent.type=folder`,
-	// but the shorthand `parent:folders/123` also works and is simpler
-	// to read.
+	var (
+		subFolders []provider.Node
+		projects   []provider.Node
+	)
+
+	// Sub-folders under this folder. Failure is non-fatal — the user
+	// might lack resourcemanager.folders.list on the nested folder; we
+	// still show projects.
+	if folders, err := g.gcloud.Run(ctx,
+		"resource-manager", "folders", "list",
+		"--folder="+folderNumberFromID(folder.ID),
+		"--format=json",
+	); err == nil {
+		subFolders, _ = parseFolders(folders, folder.ID)
+	}
+
+	// Projects directly under the folder. gcloud's filter syntax accepts
+	// parent.id=<num> AND parent.type=folder.
 	out, err := g.gcloud.Run(ctx,
 		"projects", "list",
 		"--filter=parent.id="+folderNumberFromID(folder.ID)+" AND parent.type=folder",
 		"--format=json",
 	)
-	if err != nil {
+	if err == nil {
+		projects, _ = parseProjects(out)
+	} else if len(subFolders) == 0 {
+		// Only surface the error when there's literally nothing to show
+		// — otherwise users see folders but get a scary error banner.
 		return nil, err
 	}
-	return parseProjects(out)
+
+	combined := make([]provider.Node, 0, len(subFolders)+len(projects))
+	combined = append(combined, subFolders...)
+	combined = append(combined, projects...)
+	return combined, nil
 }
 
 // folderNumberFromID trims "folders/123" → "123" for the gcloud filter

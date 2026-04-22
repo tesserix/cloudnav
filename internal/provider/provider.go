@@ -183,6 +183,24 @@ type HealthEventer interface {
 	HealthEvents(ctx context.Context) ([]HealthEvent, error)
 }
 
+// Metric is one named time-series (CPU percent, bytes/s, etc.) attached
+// to a single resource. Points are evenly spaced — the provider picks
+// the granularity — and aligned to a common window so the TUI's
+// sparkline renderer can overlay multiple series without re-binning.
+type Metric struct {
+	Name   string    `json:"name"`
+	Unit   string    `json:"unit"`
+	Points []float64 `json:"points"`
+}
+
+// Metricser is an optional capability returning short-window time-series
+// for a resource. One-shot (not streaming) — the TUI refetches on user
+// request rather than maintaining a WebSocket. Clouds implement their
+// own semantics: Azure Monitor, CloudWatch, Cloud Monitoring.
+type Metricser interface {
+	Metrics(ctx context.Context, resource Node) ([]Metric, error)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {
