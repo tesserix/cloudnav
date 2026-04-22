@@ -76,16 +76,35 @@ func (a *AWS) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, error)
 
 	// When nothing has an active session, prepend a single diagnostic
 	// row so the user immediately sees why Activate would no-op. Same
-	// pattern the Azure multi-tenant fix uses.
+	// pattern the Azure multi-tenant fix uses. Includes the first
+	// non-empty sso_start_url so the user can jump straight to the
+	// Identity Center portal without digging through their config.
 	if !anyActive {
+		hint := ssoProbeTimeoutHint
+		if url := firstStartURL(profiles); url != "" {
+			hint = hint + "  (portal: " + url + ")"
+		}
 		roles = append([]provider.PIMRole{{
 			ID:        "diag:aws-sso:no-session",
 			RoleName:  "⚠ no active AWS SSO session",
-			ScopeName: ssoProbeTimeoutHint,
+			ScopeName: hint,
 			Source:    pimSrcAWSSSO,
 		}}, roles...)
 	}
 	return roles, nil
+}
+
+// firstStartURL returns the sso_start_url of the first profile that has
+// one configured. Used to enrich the diagnostic row so the user sees
+// exactly which portal to sign into rather than having to open their
+// aws config file to find it.
+func firstStartURL(profiles []ssoProfile) string {
+	for _, p := range profiles {
+		if p.startURL != "" {
+			return p.startURL
+		}
+	}
+	return ""
 }
 
 // probeSSOProfiles runs `aws sts get-caller-identity --profile X` against

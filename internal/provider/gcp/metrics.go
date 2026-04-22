@@ -61,7 +61,7 @@ func (g *GCP) Metrics(ctx context.Context, resource provider.Node) ([]provider.M
 
 	out := make([]provider.Metric, 0, len(gcpInstanceMetrics))
 	for _, m := range gcpInstanceMetrics {
-		points, err := g.fetchTimeSeries(ctx, project, instanceName, m.MetricType, m.Rate)
+		points, err := g.fetchTimeSeries(ctx, project, instanceName, m.MetricType, m.Rate, isDiskMetric(m.MetricType))
 		if err != nil || len(points) == 0 {
 			continue
 		}
@@ -74,11 +74,21 @@ func (g *GCP) Metrics(ctx context.Context, resource provider.Node) ([]provider.M
 	return out, nil
 }
 
+// isDiskMetric returns true for metric types that are published
+// per-attached-disk. Multi-disk VMs produce one series per disk; the
+// sparkline is more informative when we show the aggregate I/O across
+// the whole instance rather than arbitrarily the first disk's series.
+func isDiskMetric(metricType string) bool {
+	return strings.Contains(metricType, "/instance/disk/")
+}
+
 // fetchTimeSeries runs one `gcloud monitoring time-series list` call
 // scoped to the project and the specific instance. Reducer choice is
 // important — bytes counters need RATE so the sparkline shows bytes per
-// second instead of an ever-growing integer.
-func (g *GCP) fetchTimeSeries(ctx context.Context, project, instance, metricType string, rate bool) ([]float64, error) {
+// second instead of an ever-growing integer. aggregate=true sums across
+// matched series (e.g. multi-disk VMs); false keeps the first-series
+// behaviour used for single-series gauges like CPU utilisation.
+func (g *GCP) fetchTimeSeries(ctx context.Context, project, instance, metricType string, rate, aggregate bool) ([]float64, error) {
 	end := time.Now().UTC()
 	start := end.Add(-gcpMetricsWindow)
 	filter := fmt.Sprintf("metric.type=%q AND metric.labels.instance_name=%q", metricType, instance)
@@ -108,7 +118,7 @@ func (g *GCP) fetchTimeSeries(ctx context.Context, project, instance, metricType
 	if err != nil {
 		return nil, err
 	}
-	return parseTimeSeries(out)
+	return parseTimeSeries(out, aggregate)
 }
 
 // parseTimeSeries pivots `gcloud monitoring time-series list` output into
@@ -116,7 +126,12 @@ func (g *GCP) fetchTimeSeries(ctx context.Context, project, instance, metricType
 // reverse so the sparkline reads left-to-right like the AWS and Azure
 // overlays. Values live under either doubleValue or int64Value depending
 // on the metric; we coerce both into float64.
-func parseTimeSeries(data []byte) ([]float64, error) {
+//
+// aggregate=true sums across matched series (e.g. multi-disk VMs
+// producing one series per attached disk). aggregate=false returns the
+// first series, which is the right call for single-series gauges where
+// adding a duplicate series would double the displayed value.
+func parseTimeSeries(data []byte, aggregate bool) ([]float64, error) {
 	var series []struct {
 		Points []struct {
 			Interval struct {
@@ -134,27 +149,53 @@ func parseTimeSeries(data []byte) ([]float64, error) {
 	if len(series) == 0 {
 		return nil, nil
 	}
-	// Take the first series — each metric.type + label filter typically
-	// matches one series per instance. If Cloud Monitoring returns
-	// multiple (e.g. one per disk), we show the first and skip the
-	// rest; callers wanting disk-by-disk detail can drill in the
-	// console for now.
-	pts := make([]float64, 0, len(series[0].Points))
-	for _, p := range series[0].Points {
-		switch {
-		case p.Value.DoubleValue != nil:
-			pts = append(pts, *p.Value.DoubleValue)
-		case p.Value.Int64Value != nil:
-			var v float64
-			_, _ = fmt.Sscanf(*p.Value.Int64Value, "%f", &v)
-			pts = append(pts, v)
+
+	readPoints := func(s int) []float64 {
+		pts := make([]float64, 0, len(series[s].Points))
+		for _, p := range series[s].Points {
+			switch {
+			case p.Value.DoubleValue != nil:
+				pts = append(pts, *p.Value.DoubleValue)
+			case p.Value.Int64Value != nil:
+				var v float64
+				_, _ = fmt.Sscanf(*p.Value.Int64Value, "%f", &v)
+				pts = append(pts, v)
+			}
+		}
+		// Reverse so index-0 is the oldest point.
+		for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
+			pts[i], pts[j] = pts[j], pts[i]
+		}
+		return pts
+	}
+
+	if !aggregate {
+		// Gauge metrics (CPU, memory %) should never be summed across
+		// replicas — we take the first series and document it.
+		return readPoints(0), nil
+	}
+
+	// Aggregate mode: sum across all matched series aligned by bin index.
+	// If series come back with different lengths (possible if a disk
+	// was attached mid-window), we truncate to the shortest so the
+	// sparkline stays well-formed.
+	first := readPoints(0)
+	minLen := len(first)
+	series2D := [][]float64{first}
+	for i := 1; i < len(series); i++ {
+		pts := readPoints(i)
+		if len(pts) < minLen {
+			minLen = len(pts)
+		}
+		series2D = append(series2D, pts)
+	}
+	summed := make([]float64, minLen)
+	for _, s := range series2D {
+		for i := 0; i < minLen; i++ {
+			summed[i] += s[i]
 		}
 	}
-	// Reverse in place so index-0 is the oldest point.
-	for i, j := 0, len(pts)-1; i < j; i, j = i+1, j-1 {
-		pts[i], pts[j] = pts[j], pts[i]
-	}
-	return pts, nil
+	return summed, nil
 }
 
 // Ensure GCP satisfies the Metricser interface at compile time.

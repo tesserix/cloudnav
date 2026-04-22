@@ -12,7 +12,7 @@ func TestParseTimeSeriesReverses(t *testing.T) {
 			{"interval":{"endTime":"2026-04-22T00:15:00Z"},"value":{"doubleValue":0.25}}
 		]}
 	]`)
-	points, err := parseTimeSeries(data)
+	points, err := parseTimeSeries(data, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestParseTimeSeriesInt64Coercion(t *testing.T) {
 			{"interval":{"endTime":"2026-04-22T00:10:00Z"},"value":{"int64Value":"1234567"}}
 		]}
 	]`)
-	points, err := parseTimeSeries(data)
+	points, err := parseTimeSeries(data, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestParseTimeSeriesInt64Coercion(t *testing.T) {
 }
 
 func TestParseTimeSeriesEmpty(t *testing.T) {
-	points, err := parseTimeSeries([]byte(`[]`))
+	points, err := parseTimeSeries([]byte(`[]`), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,17 +54,73 @@ func TestParseTimeSeriesEmpty(t *testing.T) {
 
 func TestParseTimeSeriesFirstSeries(t *testing.T) {
 	// When a metric filter matches multiple series (e.g. two disks on
-	// the same instance), we only consume the first. Documented in the
-	// code — users wanting per-disk detail drill in the console.
+	// the same instance) and aggregate=false, we only consume the first.
 	data := []byte(`[
 		{"points":[{"interval":{"endTime":"2026-04-22T00:00:00Z"},"value":{"doubleValue":1}}]},
 		{"points":[{"interval":{"endTime":"2026-04-22T00:00:00Z"},"value":{"doubleValue":999}}]}
 	]`)
-	points, err := parseTimeSeries(data)
+	points, err := parseTimeSeries(data, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(points) != 1 || points[0] != 1 {
 		t.Errorf("got %v, want [1] (first series only)", points)
+	}
+}
+
+func TestParseTimeSeriesAggregateSumsSeries(t *testing.T) {
+	// Disk metrics come back as one series per attached disk. With
+	// aggregate=true the parser sums them bin-wise so a two-disk VM's
+	// total I/O shows as the sum, not just one disk's value.
+	data := []byte(`[
+		{"points":[
+			{"interval":{"endTime":"2026-04-22T00:05:00Z"},"value":{"doubleValue":30}},
+			{"interval":{"endTime":"2026-04-22T00:00:00Z"},"value":{"doubleValue":10}}
+		]},
+		{"points":[
+			{"interval":{"endTime":"2026-04-22T00:05:00Z"},"value":{"doubleValue":20}},
+			{"interval":{"endTime":"2026-04-22T00:00:00Z"},"value":{"doubleValue":5}}
+		]}
+	]`)
+	points, err := parseTimeSeries(data, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After reverse: series1=[10,30], series2=[5,20]; summed=[15,50].
+	if len(points) != 2 || points[0] != 15 || points[1] != 50 {
+		t.Errorf("got %v, want [15 50]", points)
+	}
+}
+
+func TestParseTimeSeriesAggregateTruncatesShortest(t *testing.T) {
+	// If a disk was attached mid-window, one series has fewer bins.
+	// The aggregate truncates to the shorter so the sparkline stays
+	// well-formed.
+	data := []byte(`[
+		{"points":[
+			{"interval":{"endTime":"2026-04-22T00:10:00Z"},"value":{"doubleValue":3}},
+			{"interval":{"endTime":"2026-04-22T00:05:00Z"},"value":{"doubleValue":2}},
+			{"interval":{"endTime":"2026-04-22T00:00:00Z"},"value":{"doubleValue":1}}
+		]},
+		{"points":[
+			{"interval":{"endTime":"2026-04-22T00:10:00Z"},"value":{"doubleValue":30}}
+		]}
+	]`)
+	points, err := parseTimeSeries(data, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After reverse: s1=[1,2,3], s2=[30]; truncated to len=1; summed=[31].
+	if len(points) != 1 || points[0] != 31 {
+		t.Errorf("got %v, want [31]", points)
+	}
+}
+
+func TestIsDiskMetric(t *testing.T) {
+	if !isDiskMetric("compute.googleapis.com/instance/disk/read_bytes_count") {
+		t.Error("disk read should be flagged")
+	}
+	if isDiskMetric("compute.googleapis.com/instance/cpu/utilization") {
+		t.Error("cpu should not be flagged")
 	}
 }

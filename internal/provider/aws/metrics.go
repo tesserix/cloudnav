@@ -21,10 +21,13 @@ const metricsWindow = 1 * time.Hour
 // surcharge.
 const metricsPeriodSeconds = 300
 
-// Metrics returns short-window time-series for an AWS resource. Only
-// EC2 is wired today; other namespaces (Lambda, RDS, S3, DynamoDB)
-// return an empty slice with a Meta-embedded hint so the overlay can
-// show a clear "not wired for this type" message instead of failing.
+// Metrics returns short-window time-series for an AWS resource.
+// Namespace dispatch: EC2, Lambda, and RDS are wired today. Unknown
+// services return (nil, nil) so the overlay renders its existing
+// "no default metrics for this type" message rather than a raw error.
+// S3 is intentionally deferred — its CloudWatch metrics (BucketSizeBytes,
+// NumberOfObjects) only publish once a day so they don't fit the
+// 5-minute × 60-minute window the overlay uses for everything else.
 //
 // CloudWatch is region-scoped — we always pass the resource's home
 // region explicitly rather than relying on the default profile region.
@@ -36,25 +39,15 @@ func (a *AWS) Metrics(ctx context.Context, resource provider.Node) ([]provider.M
 	if region == "" {
 		return nil, fmt.Errorf("aws metrics: resource is missing region metadata")
 	}
-
-	// ARN → (service, instance-id). Only EC2 mapped for now; everything
-	// else returns an empty slice so the TUI's "no metrics" branch
-	// renders cleanly.
-	service := serviceFromARN(resource.ID)
-	restype := resourceTypeFromARN(resource.ID)
-	if service != "ec2" || restype != "instance" {
+	spec, catalog := catalogForAWSResource(resource)
+	if spec == nil {
 		return nil, nil
 	}
-	instanceID := nameFromARN(resource.ID)
-	if instanceID == "" {
-		return nil, nil
-	}
-
-	return a.fetchEC2Metrics(ctx, region, instanceID)
+	return a.fetchCloudWatchMetrics(ctx, region, spec, catalog)
 }
 
 // metricStat pairs a CloudWatch metric name with the label we want the
-// overlay to show. Pulled out of fetchEC2Metrics so parseMetricData can
+// overlay to show. Pulled out of the fetcher so parseMetricData can
 // accept a slice of it without resorting to anonymous-struct wizardry.
 type metricStat struct {
 	Id         string
@@ -62,30 +55,73 @@ type metricStat struct {
 	Label      string
 }
 
-// fetchEC2Metrics issues a single cloudwatch:GetMetricData call covering
-// every EC2 metric we care about. Batched so we make one API call per
-// resource rather than five.
-func (a *AWS) fetchEC2Metrics(ctx context.Context, region, instanceID string) ([]provider.Metric, error) {
+// dimensionSpec says "this resource maps to CloudWatch namespace N with a
+// single dimension D=V" — enough to assemble a GetMetricData payload.
+// Kept tiny so adding a new service is one row in catalogForAWSResource.
+type dimensionSpec struct {
+	Namespace     string
+	DimensionName string
+	DimensionVal  string
+}
+
+// catalogForAWSResource resolves an ARN to (dimensionSpec, catalog). The
+// returned spec is nil when the service isn't mapped — the caller then
+// returns an empty metric slice and the UI degrades gracefully.
+func catalogForAWSResource(resource provider.Node) (*dimensionSpec, []metricStat) {
+	service := serviceFromARN(resource.ID)
+	restype := resourceTypeFromARN(resource.ID)
+	name := nameFromARN(resource.ID)
+	if name == "" {
+		return nil, nil
+	}
+	switch {
+	case service == "ec2" && restype == "instance":
+		return &dimensionSpec{Namespace: "AWS/EC2", DimensionName: "InstanceId", DimensionVal: name},
+			[]metricStat{
+				{Id: "cpu", MetricName: "CPUUtilization", Label: "CPU %"},
+				{Id: "netin", MetricName: "NetworkIn", Label: "Net In B/s"},
+				{Id: "netout", MetricName: "NetworkOut", Label: "Net Out B/s"},
+				{Id: "diskr", MetricName: "DiskReadBytes", Label: "Disk Read B/s"},
+				{Id: "diskw", MetricName: "DiskWriteBytes", Label: "Disk Write B/s"},
+			}
+	case service == "lambda" && restype == "function":
+		return &dimensionSpec{Namespace: "AWS/Lambda", DimensionName: "FunctionName", DimensionVal: name},
+			[]metricStat{
+				{Id: "inv", MetricName: "Invocations", Label: "Invocations"},
+				{Id: "err", MetricName: "Errors", Label: "Errors"},
+				{Id: "dur", MetricName: "Duration", Label: "Duration ms"},
+				{Id: "thr", MetricName: "Throttles", Label: "Throttles"},
+				{Id: "cold", MetricName: "ConcurrentExecutions", Label: "Concurrent"},
+			}
+	case service == "rds" && restype == "db":
+		return &dimensionSpec{Namespace: "AWS/RDS", DimensionName: "DBInstanceIdentifier", DimensionVal: name},
+			[]metricStat{
+				{Id: "cpu", MetricName: "CPUUtilization", Label: "CPU %"},
+				{Id: "conn", MetricName: "DatabaseConnections", Label: "Connections"},
+				{Id: "mem", MetricName: "FreeableMemory", Label: "Free Mem B"},
+				{Id: "iopsr", MetricName: "ReadIOPS", Label: "Read IOPS"},
+				{Id: "iopsw", MetricName: "WriteIOPS", Label: "Write IOPS"},
+			}
+	}
+	return nil, nil
+}
+
+// fetchCloudWatchMetrics batches the whole catalog into a single
+// GetMetricData call regardless of namespace so we stay at one API
+// request per resource.
+func (a *AWS) fetchCloudWatchMetrics(ctx context.Context, region string, spec *dimensionSpec, catalog []metricStat) ([]provider.Metric, error) {
 	end := time.Now().UTC()
 	start := end.Add(-metricsWindow)
-
-	catalog := []metricStat{
-		{Id: "cpu", MetricName: "CPUUtilization", Label: "CPU %"},
-		{Id: "netin", MetricName: "NetworkIn", Label: "Net In B/s"},
-		{Id: "netout", MetricName: "NetworkOut", Label: "Net Out B/s"},
-		{Id: "diskr", MetricName: "DiskReadBytes", Label: "Disk Read B/s"},
-		{Id: "diskw", MetricName: "DiskWriteBytes", Label: "Disk Write B/s"},
-	}
 	queries := make([]map[string]any, 0, len(catalog))
 	for _, m := range catalog {
 		queries = append(queries, map[string]any{
 			"Id": m.Id,
 			"MetricStat": map[string]any{
 				"Metric": map[string]any{
-					"Namespace":  "AWS/EC2",
+					"Namespace":  spec.Namespace,
 					"MetricName": m.MetricName,
 					"Dimensions": []map[string]string{
-						{"Name": "InstanceId", "Value": instanceID},
+						{"Name": spec.DimensionName, "Value": spec.DimensionVal},
 					},
 				},
 				"Period": metricsPeriodSeconds,

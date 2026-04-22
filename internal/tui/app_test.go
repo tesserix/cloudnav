@@ -355,6 +355,60 @@ func TestSeriesStats(t *testing.T) {
 	}
 }
 
+func TestFormatDetailSummaryAllFields(t *testing.T) {
+	// The summary is additive — nothing in the raw-JSON body is changed
+	// by this helper, so every field we surface is either present in
+	// Node.Meta or on Node itself.
+	n := provider.Node{
+		ID:       "/subscriptions/abc/resourceGroups/rg-foo/providers/Microsoft.Compute/virtualMachines/vm1",
+		Name:     "vm1",
+		Kind:     provider.KindResource,
+		Location: "uksouth",
+		State:    "Running",
+		Cost:     "$42.00",
+		Meta: map[string]string{
+			"type":           "Microsoft.Compute/virtualMachines",
+			"subscriptionId": "abc",
+			"tags":           "env=prod, owner=platform",
+			"health":         "Available",
+			"createdTime":    "2025-10-01T00:00:00Z",
+			"tenantName":     "Acme Corp",
+		},
+	}
+	got := formatDetailSummary(n)
+	for _, want := range []string{
+		"vm1",
+		"Kind:",
+		"uksouth",
+		"Running",
+		"env=prod",
+		"Available",
+		"$42.00",
+		"2025-10-01",
+		"Acme Corp",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatDetailSummarySkipsEmpty(t *testing.T) {
+	// A sparsely-populated Node (common for AWS regions / cloud rows)
+	// shouldn't render a pile of "—" rows — empty fields are dropped.
+	n := provider.Node{Name: "minimal", Kind: provider.KindRegion}
+	got := formatDetailSummary(n)
+	// Only NAME + "Kind: region" should be present.
+	for _, absent := range []string{"Location:", "Tags:", "Health:", "Cost (MTD):"} {
+		if strings.Contains(got, absent) {
+			t.Errorf("should not render empty %q: %s", absent, got)
+		}
+	}
+	if !strings.Contains(got, "minimal") || !strings.Contains(got, "Kind:") {
+		t.Errorf("expected name + kind, got:\n%s", got)
+	}
+}
+
 func TestAdvisorMatchesFilter(t *testing.T) {
 	r := provider.Recommendation{
 		Category:     "Cost",

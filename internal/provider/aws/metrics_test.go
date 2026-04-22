@@ -1,6 +1,10 @@
 package aws
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tesserix/cloudnav/internal/provider"
+)
 
 func TestParseMetricDataReverses(t *testing.T) {
 	// CloudWatch returns timestamps newest-first. The parser reverses
@@ -52,6 +56,45 @@ func TestParseMetricDataSkipsEmpty(t *testing.T) {
 	}
 	if metrics[0].Name != "Net In" {
 		t.Errorf("name = %q", metrics[0].Name)
+	}
+}
+
+func TestCatalogForAWSResource(t *testing.T) {
+	// Every supported service maps to a non-nil catalog; anything else
+	// returns nils so the caller can degrade to an empty metric list.
+	cases := []struct {
+		arn    string
+		ns     string
+		dim    string
+		mapped bool
+	}{
+		{"arn:aws:ec2:us-east-1:123:instance/i-abc", "AWS/EC2", "InstanceId", true},
+		{"arn:aws:lambda:us-east-1:123:function:my-fn", "AWS/Lambda", "FunctionName", true},
+		{"arn:aws:rds:us-east-1:123:db:prod-primary", "AWS/RDS", "DBInstanceIdentifier", true},
+		{"arn:aws:s3:::my-bucket", "", "", false}, // daily granularity; not mapped
+		{"arn:aws:iam::123:role/my-role", "", "", false},
+	}
+	for _, c := range cases {
+		res := provider.Node{ID: c.arn, Kind: provider.KindResource, Meta: map[string]string{"region": "us-east-1"}}
+		spec, cat := catalogForAWSResource(res)
+		if !c.mapped {
+			if spec != nil {
+				t.Errorf("%s should not be mapped, got %+v", c.arn, spec)
+			}
+			continue
+		}
+		if spec == nil {
+			t.Fatalf("%s should map to a spec", c.arn)
+		}
+		if spec.Namespace != c.ns {
+			t.Errorf("%s namespace = %q, want %q", c.arn, spec.Namespace, c.ns)
+		}
+		if spec.DimensionName != c.dim {
+			t.Errorf("%s dimension = %q, want %q", c.arn, spec.DimensionName, c.dim)
+		}
+		if len(cat) == 0 {
+			t.Errorf("%s catalog is empty", c.arn)
+		}
 	}
 }
 
