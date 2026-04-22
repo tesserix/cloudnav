@@ -63,10 +63,13 @@ start_cn
 send Enter; sleep 10
 azure=$(grab)
 assert_contains "azure drill breadcrumbs updated" "clouds › azure" "$azure"
-if echo "$azure" | grep -q 'Civica'; then
+# Expect *some* tenant display-name column — operators can narrow to
+# their specific org name via CLOUDNAV_E2E_TENANT_PATTERN. The default
+# ('.') matches any non-empty tenant so a fresh account still passes.
+if echo "$azure" | grep -Eq "$CLOUDNAV_E2E_TENANT_PATTERN"; then
   pass "azure subs show resolved tenant display name"
 else
-  fail "azure tenant column" "expected a 'Civica ...' tenant label in subs view"
+  fail "azure tenant column" "expected tenant column matching /$CLOUDNAV_E2E_TENANT_PATTERN/"
 fi
 stop_cn
 

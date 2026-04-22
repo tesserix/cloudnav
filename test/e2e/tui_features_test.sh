@@ -21,12 +21,12 @@ stop()  { tmux send-keys -t "$SESSION" q 2>/dev/null || true; sleep 0.5; tmux ki
 start
 send Enter; sleep 10
 send "/"; sleep 0.3
-send "Platform-Prod"; sleep 1
+send "$CLOUDNAV_E2E_AZURE_SUB"; sleep 1
 view=$(grab)
-assert_contains "/ shows search input prompt" "/ Platform-Prod" "$view"
+assert_contains "/ shows search input prompt" "/ $CLOUDNAV_E2E_AZURE_SUB" "$view"
 send Enter; sleep 0.5
 view=$(grab)
-assert_contains "exiting search leaves 'filter: Platform-Prod' in footer" "filter: Platform-Prod" "$view"
+assert_contains "exiting search leaves 'filter: $CLOUDNAV_E2E_AZURE_SUB' in footer" "filter: $CLOUDNAV_E2E_AZURE_SUB" "$view"
 assert_regex   "footer shows filtered count (X/Y)" '[0-9]+/[0-9]+' "$view"
 stop
 
@@ -45,11 +45,11 @@ stop
 start
 send Enter; sleep 10
 send "/"; sleep 0.3
-send "Platform-Prod"; sleep 0.8
+send "$CLOUDNAV_E2E_AZURE_SUB"; sleep 0.8
 send Enter; sleep 0.5   # close search keeping filter
 send Enter; sleep 12    # drill into sub
 view=$(grab)
-assert_contains "drill reaches Platform-Prod RGs" "clouds › azure › Platform-Prod" "$view"
+assert_contains "drill reaches $CLOUDNAV_E2E_AZURE_SUB RGs" "clouds › azure › $CLOUDNAV_E2E_AZURE_SUB" "$view"
 send c; sleep 45
 view=$(grab)
 if echo "$view" | grep -q 'COST (MTD)'; then
@@ -82,13 +82,13 @@ stop
 start
 send Enter; sleep 10
 send "/"; sleep 0.3
-send "Platform-Prod"; sleep 0.8
+send "$CLOUDNAV_E2E_AZURE_SUB"; sleep 0.8
 send Enter; sleep 0.5
 send Enter; sleep 12
 send f; sleep 0.5
 view=$(grab)
-assert_regex "f saves a bookmark (status ★)" 'bookmarked.*Platform-Prod' "$view"
+assert_regex "f saves a bookmark (status ★)" "bookmarked.*$CLOUDNAV_E2E_AZURE_SUB" "$view"
 send ":"; sleep 12
 view=$(grab)
-assert_contains "palette lists the new bookmark (★)" "★ azure / Platform-Prod" "$view"
+assert_contains "palette lists the new bookmark (★)" "★ azure / $CLOUDNAV_E2E_AZURE_SUB" "$view"
 stop

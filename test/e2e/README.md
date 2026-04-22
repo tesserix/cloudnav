@@ -19,6 +19,19 @@ Prereqs on your machine:
 - `tmux` for the TUI half (silently skipped if missing)
 - `python3` for lightweight JSON assertions
 
+### Operator-specific env vars
+
+The tests drill into a specific Azure subscription by name. Defaults are
+neutral placeholders so nothing operator-specific lives in the public
+repo; set these before running the suite against your real tenant:
+
+| Env var | Default | What it does |
+|---|---|---|
+| `CLOUDNAV_E2E_AZURE_SUB` | `acme-prod` | Subscription name typed into the `/` filter when drilling into Azure |
+| `CLOUDNAV_E2E_AZURE_SUB_ID` | `00000000-0000-0000-0000-000000000000` | Subscription GUID used by the `cost rgs --subscription` assertion |
+| `CLOUDNAV_E2E_LOCKED_RG` | `locked-rg` | A resource-group name known to carry a 🔒 lock — used to assert the lock badge renders |
+| `CLOUDNAV_E2E_TENANT_PATTERN` | `.` (any tenant) | Substring the azure tenant column must match |
+
 ## What it covers
 
 - **`cli_test.sh`** — version, help, doctor, `ls` for every cloud, `pim` list for each cloud, `cost --help`, `cost services`, out-of-range activation, non-TTY fallback.

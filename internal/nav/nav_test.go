@@ -28,9 +28,9 @@ func TestStackBreadcrumbs(t *testing.T) {
 	var s Stack
 	s.Push(Frame{Title: "clouds"})
 	s.Push(Frame{Title: "azure"})
-	s.Push(Frame{Title: "Platform-Prod"})
+	s.Push(Frame{Title: "acme-prod"})
 	crumbs := s.Breadcrumbs()
-	want := []string{"clouds", "azure", "Platform-Prod"}
+	want := []string{"clouds", "azure", "acme-prod"}
 	if len(crumbs) != len(want) {
 		t.Fatalf("len = %d, want %d", len(crumbs), len(want))
 	}

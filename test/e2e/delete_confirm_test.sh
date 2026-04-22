@@ -24,7 +24,7 @@ stop()  { tmux send-keys -t "$SESSION" q 2>/dev/null || true; sleep 0.5; tmux ki
 start
 send Enter; sleep 10                 # drill into azure → subs
 send "/"; sleep 0.3
-send "Platform-Prod"; sleep 1
+send "$CLOUDNAV_E2E_AZURE_SUB"; sleep 1
 send Enter; sleep 0.5                # pick the first match
 send Enter; sleep 15                 # drill into sub → RGs
 

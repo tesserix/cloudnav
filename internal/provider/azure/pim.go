@@ -50,7 +50,7 @@ const (
 // Per-tenant authentication failures (the common case of `az login --tenant
 // X` never having been run) don't silently hide that tenant's roles any
 // more; a diagnostic row is emitted so the user can see *why* roles are
-// missing from CIVICADEV / Prod / etc.
+// missing from a specific tenant.
 func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, error) {
 	tenants, err := a.pimTenants(ctx)
 	if err != nil {

@@ -9,16 +9,16 @@ A fast, keyboard-driven multi-cloud navigator. One TUI for **Azure**, **GCP**, a
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 ```
-┌─ cloudnav ────────────────────────────── azure • Platform-Prod ─┐
-│ azure › Platform-Prod › resource groups              47 items   │
-├─────────────────────────────────────────────────────────────────┤
-│  NAME                                LOCATION    STATE   COST   │
-│  Yellowfin-container-testing         uksouth     OK      £2,355 │
-│  nonprod-uksouth-baseline-rg         uksouth     OK      £869   │
-│  ...                                                            │
-├─────────────────────────────────────────────────────────────────┤
+┌─ cloudnav ───────────────────────────────── azure • acme-prod ─┐
+│ azure › acme-prod › resource groups                 47 items   │
+├────────────────────────────────────────────────────────────────┤
+│  NAME                               LOCATION    STATE   COST   │
+│  web-api-prod-rg                    uksouth     OK      £2,355 │
+│  analytics-prod-rg                  uksouth     OK      £869   │
+│  ...                                                           │
+├────────────────────────────────────────────────────────────────┤
 │ ↵ open  / search  c costs  o portal  p PIM  r refresh  ? help  │
-└─────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Read-only by default

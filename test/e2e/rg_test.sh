@@ -19,7 +19,7 @@ stop()  { tmux send-keys -t "$SESSION" q 2>/dev/null || true; sleep 0.5; tmux ki
 start
 send Enter; sleep 10
 send "/"; sleep 0.3
-send "Platform-Prod"; sleep 1
+send "$CLOUDNAV_E2E_AZURE_SUB"; sleep 1
 send Enter; sleep 0.5
 send Enter; sleep 15
 view=$(grab)
@@ -47,7 +47,7 @@ assert_regex "[ selects all visible rows" '<D>[[:space:]]*delete[[:space:]]+[0-9
 
 # filter for an RG known to have a lock
 send "/"; sleep 0.3
-send "rg-bis-yfin-aue-prod-prod"; sleep 1.2
+send "${CLOUDNAV_E2E_LOCKED_RG:-locked-rg}"; sleep 1.2
 view=$(grab)
 assert_regex "locked RG shows 🔒 badge" '🔒.*(CanNotDelete|ReadOnly)' "$view"
 stop

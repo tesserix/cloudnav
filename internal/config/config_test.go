@@ -28,11 +28,11 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 		Theme:           "dark",
 		Bookmarks: []Bookmark{
 			{
-				Label:    "azure / Platform-Prod",
+				Label:    "azure / acme-prod",
 				Provider: "azure",
 				Path: []Crumb{
 					{Kind: "cloud", ID: "", Name: "azure"},
-					{Kind: "subscription", ID: "fcb999d2", Name: "Platform-Prod"},
+					{Kind: "subscription", ID: "00000000-0000-0000-0000-000000000000", Name: "acme-prod"},
 				},
 			},
 		},
@@ -54,7 +54,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	if len(loaded.Bookmarks) != 1 {
 		t.Fatalf("bookmarks len=%d", len(loaded.Bookmarks))
 	}
-	if loaded.Bookmarks[0].Path[1].Name != "Platform-Prod" {
+	if loaded.Bookmarks[0].Path[1].Name != "acme-prod" {
 		t.Errorf("path[1].Name=%q", loaded.Bookmarks[0].Path[1].Name)
 	}
 }
