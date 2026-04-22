@@ -10,6 +10,15 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
+// Impact badge strings shared across the Compute Optimizer, Cost Anomaly
+// Detection, and Trusted Advisor paths. Kept here so all three agree on
+// the same vocabulary and goconst is quiet.
+const (
+	impactHigh   = "High"
+	impactMedium = "Medium"
+	impactLow    = "Low"
+)
+
 // Recommendations returns cost-efficiency recommendations for the current
 // AWS scope. Implemented against Compute Optimizer (EC2 + EBS) rather than
 // Trusted Advisor because TA is gated behind a Business / Enterprise
@@ -24,7 +33,7 @@ func (a *AWS) Recommendations(ctx context.Context, scopeID string) ([]provider.R
 	if !a.computeOptimizerEnabled(ctx) {
 		return []provider.Recommendation{{
 			Category: "Cost",
-			Impact:   "Medium",
+			Impact:   impactMedium,
 			Problem:  "AWS Compute Optimizer isn't enrolled on this account",
 			Solution: "Run: aws compute-optimizer update-enrollment-status --status Active  (then wait ~12h for the first recommendations).",
 		}}, nil
@@ -104,9 +113,9 @@ func (a *AWS) ec2Recommendations(ctx context.Context) []provider.Recommendation 
 		if better == "" {
 			solution = "See Compute Optimizer in the console for the recommended size."
 		}
-		impact := "Medium"
+		impact := impactMedium
 		if strings.EqualFold(r.Finding, "Underprovisioned") {
-			impact = "High" // throttled workloads cost reliability, not just money
+			impact = impactHigh // throttled workloads cost reliability, not just money
 		}
 		recs = append(recs, provider.Recommendation{
 			Category:     "Cost",
@@ -171,7 +180,7 @@ func (a *AWS) ebsRecommendations(ctx context.Context) []provider.Recommendation 
 		}
 		recs = append(recs, provider.Recommendation{
 			Category:     "Cost",
-			Impact:       "Medium",
+			Impact:       impactMedium,
 			Problem:      fmt.Sprintf("%s: %s %s %dGiB — %s", r.Finding, shortArn(r.VolumeArn), r.CurrentConfig.VolumeType, r.CurrentConfig.VolumeSize, reasons),
 			Solution:     solution,
 			ImpactedName: shortArn(r.VolumeArn),
@@ -271,7 +280,7 @@ func (a *AWS) trustedAdvisorRecs(ctx context.Context) []provider.Recommendation 
 		return nil
 	}
 
-	var out []provider.Recommendation
+	out := make([]provider.Recommendation, 0, len(list.Checks))
 	for _, check := range list.Checks {
 		res, err := a.aws.Run(ctx,
 			"support", "describe-trusted-advisor-check-result",
@@ -304,9 +313,9 @@ func (a *AWS) trustedAdvisorRecs(ctx context.Context) []provider.Recommendation 
 		if strings.EqualFold(env.Result.Status, "ok") || env.Result.ResourcesSummary.ResourcesFlagged == 0 {
 			continue
 		}
-		impact := "Medium"
+		impact := impactMedium
 		if strings.EqualFold(env.Result.Status, "error") {
-			impact = "High"
+			impact = impactHigh
 		}
 		// One recommendation per check rather than per flagged resource
 		// — otherwise a single "low-utilisation EC2" check could
@@ -317,7 +326,7 @@ func (a *AWS) trustedAdvisorRecs(ctx context.Context) []provider.Recommendation 
 			first = env.Result.FlaggedResources[0].ResourceID
 		}
 		out = append(out, provider.Recommendation{
-			Category:     strings.Title(strings.ToLower(check.Category)), // "fault_tolerance" → "Fault_Tolerance"
+			Category:     titleCaseCategory(check.Category), // "fault_tolerance" → "Fault Tolerance"
 			Impact:       impact,
 			Problem:      fmt.Sprintf("%s: %d resource(s) flagged", check.Name, env.Result.ResourcesSummary.ResourcesFlagged),
 			Solution:     "Open Trusted Advisor in the console for the flagged-resource breakdown and remediation steps.",
@@ -328,14 +337,29 @@ func (a *AWS) trustedAdvisorRecs(ctx context.Context) []provider.Recommendation 
 	return out
 }
 
+// titleCaseCategory renders a Trusted Advisor category ("fault_tolerance",
+// "service_limits") in human form for the Advisor overlay. strings.Title
+// is deprecated and the x/text/cases replacement pulls a dep we don't
+// otherwise need, so a small loop does the job.
+func titleCaseCategory(s string) string {
+	parts := strings.Split(strings.ToLower(s), "_")
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
 func anomalyImpactBadge(delta float64) string {
 	switch {
 	case delta > 500:
-		return "High"
+		return impactHigh
 	case delta > 100:
-		return "Medium"
+		return impactMedium
 	default:
-		return "Low"
+		return impactLow
 	}
 }
 

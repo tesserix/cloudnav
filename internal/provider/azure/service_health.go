@@ -149,6 +149,16 @@ func parseHealthEvents(data []byte, subID, subName string) ([]provider.HealthEve
 	return out, nil
 }
 
+// Normalised HealthEvent.Level values. Kept as package-local constants so
+// provider code and goconst agree on the same vocabulary and the TUI's
+// healthEventBadge can switch on the same strings.
+const (
+	healthLevelIncident    = "incident"
+	healthLevelMaintenance = "maintenance"
+	healthLevelAdvisory    = "advisory"
+	healthLevelSecurity    = "security"
+)
+
 // healthLevelFromEventType maps Azure's ServiceIssue / PlannedMaintenance
 // / HealthAdvisory / Security enum to the normalised level string on
 // provider.HealthEvent so the UI doesn't need to know Azure-specific
@@ -156,15 +166,15 @@ func parseHealthEvents(data []byte, subID, subName string) ([]provider.HealthEve
 func healthLevelFromEventType(t string) string {
 	switch strings.ToLower(t) {
 	case "serviceissue":
-		return "incident"
+		return healthLevelIncident
 	case "plannedmaintenance":
-		return "maintenance"
+		return healthLevelMaintenance
 	case "healthadvisory":
-		return "advisory"
+		return healthLevelAdvisory
 	case "security":
-		return "security"
+		return healthLevelSecurity
 	default:
-		return "incident"
+		return healthLevelIncident
 	}
 }
 
