@@ -70,6 +70,8 @@ type (
 	}
 	pimLoadedMsg struct{ roles []provider.PIMRole }
 
+	healthLoadedMsg struct{ events []provider.HealthEvent }
+
 	advisorLoadedMsg struct {
 		recs      []provider.Recommendation
 		scope     string
@@ -189,8 +191,11 @@ type model struct {
 	billingIdx      int
 	billingGCP      *gcp.BillingStatus    // optional GCP setup diagnostic
 	billingSummary  provider.BillingScope // account-wide forecast + budget when the provider implements BillingSummarer
-	drilling        bool                  // a drill-level load is in flight; block navigation
-	categoryFilter  string                // resource category on the resource list (compute / data / network / security / other)
+	healthMode      bool
+	healthEvents    []provider.HealthEvent
+	healthIdx       int
+	drilling        bool   // a drill-level load is in flight; block navigation
+	categoryFilter  string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
 	deleteTargets   []provider.Node
 	deleteInput     textinput.Model
@@ -385,6 +390,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.advisorMode {
 			return m.updateAdvisor(msg)
 		}
+		if m.healthMode {
+			return m.updateHealth(msg)
+		}
 		if m.billingMode {
 			return m.updateBilling(msg)
 		}
@@ -494,6 +502,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loginCurrentCloud()
 		case key.Matches(msg, m.keys.Advisor):
 			return m, m.loadAdvisor()
+		case key.Matches(msg, m.keys.Health):
+			return m, m.loadHealth()
 		case key.Matches(msg, m.keys.Billing):
 			return m, m.loadBilling()
 		case key.Matches(msg, m.keys.Exec):
@@ -639,6 +649,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.advisorIdx = 0
 		m.advisorMode = true
 		m.status = fmt.Sprintf("%d advisor recommendation(s) for %s", len(msg.recs), msg.scopeName)
+		return m, nil
+
+	case healthLoadedMsg:
+		m.loading = false
+		m.err = nil
+		m.healthEvents = msg.events
+		m.healthIdx = 0
+		m.healthMode = true
+		m.status = fmt.Sprintf("%d active health event(s)", len(msg.events))
 		return m, nil
 
 	case pimActivatedMsg:
@@ -1415,6 +1434,30 @@ func scopeSummaryFrom(ctx context.Context, s provider.BillingSummarer) provider.
 		return provider.BillingScope{}
 	}
 	return out
+}
+
+// loadHealth opens the Service Health overlay, showing active incidents
+// affecting the caller's scope. Optional provider capability — we show a
+// status hint when the active cloud doesn't implement HealthEventer.
+func (m *model) loadHealth() tea.Cmd {
+	h, ok := m.active.(provider.HealthEventer)
+	if !ok {
+		m.status = m.active.Name() + ": service health not supported"
+		return nil
+	}
+	m.loading = true
+	m.status = "loading " + m.active.Name() + " service health..."
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			events, err := h.HealthEvents(ctx)
+			if err != nil {
+				return errMsg{err}
+			}
+			return healthLoadedMsg{events: events}
+		},
+	)
 }
 
 // loadAdvisor fetches cloud-native advisor recommendations for the scope
@@ -2599,6 +2642,9 @@ func (m *model) View() string {
 	if m.advisorMode {
 		return m.advisorView()
 	}
+	if m.healthMode {
+		return m.healthView()
+	}
 	if m.billingMode {
 		return m.billingView()
 	}
@@ -3074,6 +3120,130 @@ func advisorMatchesFilter(r provider.Recommendation, q string) bool {
 		}
 	}
 	return false
+}
+
+// updateHealth handles keys while the Service Health overlay is visible.
+// Kept small because the overlay is read-only — the only actions are
+// navigation and dismiss.
+func (m *model) updateHealth(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case keyEsc, "q", "H":
+		m.healthMode = false
+		m.status = ""
+		return m, nil
+	case keyUp, "k":
+		if m.healthIdx > 0 {
+			m.healthIdx--
+		}
+		return m, nil
+	case keyDown, "j":
+		if m.healthIdx < len(m.healthEvents)-1 {
+			m.healthIdx++
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// healthView renders the Service Health overlay — active incidents /
+// planned maintenance / advisories across the caller's subscriptions.
+// When nothing's active we show a clean "all clear" state so the user
+// knows the lookup succeeded (rather than being confused about an empty
+// pane).
+func (m *model) healthView() string {
+	header := styles.Title.Render("service health") + "  " +
+		styles.Help.Render(fmt.Sprintf("%d active event(s)", len(m.healthEvents)))
+	if len(m.healthEvents) == 0 {
+		return styles.Box.Render(strings.Join([]string{
+			header,
+			"",
+			styles.Good.Render("  🟢 all clear — no active incidents, maintenance, or advisories"),
+			"",
+			styles.Help.Render("  esc/H close"),
+		}, "\n"))
+	}
+
+	window := 14
+	if m.height > 12 {
+		window = m.height - 12
+	}
+	if window < 5 {
+		window = 5
+	}
+	start := 0
+	if m.healthIdx >= window {
+		start = m.healthIdx - window + 1
+	}
+	end := start + window
+	if end > len(m.healthEvents) {
+		end = len(m.healthEvents)
+	}
+
+	lines := []string{header, ""}
+	if start > 0 {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	}
+	for i := start; i < end; i++ {
+		e := m.healthEvents[i]
+		badge := healthEventBadge(e.Level)
+		region := e.Region
+		if region == "" {
+			region = "—"
+		}
+		service := e.Service
+		if service == "" {
+			service = "—"
+		}
+		title := shorten(e.Title, 60)
+		line := fmt.Sprintf("%s  %-22s  %-18s  %s", badge, shorten(service, 22), shorten(region, 18), title)
+		if i == m.healthIdx {
+			line = styles.Selected.Render("> " + line)
+		} else {
+			line = "  " + line
+		}
+		lines = append(lines, line)
+	}
+	if end < len(m.healthEvents) {
+		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(m.healthEvents)-end)))
+	}
+
+	if m.healthIdx >= 0 && m.healthIdx < len(m.healthEvents) {
+		e := m.healthEvents[m.healthIdx]
+		lines = append(lines, "",
+			styles.Header.Render("Details"),
+			"Level:   "+healthEventBadge(e.Level),
+			"Status:  "+e.Status,
+			"Service: "+nonemptyOrDash(e.Service),
+			"Region:  "+nonemptyOrDash(e.Region),
+			"Scope:   "+nonemptyOrDash(e.Scope),
+			"Since:   "+shortDate(e.StartTime),
+			"Title:   "+e.Title,
+		)
+		if e.Summary != "" {
+			lines = append(lines, "Summary: "+shorten(e.Summary, 120))
+		}
+	}
+	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/H close"))
+	return styles.Box.Render(strings.Join(lines, "\n"))
+}
+
+// healthEventBadge colours a HealthEvent.Level for the overlay. Incidents
+// get the red treatment, maintenance goes yellow, advisories blue-ish,
+// anything else falls through to the muted style so we don't clobber a
+// future level value.
+func healthEventBadge(level string) string {
+	switch level {
+	case "incident":
+		return styles.Bad.Render("🔴 incident")
+	case "maintenance":
+		return styles.WarnS.Render("🟡 maintenance")
+	case "advisory":
+		return styles.AccentS.Render("🔵 advisory")
+	case "security":
+		return styles.Bad.Render("🛡  security")
+	default:
+		return styles.Help.Render("• " + level)
+	}
 }
 
 func (m *model) advisorView() string {
@@ -4192,7 +4362,8 @@ func (m *model) helpView() string {
 		styles.Header.Render("Auth") + "   I login (runs az/gcloud/aws login inside the TUI)",
 		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
 		styles.Header.Render("Filter") + " 0-5 on resource views — 0 all / 1 compute / 2 data / 3 network / 4 security / 5 other",
-		styles.Header.Render("Ops") + "    A advisor (Azure / GCP) — cost / security / reliability / perf / ops",
+		styles.Header.Render("Ops") + "    A advisor (Azure / GCP / AWS via Compute Optimizer + TA) — cost / security / reliability / perf / ops",
+		styles.Header.Render("Health") + " H service-health overlay — active incidents / maintenance / advisories",
 		styles.Header.Render("Billing") + " B portfolio view — per-sub (Azure), per-service (AWS), per-project (GCP)",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",

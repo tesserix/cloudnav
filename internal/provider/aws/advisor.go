@@ -34,6 +34,14 @@ func (a *AWS) Recommendations(ctx context.Context, scopeID string) ([]provider.R
 	out = append(out, a.ec2Recommendations(ctx)...)
 	out = append(out, a.ebsRecommendations(ctx)...)
 	out = append(out, a.costAnomalies(ctx)...)
+	// Trusted Advisor is optional — gated behind a Business / Enterprise
+	// support plan. When the caller has it, TA adds security, fault
+	// tolerance, and service-limit checks that Compute Optimizer and
+	// Cost Anomaly Detection don't cover. SubscriptionRequiredException
+	// on non-Business accounts falls through as nil, so users who don't
+	// pay for support see exactly the same Compute Optimizer output as
+	// before.
+	out = append(out, a.trustedAdvisorRecs(ctx)...)
 	return out, nil
 }
 
@@ -228,6 +236,96 @@ func (a *AWS) costAnomalies(ctx context.Context) []provider.Recommendation {
 		})
 	}
 	return recs
+}
+
+// trustedAdvisorRecs queries every flagged check from Trusted Advisor
+// and turns them into normalised provider.Recommendation entries.
+// Requires Business / Enterprise support and the support API endpoint
+// (which only lives in us-east-1 — callers in other regions still need
+// to hit that endpoint explicitly, which the CLI handles when the
+// --region flag is set).
+//
+// We cap the number of checks we pull by only describing *flagged*
+// checks (status != "ok"), so a healthy account pays for one
+// describe-trusted-advisor-checks call and nothing else.
+func (a *AWS) trustedAdvisorRecs(ctx context.Context) []provider.Recommendation {
+	checks, err := a.aws.Run(ctx,
+		"support", "describe-trusted-advisor-checks",
+		"--language", "en",
+		"--region", "us-east-1",
+		"--output", "json",
+	)
+	if err != nil {
+		// SubscriptionRequiredException on Basic / Developer plans; any
+		// other error (network, expired creds) is equally non-fatal.
+		return nil
+	}
+	var list struct {
+		Checks []struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Category string `json:"category"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(checks, &list); err != nil {
+		return nil
+	}
+
+	var out []provider.Recommendation
+	for _, check := range list.Checks {
+		res, err := a.aws.Run(ctx,
+			"support", "describe-trusted-advisor-check-result",
+			"--check-id", check.ID,
+			"--language", "en",
+			"--region", "us-east-1",
+			"--output", "json",
+		)
+		if err != nil {
+			continue
+		}
+		var env struct {
+			Result struct {
+				Status           string `json:"status"`
+				ResourcesSummary struct {
+					ResourcesFlagged int `json:"resourcesFlagged"`
+				} `json:"resourcesSummary"`
+				FlaggedResources []struct {
+					ResourceID string   `json:"resourceId"`
+					Metadata   []string `json:"metadata"`
+					Region     string   `json:"region"`
+				} `json:"flaggedResources"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(res, &env); err != nil {
+			continue
+		}
+		// "ok" checks (everything's fine) and checks with zero flagged
+		// resources add no signal; drop them so the list stays focused.
+		if strings.EqualFold(env.Result.Status, "ok") || env.Result.ResourcesSummary.ResourcesFlagged == 0 {
+			continue
+		}
+		impact := "Medium"
+		if strings.EqualFold(env.Result.Status, "error") {
+			impact = "High"
+		}
+		// One recommendation per check rather than per flagged resource
+		// — otherwise a single "low-utilisation EC2" check could
+		// produce 50 rows and drown out everything else. Users can drill
+		// into the console for the full per-resource breakdown.
+		first := ""
+		if len(env.Result.FlaggedResources) > 0 {
+			first = env.Result.FlaggedResources[0].ResourceID
+		}
+		out = append(out, provider.Recommendation{
+			Category:     strings.Title(strings.ToLower(check.Category)), // "fault_tolerance" → "Fault_Tolerance"
+			Impact:       impact,
+			Problem:      fmt.Sprintf("%s: %d resource(s) flagged", check.Name, env.Result.ResourcesSummary.ResourcesFlagged),
+			Solution:     "Open Trusted Advisor in the console for the flagged-resource breakdown and remediation steps.",
+			ImpactedName: first,
+			ImpactedType: "trusted-advisor:" + check.ID,
+		})
+	}
+	return out
 }
 
 func anomalyImpactBadge(delta float64) string {

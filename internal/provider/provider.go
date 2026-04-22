@@ -159,6 +159,30 @@ type BillingSummarer interface {
 	BillingSummary(ctx context.Context) (BillingScope, error)
 }
 
+// HealthEvent is a single active incident — service issue, planned
+// maintenance, or health advisory — affecting the caller's scope.
+// Normalised across clouds so the TUI overlay renders uniformly.
+type HealthEvent struct {
+	ID        string `json:"id,omitempty"`
+	Title     string `json:"title"`
+	Level     string `json:"level"`            // "incident" | "maintenance" | "advisory"
+	Status    string `json:"status,omitempty"` // "Active" | "Resolved" etc.
+	Service   string `json:"service,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Scope     string `json:"scope,omitempty"` // subscription / account / project id
+	StartTime string `json:"startTime,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+}
+
+// HealthEventer is an optional capability surfacing Service Health /
+// incident feeds. Cloud vendors publish these differently — Azure via
+// Microsoft.ResourceHealth/events, AWS via AWS Health API, GCP via
+// Personalized Service Health — so each provider normalises into
+// HealthEvent on behalf of the UI.
+type HealthEventer interface {
+	HealthEvents(ctx context.Context) ([]HealthEvent, error)
+}
+
 // PIMRole is a single PIM-eligible role assignment. Providers that support
 // Privileged Identity Management (or equivalent JIT elevation) implement PIMer.
 type PIMRole struct {

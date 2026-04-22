@@ -24,6 +24,7 @@ type Map struct {
 	Tenant    key.Binding
 	Lock      key.Binding
 	Login     key.Binding
+	Health    key.Binding
 	Select    key.Binding
 	SelectAll key.Binding
 	ClearSel  key.Binding
@@ -53,6 +54,7 @@ func Default() Map {
 		Tenant:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tenant")),
 		Lock:      key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "lock")),
 		Login:     key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "login")),
+		Health:    key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "health")),
 		Select:    key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "select")),
 		SelectAll: key.NewBinding(key.WithKeys("["), key.WithHelp("[", "select all")),
 		ClearSel:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "clear sel")),
