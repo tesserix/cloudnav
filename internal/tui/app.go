@@ -1526,7 +1526,7 @@ func (m *model) metricsView() string {
 		mn, mx, last := seriesStats(mm.Points)
 		unit := mm.Unit
 		if unit == "" {
-			unit = "—"
+			unit = emDash
 		}
 		lines = append(lines, fmt.Sprintf("  %-30s  %s  min %8.2f  max %8.2f  last %8.2f %s",
 			shorten(mm.Name, 30), sparkline(mm.Points), mn, mx, last, unit))
@@ -3340,11 +3340,11 @@ func (m *model) healthView() string {
 		badge := healthEventBadge(e.Level)
 		region := e.Region
 		if region == "" {
-			region = "—"
+			region = emDash
 		}
 		service := e.Service
 		if service == "" {
-			service = "—"
+			service = emDash
 		}
 		title := shorten(e.Title, 60)
 		line := fmt.Sprintf("%s  %-22s  %-18s  %s", badge, shorten(service, 22), shorten(region, 18), title)
