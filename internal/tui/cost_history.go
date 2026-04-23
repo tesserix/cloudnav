@@ -359,109 +359,155 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 	return joined
 }
 
-// renderBrailleChart draws a high-resolution line chart on a braille
-// canvas — each terminal cell holds a 2×4 dot grid so connected line
-// segments actually look connected. Anchors are placed at each data
-// point and Bresenham fills the path between them; month-boundary
-// colouring is applied per-segment so the user can see when spend
-// stepped up or down.
+// renderBrailleChart draws the cost chart as an area series: each
+// column gets one character — ╱ rising, ╲ falling, ─ flat — in the
+// month's trend colour, with ░ shaded fill beneath the line. This
+// reads the same way a stock-ticker area chart does: the line shows
+// *direction*, the fill shows *magnitude*, and the colour shows
+// *month-over-month* movement. Kept under the "braille" name to avoid
+// churn in call sites; the visual is simply better than pure dots.
 func renderBrailleChart(points []provider.CostHistoryPoint, months []provider.CostMonth, bucket provider.CostBucket, width, height int, currency string) string {
 	if len(points) == 0 || width < 20 || height < 6 {
 		return ""
 	}
 	const gutterW = 8
-	plotW := width - gutterW - 1 // 1 for the │ axis
+	plotW := width - gutterW - 1
 	if plotW < 20 {
 		plotW = 20
 	}
-	// One terminal row of chart body + one baseline row + one label row
-	// sit inside `height`. Everything above is the plotted area.
 	plotH := height - 2
 	if plotH < 4 {
 		plotH = 4
 	}
 
-	// Work in braille sub-cell space: 2x wider, 4x taller.
-	subW := plotW * 2
-	subH := plotH * 4
-
-	// Y scaling. min / max with 5% headroom on top so the peak doesn't
-	// sit on the top row. A flat series renders slightly above the
-	// baseline so you can still see it as a line rather than nothing.
-	mn, mx := points[0].Amount, points[0].Amount
-	for _, p := range points {
-		if p.Amount < mn {
-			mn = p.Amount
+	// Resample the series into plotW columns. Averaging across the
+	// bucketed range gives a smoother line than nearest-neighbour and
+	// keeps spikes visible on long windows without the chart looking
+	// noisy on short ones.
+	n := len(points)
+	cols := make([]float64, plotW)
+	colDate := make([]time.Time, plotW)
+	for x := 0; x < plotW; x++ {
+		start := x * n / plotW
+		end := (x + 1) * n / plotW
+		if start == end && start < n {
+			end = start + 1
 		}
-		if p.Amount > mx {
-			mx = p.Amount
+		var sum float64
+		var cnt int
+		for i := start; i < end && i < n; i++ {
+			sum += points[i].Amount
+			cnt++
+		}
+		if cnt > 0 {
+			cols[x] = sum / float64(cnt)
+			colDate[x] = points[start].Date
+		} else if x > 0 {
+			cols[x] = cols[x-1]
+			colDate[x] = colDate[x-1]
 		}
 	}
-	if mx == mn {
-		if mx == 0 {
-			mx = 1
-		} else {
-			mx = mn + math.Abs(mn)*0.1
+
+	// Y scaling with 5% headroom so peaks don't touch the top row.
+	// Floor at 0 so the fill always anchors to the baseline — negative
+	// cost values aren't a thing for our use case and the chart reads
+	// backwards if they were.
+	mn, mx := cols[0], cols[0]
+	for _, v := range cols {
+		if v < mn {
+			mn = v
 		}
+		if v > mx {
+			mx = v
+		}
+	}
+	if mn > 0 {
+		mn = 0
+	}
+	if mx == mn {
+		mx = mn + 1
 	} else {
 		mx += (mx - mn) * 0.05
 	}
 
-	n := len(points)
-	anchorX := make([]int, n)
-	anchorY := make([]int, n)
-	anchorColor := make([]lipgloss.Style, n)
-	for i, p := range points {
-		if n == 1 {
-			anchorX[i] = subW / 2
-		} else {
-			anchorX[i] = i * (subW - 1) / (n - 1)
-		}
-		frac := (p.Amount - mn) / (mx - mn)
+	rowFor := make([]int, plotW)
+	colStyle := make([]lipgloss.Style, plotW)
+	for x, v := range cols {
+		frac := (v - mn) / (mx - mn)
 		if frac < 0 {
 			frac = 0
 		}
 		if frac > 1 {
 			frac = 1
 		}
-		anchorY[i] = int(math.Round(float64(subH-1) * (1 - frac)))
-		anchorColor[i] = colourForPoint(p.Date, months)
+		rowFor[x] = int(math.Round(float64(plotH-1) * (1 - frac)))
+		colStyle[x] = colourForPoint(colDate[x], months)
 	}
 
-	canvas := newBrailleCanvas(plotW, plotH)
-
-	// Connect consecutive anchors with a Bresenham line so the chart
-	// reads as a continuous stroke, not a row of dots.
-	for i := 1; i < n; i++ {
-		drawBrailleLine(canvas, anchorX[i-1], anchorY[i-1], anchorX[i], anchorY[i], anchorColor[i])
+	// Pre-compute the line character for each column based on the
+	// slope between the prior column and this one.
+	lineChar := make([]string, plotW)
+	for x := 0; x < plotW; x++ {
+		switch {
+		case x == 0:
+			lineChar[x] = "─"
+		case rowFor[x-1] == rowFor[x]:
+			lineChar[x] = "─"
+		case rowFor[x-1] > rowFor[x]:
+			// Previous point was lower on screen → line rises.
+			lineChar[x] = "╱"
+		default:
+			lineChar[x] = "╲"
+		}
 	}
-	// Emphasise the last-known value with a small marker at the most
-	// recent anchor — the "you are here" cue stock tickers use.
-	canvas.set(anchorX[n-1], anchorY[n-1], styles.AccentS.Bold(true))
 
-	// Compose rows with Y-axis labels + │ + canvas.
-	sym := currencySym(currency)
-	labelFor := func(row int) string {
-		frac := 1 - float64(row)/float64(plotH-1)
-		val := mn + frac*(mx-mn)
-		return fmt.Sprintf("%s%s", sym, compactAmount(val))
-	}
+	// Compose the rows. For each terminal (row, col):
+	//   - above the line: empty space
+	//   - on the line: the slope character in the column's trend colour
+	//   - below the line: ░ fill in a muted tint of the same colour so
+	//     the chart body reads like a filled area
+	fillStyle := styles.Help
 	var lines []string
 	for r := 0; r < plotH; r++ {
+		var body strings.Builder
+		for x := 0; x < plotW; x++ {
+			switch {
+			case r < rowFor[x]:
+				body.WriteByte(' ')
+			case r == rowFor[x]:
+				body.WriteString(colStyle[x].Bold(true).Render(lineChar[x]))
+			default:
+				body.WriteString(fillStyle.Render("░"))
+			}
+		}
+
+		// Y-axis label + │ + plotted row. Five labels spaced over the
+		// chart height give enough context without crowding the gutter.
 		showLabel := r == 0 || r == plotH-1 || r == plotH/2 || r == plotH/4 || r == 3*plotH/4
 		gutter := strings.Repeat(" ", gutterW)
 		if showLabel {
-			lbl := labelFor(r)
+			sym := currencySym(currency)
+			frac := 1 - float64(r)/float64(plotH-1)
+			val := mn + frac*(mx-mn)
+			lbl := fmt.Sprintf("%s%s", sym, compactAmount(val))
 			if len(lbl) > gutterW-1 {
 				lbl = lbl[:gutterW-1]
 			}
 			gutter = styles.Help.Render(fmt.Sprintf("%*s ", gutterW-1, lbl))
 		}
 		axis := styles.Help.Render("│")
-		lines = append(lines, gutter+axis+canvas.renderRow(r))
+		lines = append(lines, gutter+axis+body.String())
 	}
 
-	// Baseline + tick row + labels.
+	// X-axis baseline + tick labels.
+	anchorX := make([]int, n)
+	for i := range points {
+		if n == 1 {
+			anchorX[i] = plotW / 2
+		} else {
+			anchorX[i] = i * (plotW - 1) / (n - 1)
+		}
+	}
 	gutter := strings.Repeat(" ", gutterW)
 	baseline := gutter + styles.Help.Render("└"+strings.Repeat("─", plotW))
 	lines = append(lines, baseline)
@@ -517,7 +563,7 @@ func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, bucket provi
 	case provider.BucketMonth:
 		// One label per data point is achievable on 1Y (~12 points).
 		for i, p := range points {
-			x := anchorX[i] / 2 // sub-columns back to terminal cols
+			x := anchorX[i]
 			if x < nextOK {
 				continue
 			}
@@ -533,12 +579,12 @@ func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, bucket provi
 		sampleLabel := "Mon 31" // widest label shape; 6 chars
 		stride := len(sampleLabel) + 2
 		for i, p := range points {
-			x := anchorX[i] / 2
+			x := anchorX[i]
 			if x < nextOK {
 				continue
 			}
 			lbl := fmt.Sprintf("%s %d", p.Date.Format("Jan"), p.Date.Day())
-			if i == 0 || isMonthBoundary(points, i) || anchorX[i]/2 >= nextOK {
+			if i == 0 || isMonthBoundary(points, i) || anchorX[i] >= nextOK {
 				n := place(x, lbl)
 				if n > 0 {
 					nextOK = n + stride - len(lbl) - 1
@@ -609,128 +655,4 @@ func center(s string, width int) string {
 	}
 	pad := (width - wide) / 2
 	return strings.Repeat(" ", pad) + s
-}
-
-// ---------- braille canvas ----------
-
-// brailleCanvas is a simple off-screen buffer where each terminal cell
-// corresponds to 8 braille dot positions (2 wide × 4 tall). Setting a
-// sub-cell OR-s the matching bit into the cell's byte; rendering emits
-// one rune per cell at U+2800 + bits, preserving the per-cell style
-// most-recently written (good enough for single-line charts).
-type brailleCanvas struct {
-	cols, rows int
-	bits       []byte
-	style      []lipgloss.Style
-	set0       []bool
-}
-
-func newBrailleCanvas(cols, rows int) *brailleCanvas {
-	return &brailleCanvas{
-		cols:  cols,
-		rows:  rows,
-		bits:  make([]byte, cols*rows),
-		style: make([]lipgloss.Style, cols*rows),
-		set0:  make([]bool, cols*rows),
-	}
-}
-
-// set turns on the sub-cell at (subX, subY) in braille-dot space and
-// records the style to render the whole cell with. Out-of-bounds
-// coordinates are silently dropped so line-drawing can overshoot.
-func (c *brailleCanvas) set(subX, subY int, style lipgloss.Style) {
-	if subX < 0 || subY < 0 {
-		return
-	}
-	cellX := subX / 2
-	cellY := subY / 4
-	if cellX >= c.cols || cellY >= c.rows {
-		return
-	}
-	dx := subX % 2
-	dy := subY % 4
-	bit := brailleBit(dx, dy)
-	idx := cellY*c.cols + cellX
-	c.bits[idx] |= bit
-	c.style[idx] = style
-	c.set0[idx] = true
-}
-
-func (c *brailleCanvas) renderRow(y int) string {
-	var sb strings.Builder
-	for x := 0; x < c.cols; x++ {
-		idx := y*c.cols + x
-		if !c.set0[idx] {
-			sb.WriteByte(' ')
-			continue
-		}
-		r := rune(0x2800 + int(c.bits[idx]))
-		sb.WriteString(c.style[idx].Render(string(r)))
-	}
-	return sb.String()
-}
-
-// brailleBit maps a (dx, dy) sub-cell coordinate to the Unicode
-// 8-dot-braille bit. The mapping is fixed by Unicode — dots 1-3 are
-// the left column top-to-bottom-but-not-the-bottom, dots 4-6 the
-// right, dots 7-8 the very-bottom row.
-func brailleBit(dx, dy int) byte {
-	switch {
-	case dx == 0 && dy == 0:
-		return 0x01
-	case dx == 0 && dy == 1:
-		return 0x02
-	case dx == 0 && dy == 2:
-		return 0x04
-	case dx == 0 && dy == 3:
-		return 0x40
-	case dx == 1 && dy == 0:
-		return 0x08
-	case dx == 1 && dy == 1:
-		return 0x10
-	case dx == 1 && dy == 2:
-		return 0x20
-	case dx == 1 && dy == 3:
-		return 0x80
-	}
-	return 0
-}
-
-// drawBrailleLine walks the Bresenham path between two sub-cell points
-// and turns on every dot along the way. Each step carries the caller's
-// style — adjacent segments with different colours produce a crisp
-// transition rather than a faded middle.
-func drawBrailleLine(c *brailleCanvas, x0, y0, x1, y1 int, style lipgloss.Style) {
-	dx := absInt(x1 - x0)
-	dy := -absInt(y1 - y0)
-	sx, sy := 1, 1
-	if x0 > x1 {
-		sx = -1
-	}
-	if y0 > y1 {
-		sy = -1
-	}
-	err := dx + dy
-	for {
-		c.set(x0, y0, style)
-		if x0 == x1 && y0 == y1 {
-			return
-		}
-		e2 := 2 * err
-		if e2 >= dy {
-			err += dy
-			x0 += sx
-		}
-		if e2 <= dx {
-			err += dx
-			y0 += sy
-		}
-	}
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
