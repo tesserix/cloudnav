@@ -30,6 +30,8 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider/gcp"
 	"github.com/tesserix/cloudnav/internal/tui/keys"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
+	"github.com/tesserix/cloudnav/internal/updatecheck"
+	"github.com/tesserix/cloudnav/internal/version"
 )
 
 const (
@@ -74,6 +76,17 @@ type (
 	metricsLoadedMsg struct {
 		data  []provider.Metric
 		label string
+	}
+
+	costHistoryLoadedMsg struct {
+		history provider.CostHistory
+		opts    provider.CostHistoryOptions
+	}
+	updateCheckMsg   struct{ result updatecheck.Result }
+	upgradeStartMsg  struct{}
+	upgradeResultMsg struct {
+		summary string
+		err     error
 	}
 
 	advisorLoadedMsg struct {
@@ -201,7 +214,26 @@ type model struct {
 	metricsMode     bool
 	metricsData     []provider.Metric
 	metricsLabel    string // "resource-name · type" for the overlay header
-	drilling        bool   // a drill-level load is in flight; block navigation
+	// Cost-history overlay (`$` key). Daily spend line chart over the last
+	// stock-ticker style with W / M / 3M / 6M / Y window presets and
+	// month-over-month delta annotations, for providers that implement
+	// CostHistoryer.
+	costHistMode    bool
+	costHistData    provider.CostHistory
+	costHistOpts    provider.CostHistoryOptions // currently-selected window + bucket
+	costHistLoading bool
+	// Upgrade prompt (`U` key). Populated from a background update check
+	// on startup so the top-right "↑ update available" badge can
+	// highlight when a newer tag is published on GitHub.
+	updateAvailable bool
+	latestVersion   string
+	latestURL       string
+	upgradeMode     bool  // confirmation overlay visible
+	upgradePlan     updatecheck.UpgradePlan
+	upgradeRunning  bool
+	upgradeResult   string
+	upgradeErr      error
+	drilling        bool // a drill-level load is in flight; block navigation
 	categoryFilter  string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
 	deleteTargets   []provider.Node
@@ -327,7 +359,7 @@ func buildProviders(cfg *config.Config) []provider.Provider {
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.checkLogins())
+	return tea.Batch(m.spinner.Tick, m.checkLogins(), m.loadUpdateCheck())
 }
 
 // checkLogins pings each provider's LoggedIn() concurrently and reports back
@@ -405,6 +437,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.billingMode {
 			return m.updateBilling(msg)
+		}
+		if m.costHistMode {
+			return m.updateCostHistory(msg)
+		}
+		if m.upgradeMode {
+			return m.updateUpgrade(msg)
 		}
 		if m.detailMode {
 			if msg.String() == keyEsc || msg.String() == "q" {
@@ -518,6 +556,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadMetrics()
 		case key.Matches(msg, m.keys.Billing):
 			return m, m.loadBilling()
+		case key.Matches(msg, m.keys.CostHistory):
+			return m, m.loadCostHistory(defaultCostWindow())
+		case key.Matches(msg, m.keys.Upgrade):
+			return m, m.openUpgrade()
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -679,6 +721,39 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metricsLabel = msg.label
 		m.metricsMode = true
 		m.status = fmt.Sprintf("%d metric series for %s", len(msg.data), msg.label)
+		return m, nil
+
+	case costHistoryLoadedMsg:
+		m.loading = false
+		m.costHistLoading = false
+		m.err = nil
+		m.costHistData = msg.history
+		m.costHistOpts = msg.opts
+		m.costHistMode = true
+		m.status = fmt.Sprintf("cost history · %s · %d point(s)", windowLabel(msg.opts), len(msg.history.Series.Points))
+		return m, nil
+
+	case updateCheckMsg:
+		m.updateAvailable = msg.result.Available
+		m.latestVersion = msg.result.Latest
+		m.latestURL = msg.result.URL
+		return m, nil
+
+	case upgradeStartMsg:
+		m.upgradeRunning = true
+		m.status = "upgrading cloudnav..."
+		return m, m.runUpgrade()
+
+	case upgradeResultMsg:
+		m.upgradeRunning = false
+		m.upgradeResult = msg.summary
+		m.upgradeErr = msg.err
+		if msg.err == nil {
+			m.updateAvailable = false
+			m.status = "✓ upgrade complete — restart cloudnav to use " + m.latestVersion
+		} else {
+			m.status = "upgrade failed"
+		}
 		return m, nil
 
 	case pimActivatedMsg:
@@ -2845,6 +2920,12 @@ func (m *model) View() string {
 	if m.billingMode {
 		return m.billingView()
 	}
+	if m.costHistMode {
+		return m.costHistoryView()
+	}
+	if m.upgradeMode {
+		return m.upgradeView()
+	}
 	if m.paletteMode {
 		return m.paletteView()
 	}
@@ -3917,7 +3998,7 @@ func (m *model) headerView() string {
 	path := []string{styles.Title.Render("cloudnav")}
 	path = append(path, breadcrumbs(m.stack)...)
 	crumb := strings.Join(path, styles.CrumbSep)
-	right := styles.Help.Render("^_^")
+	right := m.updateIndicator()
 	if m.width == 0 {
 		return crumb + "   " + right + "\n" + m.keybar() + "\n"
 	}
@@ -3927,6 +4008,27 @@ func (m *model) headerView() string {
 	}
 	top := crumb + strings.Repeat(" ", gap) + right
 	return top + "\n" + m.keybar() + "\n"
+}
+
+// updateIndicator renders the top-right badge: a highlighted "↑ update
+// available" prompt when a newer release is on GitHub, or a quiet state
+// showing the current version otherwise. The highlighted state uses
+// WarnS so it visually announces itself without being loud enough to
+// pull attention away from the breadcrumb trail.
+func (m *model) updateIndicator() string {
+	if m.updateAvailable {
+		tag := m.latestVersion
+		if tag == "" {
+			tag = "new"
+		}
+		badge := styles.WarnS.Bold(true).Render("↑ update available")
+		return badge + " " + styles.Help.Render(tag+" · press U")
+	}
+	v := version.Version
+	if v == "dev" || v == "" {
+		return styles.Help.Render("^_^")
+	}
+	return styles.Help.Render(v + " ^_^")
 }
 
 func (m *model) keybar() string {
@@ -3947,6 +4049,12 @@ func (m *model) keybar() string {
 	}
 	if _, ok := m.active.(provider.Billing); ok && m.active != nil {
 		pairs = append(pairs, pair{"B", "billing"})
+	}
+	if _, ok := m.active.(provider.CostHistoryer); ok && m.active != nil {
+		pairs = append(pairs, pair{"$", "cost chart"})
+	}
+	if m.updateAvailable {
+		pairs = append(pairs, pair{"U", "upgrade"})
 	}
 	if m.atCloudLevel() {
 		pairs = append(pairs, pair{"I", "login"})
@@ -4568,6 +4676,8 @@ func (m *model) helpView() string {
 		styles.Header.Render("Health") + " H service-health overlay — active incidents / maintenance / advisories",
 		styles.Header.Render("Metrics") + " M metrics on a resource — last 60 min sparklines (Azure Monitor, CloudWatch, GCP Monitoring)",
 		styles.Header.Render("Billing") + " B portfolio view — per-sub (Azure), per-service (AWS), per-project (GCP)",
+		styles.Header.Render("Costs") + "   $ cost-history chart — last 3 / 6 months with MoM deltas (Azure)",
+		styles.Header.Render("Upgrade") + " U upgrade cloudnav when a newer release is available on GitHub",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",
 		styles.Header.Render("Misc") + "   x exec   ? help   q quit",

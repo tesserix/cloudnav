@@ -4,7 +4,10 @@
 // of Node values.
 package provider
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Kind string
 
@@ -157,6 +160,88 @@ type BillingScope struct {
 // cell and budget indicator.
 type BillingSummarer interface {
 	BillingSummary(ctx context.Context) (BillingScope, error)
+}
+
+// CostHistoryPoint is one day's total cost in a CostSeries.
+type CostHistoryPoint struct {
+	Date   time.Time `json:"date"`
+	Amount float64   `json:"amount"`
+}
+
+// CostMonth is the aggregated total for a calendar month across the caller's
+// scope. Pre-computed by the provider so the TUI can render MoM deltas
+// without re-bucketing.
+type CostMonth struct {
+	Year  int        `json:"year"`
+	Month time.Month `json:"month"`
+	Total float64    `json:"total"`
+}
+
+// CostSeries is a contiguous daily time-series of cost totals for the
+// caller's entire scope (subscriptions / account / billing-account).
+// Points are chronologically ordered, oldest first. Gaps should be filled
+// with zero so the renderer can draw a continuous line.
+type CostSeries struct {
+	Label    string             `json:"label"`
+	Currency string             `json:"currency"`
+	Points   []CostHistoryPoint `json:"points"`
+}
+
+// CostHistory is the cloud-agnostic payload powering the `$` cost overlay.
+// Series holds the chart points; Months is an independent month-bucketed
+// summary the TUI uses for the compare-strip above the chart, regardless
+// of how Series itself is bucketed.
+type CostHistory struct {
+	Scope    string      `json:"scope"`
+	Currency string      `json:"currency"`
+	Series   CostSeries  `json:"series"`
+	Months   []CostMonth `json:"months"`
+	// Bucket reflects the granularity of Series.Points. Renderers use
+	// this to pick X-axis labels (days of week vs dates vs month names).
+	Bucket CostBucket `json:"bucket,omitempty"`
+	// Window is the requested window in days; kept around so the UI can
+	// label the overlay ("last 7d", "last 12m") without re-computing.
+	WindowDays int `json:"windowDays,omitempty"`
+	// Note is an optional hint surfaced in the overlay footer when the
+	// provider couldn't resolve part of the history (e.g. one sub returned
+	// AuthorizationFailed). Renders as muted text.
+	Note string `json:"note,omitempty"`
+}
+
+// CostBucket controls how CostHistory aggregates its points. Providers
+// respect the bucket when they can; they fall back to the closest
+// available granularity (e.g. Azure Cost Management has no sub-daily
+// bucket, so BucketHour falls back to BucketDay).
+type CostBucket string
+
+const (
+	// BucketDay is the default — one point per calendar day. Good for
+	// windows up to a few months; beyond that the point density overwhelms
+	// the chart and BucketWeek or BucketMonth reads better.
+	BucketDay CostBucket = "day"
+	// BucketWeek buckets points into ISO weeks.
+	BucketWeek CostBucket = "week"
+	// BucketMonth buckets points into calendar months. Preferred for
+	// year-plus windows so a year of data stays within ~12 points.
+	BucketMonth CostBucket = "month"
+)
+
+// CostHistoryOptions is the request shape for the `$` cost-history
+// overlay. Days is the window length in days ending at "now"; Bucket
+// decides how the provider aggregates points before handing them back.
+// Zero-value means {Days: 90, Bucket: BucketDay} (last 3 months daily).
+type CostHistoryOptions struct {
+	Days   int
+	Bucket CostBucket
+}
+
+// CostHistoryer is an optional capability surfacing a cost time-series
+// over a configurable window. Drives the `$` overlay and lets the TUI
+// offer W / M / 3M / 6M / Y presets that stock-charting tools pioneered.
+// Providers that don't implement it leave the overlay disabled; the
+// TUI shows a muted hint.
+type CostHistoryer interface {
+	CostHistory(ctx context.Context, opts CostHistoryOptions) (CostHistory, error)
 }
 
 // HealthEvent is a single active incident — service issue, planned
