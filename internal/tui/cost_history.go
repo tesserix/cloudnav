@@ -309,11 +309,10 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 		amount := fmt.Sprintf("%s%s", sym, compactAmount(mo.Total))
 		var delta string
 		var style lipgloss.Style
-		switch {
-		case i == 0:
+		if i == 0 {
 			delta = "baseline"
 			style = styles.Help
-		default:
+		} else {
 			prev := months[i-1].Total
 			if prev <= 0 {
 				delta = "new"
@@ -466,7 +465,7 @@ func renderBrailleChart(points []provider.CostHistoryPoint, months []provider.Co
 	gutter := strings.Repeat(" ", gutterW)
 	baseline := gutter + styles.Help.Render("└"+strings.Repeat("─", plotW))
 	lines = append(lines, baseline)
-	lines = append(lines, gutter+" "+renderXAxis(points, anchorX, months, bucket, plotW))
+	lines = append(lines, gutter+" "+renderXAxis(points, anchorX, bucket, plotW))
 
 	return strings.Join(lines, "\n")
 }
@@ -498,7 +497,7 @@ func colourForPoint(date time.Time, months []provider.CostMonth) lipgloss.Style 
 // renderXAxis places labels along the X axis. Strategy depends on the
 // series bucket; in every case we advance by a "next-legal-position"
 // cursor so two labels never overlap.
-func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, months []provider.CostMonth, bucket provider.CostBucket, width int) string {
+func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, bucket provider.CostBucket, width int) string {
 	row := make([]rune, width)
 	for i := range row {
 		row[i] = ' '
