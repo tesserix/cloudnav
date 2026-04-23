@@ -563,8 +563,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.CostHistory):
 			return m, m.loadCostHistory(defaultCostWindow())
 		case key.Matches(msg, m.keys.Upgrade):
-			m.openUpgrade()
-			return m, nil
+			return m, m.openUpgrade()
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -739,9 +738,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case updateCheckMsg:
+		wasChecking := strings.HasPrefix(m.status, "checking GitHub")
 		m.updateAvailable = msg.result.Available
 		m.latestVersion = msg.result.Latest
 		m.latestURL = msg.result.URL
+		// If the user explicitly asked for a check via the U shortcut,
+		// close the loop: open the upgrade confirm when something is
+		// available, otherwise tell them we looked and they're current.
+		if wasChecking {
+			if msg.result.Available {
+				return m, m.openUpgrade()
+			}
+			if msg.result.Err != nil {
+				m.status = "couldn't reach GitHub — " + firstErrLine(msg.result.Err)
+			} else {
+				m.status = "already on the latest release (" + version.Version + ")"
+			}
+		}
 		return m, nil
 
 	case upgradeStartMsg:

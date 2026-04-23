@@ -26,22 +26,21 @@ func (m *model) loadUpdateCheck() tea.Cmd {
 }
 
 // openUpgrade opens the upgrade confirmation overlay. When no newer
-// release has been detected the key silently does nothing so users
-// don't end up in a dead-end modal; instead the status line explains.
-func (m *model) openUpgrade() {
+// release has been detected the key kicks off a fresh GitHub check
+// (rather than sitting behind a potentially-stale result) and updates
+// the status line so the user knows we looked, even if the answer is
+// "already on the latest tag".
+func (m *model) openUpgrade() tea.Cmd {
 	if !m.updateAvailable {
-		if m.latestVersion != "" {
-			m.status = "cloudnav is up to date (" + version.Version + ")"
-		} else {
-			m.status = "no release info yet — try again in a few seconds"
-		}
-		return
+		m.status = "checking GitHub for a newer release..."
+		return m.loadUpdateCheck()
 	}
 	m.upgradePlan = updatecheck.PlanUpgrade(m.latestVersion, m.latestURL)
 	m.upgradeResult = ""
 	m.upgradeErr = nil
 	m.upgradeRunning = false
 	m.upgradeMode = true
+	return nil
 }
 
 // updateUpgrade handles keys inside the upgrade confirmation overlay.

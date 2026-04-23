@@ -24,11 +24,11 @@ import (
 // time with -ldflags -X.
 var Repo = "tesserix/cloudnav"
 
-// cacheTTL bounds how long a successful result is reused without
-// re-hitting GitHub. Six hours is a decent middle ground — long enough
-// to keep startup quiet on repeat runs, short enough that a fresh
-// release surfaces the same day.
-const cacheTTL = 6 * time.Hour
+// cacheStaleAfter bounds how long a stale cache entry stays useful as a
+// *fallback* when GitHub itself is unreachable. The cache isn't used to
+// short-circuit the live call any more — every startup re-verifies with
+// GitHub — so this only has to be long enough to cover an offline day.
+const cacheStaleAfter = 24 * time.Hour
 
 // Result is the outcome of a single update check. Zero-value (Latest
 // empty) means "couldn't resolve" — the caller should render the quiet
@@ -50,21 +50,23 @@ type cachedPayload struct {
 }
 
 // Check returns the newest published release tag compared against
-// current. The context bounds the network call; callers typically pass
-// a 3-5 second timeout so a flaky connection doesn't delay startup.
+// current. Always hits GitHub first so a newly-cut release is detected
+// the next time cloudnav starts; the disk cache is only consulted as a
+// fallback when the network call fails (flight mode, 503, API rate
+// limit) so the header doesn't silently go quiet in offline situations.
 func Check(ctx context.Context, current string) Result {
 	if strings.TrimSpace(current) == "" {
 		current = "dev"
 	}
+	latest, url, publishedAt, err := fetchLatest(ctx)
+	if err == nil {
+		writeCache(cachedPayload{FetchedAt: time.Now(), Latest: latest, URL: url, ReleaseAt: publishedAt})
+		return finalise(current, latest, url, publishedAt, nil)
+	}
 	if cached, ok := readCache(); ok {
 		return finalise(current, cached.Latest, cached.URL, cached.ReleaseAt, nil)
 	}
-	latest, url, publishedAt, err := fetchLatest(ctx)
-	if err != nil {
-		return Result{Current: current, Err: err}
-	}
-	writeCache(cachedPayload{FetchedAt: time.Now(), Latest: latest, URL: url, ReleaseAt: publishedAt})
-	return finalise(current, latest, url, publishedAt, nil)
+	return Result{Current: current, Err: err}
 }
 
 func finalise(current, latest, url string, releaseAt time.Time, err error) Result {
@@ -198,7 +200,7 @@ func readCache() (cachedPayload, bool) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return cachedPayload{}, false
 	}
-	if time.Since(out.FetchedAt) > cacheTTL {
+	if time.Since(out.FetchedAt) > cacheStaleAfter {
 		return cachedPayload{}, false
 	}
 	return out, true
