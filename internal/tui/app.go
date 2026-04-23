@@ -1636,8 +1636,9 @@ func (m *model) updateMetrics(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // series at a glance without needing a full chart.
 func (m *model) metricsView() string {
 	header := styles.Title.Render("metrics") + "  " + styles.Help.Render(m.metricsLabel)
+	box := fullScreenBox(m.width, m.height)
 	if len(m.metricsData) == 0 {
-		return styles.Box.Render(strings.Join([]string{
+		return box.Render(strings.Join([]string{
 			header,
 			"",
 			styles.Help.Render("  no default metrics for this resource type yet"),
@@ -1657,7 +1658,7 @@ func (m *model) metricsView() string {
 			shorten(mm.Name, 30), sparkline(mm.Points), mn, mx, last, unit))
 	}
 	lines = append(lines, "", styles.Help.Render("  last 60 min · 5 min bins · esc/M close"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 // sparkline renders a series as a row of Unicode block runes. Zero-length
@@ -2903,6 +2904,22 @@ func firstErrLine(err error) string {
 	return s
 }
 
+// fullScreenBox returns a rounded-border container sized to fill the
+// terminal. Width passed to lipgloss is the content width — padding (4)
+// and border (2) add on top — so content dimensions have to account for
+// that to avoid overflow.
+func fullScreenBox(width, height int) lipgloss.Style {
+	w := width - 6
+	if w < 40 {
+		w = 40
+	}
+	h := height - 4
+	if h < 10 {
+		h = 10
+	}
+	return styles.Box.Width(w).Height(h)
+}
+
 func (m *model) View() string {
 	if m.deleteMode {
 		return m.deleteConfirmView()
@@ -3088,8 +3105,9 @@ func (m *model) billingView() string {
 		return m.gcpBillingSetupView(header)
 	}
 
+	box := fullScreenBox(m.width, m.height)
 	if len(m.billingLines) == 0 {
-		return styles.Box.Render(strings.Join([]string{
+		return box.Render(strings.Join([]string{
 			header,
 			"",
 			styles.Help.Render("No billing data yet."),
@@ -3150,7 +3168,7 @@ func (m *model) billingView() string {
 		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(m.billingLines)-end)))
 	}
 	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/B close"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 // gcpExportLive reports whether the BQ billing-export table is already live
@@ -3194,7 +3212,7 @@ func (m *model) gcpBillingSetupView(header string) string {
 	lines = append(lines, fmt.Sprintf("  %d. wait a few hours for first export data to land, then press B again", stepNum(st)+1))
 	lines = append(lines, "")
 	lines = append(lines, styles.Help.Render("  o open console   esc/B close"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return fullScreenBox(m.width, m.height).Render(strings.Join(lines, "\n"))
 }
 
 func stepNum(st *gcp.BillingStatus) int {
@@ -3436,8 +3454,9 @@ func (m *model) updateHealth(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) healthView() string {
 	header := styles.Title.Render("service health") + "  " +
 		styles.Help.Render(fmt.Sprintf("%d active event(s)", len(m.healthEvents)))
+	box := fullScreenBox(m.width, m.height)
 	if len(m.healthEvents) == 0 {
-		return styles.Box.Render(strings.Join([]string{
+		return box.Render(strings.Join([]string{
 			header,
 			"",
 			styles.Good.Render("  🟢 all clear — no active incidents, maintenance, or advisories"),
@@ -3507,7 +3526,7 @@ func (m *model) healthView() string {
 		}
 	}
 	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/H close"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 // healthEventBadge colours a HealthEvent.Level for the overlay. Incidents
@@ -3536,8 +3555,9 @@ func (m *model) advisorView() string {
 		count = fmt.Sprintf("%d/%d for %s", len(filt), len(m.advisorRecs), m.advisorName)
 	}
 	header := styles.Title.Render("Azure Advisor") + "  " + styles.Help.Render(count)
+	box := fullScreenBox(m.width, m.height)
 	if len(m.advisorRecs) == 0 {
-		return styles.Box.Render(strings.Join([]string{
+		return box.Render(strings.Join([]string{
 			header,
 			"",
 			"No recommendations at this scope.",
@@ -3562,7 +3582,7 @@ func (m *model) advisorView() string {
 			"",
 			styles.Help.Render("  /, type, esc   |   o portal   esc/A close"),
 		)
-		return styles.Box.Render(strings.Join(lines, "\n"))
+		return box.Render(strings.Join(lines, "\n"))
 	}
 
 	// Render the list on top, full detail for the cursor row below.
@@ -3608,7 +3628,7 @@ func (m *model) advisorView() string {
 		}
 	}
 	lines = append(lines, "", styles.Help.Render("↑↓/jk move   / filter   o portal   esc/A close"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 // cloudRowStatus returns (status, hint) for the cloud-list view. status says
@@ -3880,7 +3900,7 @@ func (m *model) pimView() string {
 			styles.Help.Render("  ↑↓ / jk move  / filter  a activate  +/- duration  esc close"),
 		)
 	}
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	return fullScreenBox(m.width, m.height).Render(strings.Join(lines, "\n"))
 }
 
 func (m *model) paletteView() string {

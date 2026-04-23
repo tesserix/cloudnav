@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,13 +32,19 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 		bucket = provider.BucketDay
 	}
 
-	out, err := a.az.Run(ctx, "account", "list", "-o", "json")
-	if err != nil {
-		return provider.CostHistory{}, fmt.Errorf("azure cost history: list subscriptions: %w", err)
-	}
 	var subs []subJSON
-	if err := json.Unmarshal(out, &subs); err != nil {
-		return provider.CostHistory{}, fmt.Errorf("azure cost history: parse subs: %w", err)
+	if opts.Scope != "" {
+		// Single-subscription scope — skip the CLI call, just trust what
+		// the caller handed us. Keeps the "I know which sub" path cheap.
+		subs = []subJSON{{ID: opts.Scope, Name: opts.ScopeLabel}}
+	} else {
+		out, err := a.az.Run(ctx, "account", "list", "-o", "json")
+		if err != nil {
+			return provider.CostHistory{}, fmt.Errorf("azure cost history: list subscriptions: %w", err)
+		}
+		if err := json.Unmarshal(out, &subs); err != nil {
+			return provider.CostHistory{}, fmt.Errorf("azure cost history: parse subs: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -91,9 +98,13 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 	currency := ""
 	failed := 0
 	succeeded := 0
+	authDenied := 0
 	for r := range results {
 		if r.err != nil {
 			failed++
+			if isAuthDenied(r.err) {
+				authDenied++
+			}
 			continue
 		}
 		succeeded++
@@ -127,17 +138,38 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 		seriesPoints = dailyPoints
 	}
 
+	scopeLabel := "azure · all subscriptions"
+	seriesLabel := fmt.Sprintf("azure · %d subscription(s)", succeeded)
+	if opts.Scope != "" {
+		name := opts.ScopeLabel
+		if name == "" {
+			name = opts.Scope
+		}
+		scopeLabel = "azure · " + name
+		seriesLabel = name
+	}
+
 	history := provider.CostHistory{
-		Scope:    "azure · all subscriptions",
+		Scope:    scopeLabel,
 		Currency: currency,
 		Series: provider.CostSeries{
-			Label:    fmt.Sprintf("azure · %d subscription(s)", succeeded),
+			Label:    seriesLabel,
 			Currency: currency,
 			Points:   seriesPoints,
 		},
 		Months:     aggregateMonths(dailyPoints),
 		Bucket:     bucket,
 		WindowDays: days,
+	}
+	// AccessDenied drives the "press P to jump to PIM" footer. For a
+	// single-scope query we know definitively; for a fan-out it's only
+	// meaningful when EVERY sub failed with an auth error (otherwise the
+	// chart has real data and the footer would confuse more than help).
+	if opts.Scope != "" && authDenied > 0 && succeeded == 0 {
+		history.AccessDenied = true
+	}
+	if opts.Scope == "" && succeeded == 0 && authDenied > 0 {
+		history.AccessDenied = true
 	}
 	if failed > 0 {
 		history.Note = fmt.Sprintf("%d subscription(s) omitted (no cost-read access)", failed)
@@ -324,6 +356,22 @@ func bucketByWeek(points []provider.CostHistoryPoint) []provider.CostHistoryPoin
 		out = append(out, *totals[k])
 	}
 	return out
+}
+
+// isAuthDenied matches the usual spellings Azure uses for permission
+// failures so the overlay can offer a PIM elevation hand-off instead of
+// a generic "nothing here" message.
+func isAuthDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, kw := range []string{"AuthorizationFailed", "Forbidden", "does not have authorization", "403"} {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // Ensure Azure implements CostHistoryer at compile time.

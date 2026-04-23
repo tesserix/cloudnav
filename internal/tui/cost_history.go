@@ -37,10 +37,7 @@ func costHistoryPresets() []costHistPreset {
 	}
 }
 
-// defaultCostWindow is the shape the `$` shortcut opens with when the
-// user hasn't yet picked a window. Matches the old behaviour (last 3
-// months, daily buckets) so people who learned the overlay before this
-// change don't notice anything.
+// defaultCostWindow is the shape the `$` shortcut opens with.
 func defaultCostWindow() provider.CostHistoryOptions {
 	return provider.CostHistoryOptions{Days: 90, Bucket: provider.BucketDay}
 }
@@ -62,112 +59,223 @@ func windowLabel(opts provider.CostHistoryOptions) string {
 	}
 }
 
-// loadCostHistory fetches a cost time-series for the requested window
-// and opens (or refreshes) the overlay with the result. Re-running
-// while the overlay is already visible is supported: the old view
-// stays put until the new data arrives so the terminal doesn't flash.
+// loadCostHistory is the entry point used by the `$` key when the
+// overlay isn't yet open. It sets the full-frame loading state so the
+// table screen shows a spinner until data arrives, and scopes the
+// query to whichever subscription is currently in focus so the chart
+// lines up with what the user is looking at.
 func (m *model) loadCostHistory(opts provider.CostHistoryOptions) tea.Cmd {
-	ch, ok := m.active.(provider.CostHistoryer)
-	if !ok {
+	if _, ok := m.active.(provider.CostHistoryer); !ok {
 		m.status = m.active.Name() + ": cost history not wired yet for this cloud"
 		return nil
 	}
 	if opts.Days <= 0 {
 		opts = defaultCostWindow()
 	}
+	// Inherit the drill-level scope when the caller didn't pass one.
+	// Keeps $ contextual — press it on a subscription row and you get
+	// that sub, press it at the cloud list and you get the fan-out.
+	if opts.Scope == "" {
+		opts.Scope, opts.ScopeLabel = m.currentCostScope()
+	}
 	m.loading = true
 	m.costHistLoading = true
 	m.status = fmt.Sprintf("loading %s cost history for %s...", windowLabel(opts), m.active.Name())
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			hist, err := ch.CostHistory(ctx, opts)
-			if err != nil {
-				return errMsg{err}
+	return tea.Batch(m.spinner.Tick, m.fetchCostHistory(opts))
+}
+
+// currentCostScope returns the subscription ID (and human name) most
+// relevant to the user's current position: the highlighted row when
+// browsing the subscription list, the parent sub when drilled into an
+// RG or resource, empty when at the cloud root.
+func (m *model) currentCostScope() (string, string) {
+	if m.active == nil || m.active.Name() != pimSrcAzure {
+		return "", ""
+	}
+	// On the subscription list — use the highlighted row.
+	if m.atSubscriptionLevel() {
+		c := m.table.Cursor()
+		if c >= 0 && c < len(m.visibleNodes) {
+			n := m.visibleNodes[c]
+			if n.Kind == provider.KindSubscription {
+				return n.ID, n.Name
 			}
-			return costHistoryLoadedMsg{history: hist, opts: opts}
-		},
-	)
+		}
+	}
+	// Drilled into a sub — walk up the stack until we find one.
+	for i := len(m.stack) - 1; i >= 0; i-- {
+		if kindOf(&m.stack[i]) == provider.KindSubscription {
+			if m.stack[i].parent != nil {
+				return m.stack[i].parent.ID, m.stack[i].parent.Name
+			}
+		}
+		if m.stack[i].parent != nil && m.stack[i].parent.Kind == provider.KindSubscription {
+			return m.stack[i].parent.ID, m.stack[i].parent.Name
+		}
+	}
+	return "", ""
+}
+
+// reloadCostHistory swaps to a different window while the overlay is
+// already open. Keeps the old chart on screen so the user never stares
+// at a blank box; flips costHistLoading so the header shows a spinner.
+// Scope is carried over from the previously-loaded chart so switching
+// windows doesn't silently re-fan-out across the whole tenant.
+func (m *model) reloadCostHistory(opts provider.CostHistoryOptions) tea.Cmd {
+	if _, ok := m.active.(provider.CostHistoryer); !ok {
+		return nil
+	}
+	if opts.Scope == "" {
+		opts.Scope = m.costHistOpts.Scope
+		opts.ScopeLabel = m.costHistOpts.ScopeLabel
+	}
+	if opts == m.costHistOpts {
+		return nil
+	}
+	m.costHistLoading = true
+	m.costHistOpts = opts
+	return tea.Batch(m.spinner.Tick, m.fetchCostHistory(opts))
+}
+
+// fetchCostHistory runs the provider call on a goroutine and emits the
+// result as a costHistoryLoadedMsg. Shared by the first-open and
+// in-place-reload paths.
+func (m *model) fetchCostHistory(opts provider.CostHistoryOptions) tea.Cmd {
+	ch, _ := m.active.(provider.CostHistoryer)
+	ctx := m.ctx
+	return func() tea.Msg {
+		hist, err := ch.CostHistory(ctx, opts)
+		if err != nil {
+			return errMsg{err}
+		}
+		return costHistoryLoadedMsg{history: hist, opts: opts}
+	}
 }
 
 // updateCostHistory handles keys while the cost-history overlay is
-// visible. Esc/$ close; a preset key switches to that window.
+// visible. Esc / $ close; any preset key reloads in place; P opens
+// the PIM overlay so the user can elevate when we detected a cost-read
+// permission gap on this scope.
 func (m *model) updateCostHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case keyEsc, "q", "$":
 		m.costHistMode = false
+		m.costHistLoading = false
 		m.status = ""
 		return m, nil
+	case "P", "p":
+		if m.costHistData.AccessDenied {
+			m.costHistMode = false
+			m.costHistLoading = false
+			return m, m.loadPIM()
+		}
 	}
 	for _, p := range costHistoryPresets() {
 		if key == p.Key {
-			m.costHistMode = false
-			return m, m.loadCostHistory(provider.CostHistoryOptions{Days: p.Days, Bucket: p.Bucket})
+			opts := provider.CostHistoryOptions{Days: p.Days, Bucket: p.Bucket}
+			return m, m.reloadCostHistory(opts)
 		}
 	}
 	return m, nil
 }
 
-// costHistoryView renders the stock-ticker-style cost chart: a dotted
-// line across the configured window, month boundaries marked on the X
-// axis, and a summary strip above showing each month's total plus its
-// percent change from the previous month (green for a decrease, warn
-// for a modest rise, red for a steep one).
+// costHistoryView renders the full-screen overlay — a stock-ticker
+// style line chart of daily spend with month-over-month deltas. Sizes
+// itself to the terminal so the whole page is used rather than leaving
+// a small box on an otherwise empty screen.
 func (m *model) costHistoryView() string {
 	h := m.costHistData
 	w := m.width
+	H := m.height
 	if w <= 0 {
 		w = 120
 	}
+	if H <= 0 {
+		H = 32
+	}
+	// lipgloss Box border (2) + Padding(1,2) (4 horizontal, 2 vertical).
 	innerW := w - 6
-	if innerW < 40 {
-		innerW = 40
+	if innerW < 60 {
+		innerW = 60
 	}
-	chartH := m.height - 14
-	if chartH < 8 {
-		chartH = 8
-	}
-	if chartH > 22 {
-		chartH = 22
+	innerH := H - 4
+	if innerH < 18 {
+		innerH = 18
 	}
 
 	scope := h.Series.Label
 	if scope == "" {
 		scope = m.active.Name()
 	}
-	header := styles.Title.Render("cost history") + "  " +
-		styles.Help.Render(scope+" · "+windowLabel(m.costHistOpts)+" · "+currencyCode(h.Currency))
+	title := styles.Title.Render("cost history")
+	sub := styles.Help.Render(scope + " · " + windowLabel(m.costHistOpts) + " · " + currencyCode(h.Currency))
+	loading := ""
+	if m.costHistLoading {
+		loading = "  " + styles.WarnS.Render(m.spinner.View()+" loading "+windowLabel(m.costHistOpts)+"...")
+	}
+	header := title + "  " + sub + loading
 
 	tabs := renderCostHistoryTabs(m.costHistOpts)
 
-	if len(h.Series.Points) == 0 {
-		body := strings.Join([]string{
-			header, "", tabs, "",
-			styles.Help.Render("  no cost data returned — the caller may not have Cost Management reader on any sub"),
-			"", styles.Help.Render("  esc/$ close · w 1W · m 1M · 3 3M · 6 6M · y 1Y"),
-		}, "\n")
-		return styles.Box.Render(body)
+	// Reserved chrome rows (the chart gets whatever's left).
+	// header(1) + blank(1) + tabs(1) + blank(1) + monthStrip(1) + blank(1)
+	// + chart(N) + blank(1) + note(0|1) + footer(1)
+	reserved := 7
+	if h.Note != "" {
+		reserved++
+	}
+	chartH := innerH - reserved
+	if chartH < 8 {
+		chartH = 8
 	}
 
-	chart := renderDotChart(h.Series.Points, h.Months, h.Bucket, innerW, chartH, h.Currency)
-	months := renderMonthStrip(h.Months, h.Currency)
+	if len(h.Series.Points) == 0 {
+		msg := "no cost data — check Cost Management Reader on your subscriptions"
+		footer := styles.Help.Render("esc/$ close · w 1W · m 1M · 3 3M · 6 6M · y 1Y")
+		if h.AccessDenied {
+			msg = "you don't have cost-read access on " + scope
+			footer = styles.WarnS.Render("P → jump to PIM to request access") + styles.Help.Render("   ·   esc/$ close")
+		}
+		empty := strings.Join([]string{
+			header,
+			"",
+			tabs,
+			"",
+			center(styles.Help.Render(msg), innerW),
+			"",
+			center(footer, innerW),
+		}, "\n")
+		return fullScreenBox(w, H).Render(empty)
+	}
+
+	chart := renderBrailleChart(h.Series.Points, h.Months, h.Bucket, innerW, chartH, h.Currency)
+	months := renderMonthStrip(h.Months, h.Currency, innerW)
+	footerBase := "  esc/$ close  ·  w 1W · m 1M · 3 3M · 6 6M · y 1Y"
+	if h.AccessDenied {
+		footerBase = "  " + styles.WarnS.Render("P → jump to PIM to request cost-read access") +
+			styles.Help.Render("   ·   esc/$ close")
+	}
+	footer := styles.Help.Render(footerBase)
+	if h.AccessDenied {
+		footer = footerBase
+	}
 
 	lines := []string{header, "", tabs, ""}
 	if months != "" {
 		lines = append(lines, months, "")
+	} else {
+		lines = append(lines, "")
 	}
-	lines = append(lines, chart)
+	lines = append(lines, chart, "")
 	if h.Note != "" {
-		lines = append(lines, "", styles.Help.Render("  note · "+h.Note))
+		lines = append(lines, styles.Help.Render("  note · "+h.Note))
 	}
-	lines = append(lines, "", styles.Help.Render("  esc/$ close · w 1W · m 1M · 3 3M · 6 6M · y 1Y"))
-	return styles.Box.Render(strings.Join(lines, "\n"))
+	lines = append(lines, footer)
+	return fullScreenBox(w, H).Render(strings.Join(lines, "\n"))
 }
 
-// renderCostHistoryTabs draws the IBKR-style [ 1W | 1M | 3M | 6M | 1Y ]
-// selector with the active preset highlighted.
+// renderCostHistoryTabs draws the [ 1W | 1M | 3M | 6M | 1Y ] selector.
 func renderCostHistoryTabs(opts provider.CostHistoryOptions) string {
 	parts := []string{}
 	for _, p := range costHistoryPresets() {
@@ -187,10 +295,10 @@ func matchesPreset(opts provider.CostHistoryOptions, p costHistPreset) bool {
 	return opts.Days == p.Days && opts.Bucket == p.Bucket
 }
 
-// renderMonthStrip builds the IBKR-style summary row: one block per
-// month showing its total and the MoM delta, colour-coded so the eye
-// can find the spike months without scanning the chart itself.
-func renderMonthStrip(months []provider.CostMonth, currency string) string {
+// renderMonthStrip builds a summary row — one block per month with
+// its total and the month-over-month delta, colour-coded so spikes
+// stand out without having to squint at the line.
+func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) string {
 	if len(months) == 0 {
 		return ""
 	}
@@ -201,8 +309,8 @@ func renderMonthStrip(months []provider.CostMonth, currency string) string {
 		amount := fmt.Sprintf("%s%s", sym, compactAmount(mo.Total))
 		var delta string
 		var style lipgloss.Style
-		switch i {
-		case 0:
+		switch {
+		case i == 0:
 			delta = "baseline"
 			style = styles.Help
 		default:
@@ -233,155 +341,106 @@ func renderMonthStrip(months []provider.CostMonth, currency string) string {
 				delta = fmt.Sprintf("%s %+.1f%%", arrow, pct)
 			}
 		}
-		block := fmt.Sprintf("%s  %s  %s",
+		block := fmt.Sprintf("%s %s %s",
 			styles.Key.Render(label),
 			styles.Cost.Render(amount),
 			style.Render(delta),
 		)
 		parts = append(parts, block)
 	}
-	return "  " + strings.Join(parts, styles.Help.Render("   │   "))
+	sep := styles.Help.Render("   ·   ")
+	joined := "  " + strings.Join(parts, sep)
+	// If the strip exceeds the available width, drop the oldest entries
+	// one by one until it fits. The baseline reference becomes less
+	// important than the recent trend when space is tight.
+	for lipgloss.Width(joined) > maxW && len(parts) > 1 {
+		parts = parts[1:]
+		joined = "  " + strings.Join(parts, sep)
+	}
+	return joined
 }
 
-// renderDotChart draws the line chart. Each terminal column represents
-// one calendar day; dots are placed in the column at the Y-row matching
-// the day's cost. Points inside the currently-drawn month render in
-// green/red based on whether that month is cheaper or dearer than the
-// prior one — mirroring the behaviour of equity charting tools that
-// tint month segments by their return.
-func renderDotChart(points []provider.CostHistoryPoint, months []provider.CostMonth, bucket provider.CostBucket, width, height int, currency string) string {
-	if len(points) == 0 || width < 10 || height < 4 {
+// renderBrailleChart draws a high-resolution line chart on a braille
+// canvas — each terminal cell holds a 2×4 dot grid so connected line
+// segments actually look connected. Anchors are placed at each data
+// point and Bresenham fills the path between them; month-boundary
+// colouring is applied per-segment so the user can see when spend
+// stepped up or down.
+func renderBrailleChart(points []provider.CostHistoryPoint, months []provider.CostMonth, bucket provider.CostBucket, width, height int, currency string) string {
+	if len(points) == 0 || width < 20 || height < 6 {
 		return ""
 	}
-	const (
-		gutterW = 8 // Y-axis label column width
-		axisW   = 1
-	)
-	plotW := width - gutterW - axisW
-	if plotW < 10 {
-		plotW = width - 3
+	const gutterW = 8
+	plotW := width - gutterW - 1 // 1 for the │ axis
+	if plotW < 20 {
+		plotW = 20
 	}
-	plotH := height - 2 // one row for X-axis baseline, one for X-axis labels
-
-	// Size the plot width to the number of points when we have fewer
-	// data points than screen columns. This matters for W / M presets
-	// where a 7-point series stretched across 100 columns looks dotty
-	// and sparse; giving each point its own column keeps the shape
-	// readable and leaves predictable room for labels.
-	if len(points) < plotW {
-		plotW = len(points)
-		if plotW < 10 {
-			plotW = 10
-		}
+	// One terminal row of chart body + one baseline row + one label row
+	// sit inside `height`. Everything above is the plotted area.
+	plotH := height - 2
+	if plotH < 4 {
+		plotH = 4
 	}
 
-	// Resample points into plotW columns using an averaging scheme so
-	// chart width is independent of point-count.
-	cols := make([]float64, plotW)
-	colDate := make([]time.Time, plotW)
-	n := len(points)
-	for x := 0; x < plotW; x++ {
-		start := x * n / plotW
-		end := (x + 1) * n / plotW
-		if start == end && start < n {
-			end = start + 1
-		}
-		var sum float64
-		var cnt int
-		for i := start; i < end && i < n; i++ {
-			sum += points[i].Amount
-			cnt++
-		}
-		if cnt > 0 {
-			cols[x] = sum / float64(cnt)
-			colDate[x] = points[start].Date
-		} else if x > 0 {
-			cols[x] = cols[x-1]
-			colDate[x] = colDate[x-1]
-		}
-	}
+	// Work in braille sub-cell space: 2x wider, 4x taller.
+	subW := plotW * 2
+	subH := plotH * 4
 
-	mn, mx := cols[0], cols[0]
-	for _, v := range cols {
-		if v < mn {
-			mn = v
+	// Y scaling. min / max with 5% headroom on top so the peak doesn't
+	// sit on the top row. A flat series renders slightly above the
+	// baseline so you can still see it as a line rather than nothing.
+	mn, mx := points[0].Amount, points[0].Amount
+	for _, p := range points {
+		if p.Amount < mn {
+			mn = p.Amount
 		}
-		if v > mx {
-			mx = v
+		if p.Amount > mx {
+			mx = p.Amount
 		}
 	}
-	// Give the chart a bit of headroom so the max doesn't hug the top edge.
 	if mx == mn {
-		mx = mn + 1
+		if mx == 0 {
+			mx = 1
+		} else {
+			mx = mn + math.Abs(mn)*0.1
+		}
 	} else {
 		mx += (mx - mn) * 0.05
 	}
 
-	// Pre-compute row Y for each column.
-	rowFor := make([]int, plotW)
-	for x, v := range cols {
-		frac := (v - mn) / (mx - mn)
+	n := len(points)
+	anchorX := make([]int, n)
+	anchorY := make([]int, n)
+	anchorColor := make([]lipgloss.Style, n)
+	for i, p := range points {
+		if n == 1 {
+			anchorX[i] = subW / 2
+		} else {
+			anchorX[i] = i * (subW - 1) / (n - 1)
+		}
+		frac := (p.Amount - mn) / (mx - mn)
 		if frac < 0 {
 			frac = 0
 		}
 		if frac > 1 {
 			frac = 1
 		}
-		// Top row = 0, bottom row = plotH-1. Higher cost = smaller row.
-		rowFor[x] = int(math.Round(float64(plotH-1) * (1 - frac)))
+		anchorY[i] = int(math.Round(float64(subH-1) * (1 - frac)))
+		anchorColor[i] = colourForPoint(p.Date, months)
 	}
 
-	// Bucket columns by month so we can colour per-month.
-	colStyle := make([]lipgloss.Style, plotW)
-	monthIdx := make([]int, plotW)
-	for x, d := range colDate {
-		monthIdx[x] = matchMonth(d, months)
-	}
-	for x := 0; x < plotW; x++ {
-		mi := monthIdx[x]
-		switch {
-		case mi <= 0 || mi >= len(months):
-			colStyle[x] = styles.AccentS
-		default:
-			prev := months[mi-1].Total
-			cur := months[mi].Total
-			switch {
-			case prev <= 0:
-				colStyle[x] = styles.AccentS
-			case cur > prev*1.10:
-				colStyle[x] = styles.Bad
-			case cur > prev*1.02:
-				colStyle[x] = styles.WarnS
-			case cur < prev*0.90:
-				colStyle[x] = styles.Good
-			case cur < prev*0.98:
-				colStyle[x] = styles.Good
-			default:
-				colStyle[x] = styles.AccentS
-			}
-		}
-	}
+	canvas := newBrailleCanvas(plotW, plotH)
 
-	// Render the grid.
-	rows := make([][]string, plotH)
-	for r := 0; r < plotH; r++ {
-		rows[r] = make([]string, plotW)
-		for c := 0; c < plotW; c++ {
-			rows[r][c] = " "
-		}
+	// Connect consecutive anchors with a Bresenham line so the chart
+	// reads as a continuous stroke, not a row of dots.
+	for i := 1; i < n; i++ {
+		drawBrailleLine(canvas, anchorX[i-1], anchorY[i-1], anchorX[i], anchorY[i], anchorColor[i])
 	}
-	for x := 0; x < plotW; x++ {
-		r := rowFor[x]
-		if r < 0 {
-			r = 0
-		}
-		if r >= plotH {
-			r = plotH - 1
-		}
-		rows[r][x] = colStyle[x].Render(":")
-	}
+	// Emphasise the last-known value with a small marker at the most
+	// recent anchor — the "you are here" cue stock tickers use.
+	canvas.set(anchorX[n-1], anchorY[n-1], styles.AccentS.Bold(true))
 
-	// Y-axis tick labels — 5 evenly-spaced values.
+	// Compose rows with Y-axis labels + │ + canvas.
 	sym := currencySym(currency)
 	labelFor := func(row int) string {
 		frac := 1 - float64(row)/float64(plotH-1)
@@ -397,163 +456,107 @@ func renderDotChart(points []provider.CostHistoryPoint, months []provider.CostMo
 			if len(lbl) > gutterW-1 {
 				lbl = lbl[:gutterW-1]
 			}
-			gutter = fmt.Sprintf("%*s ", gutterW-1, lbl)
-			gutter = styles.Help.Render(gutter)
+			gutter = styles.Help.Render(fmt.Sprintf("%*s ", gutterW-1, lbl))
 		}
 		axis := styles.Help.Render("│")
-		lines = append(lines, gutter+axis+strings.Join(rows[r], ""))
+		lines = append(lines, gutter+axis+canvas.renderRow(r))
 	}
 
-	// X-axis: plain baseline + tick labels. The label choice depends on
-	// the series granularity — short windows need day-of-month labels,
-	// long ones read better with month names or years.
+	// Baseline + tick row + labels.
 	gutter := strings.Repeat(" ", gutterW)
 	baseline := gutter + styles.Help.Render("└"+strings.Repeat("─", plotW))
 	lines = append(lines, baseline)
-	lines = append(lines, gutter+" "+renderXAxis(colDate, monthIdx, months, bucket, plotW))
+	lines = append(lines, gutter+" "+renderXAxis(points, anchorX, months, bucket, plotW))
 
 	return strings.Join(lines, "\n")
 }
 
-// renderXAxis lays out X-axis labels suited to the series bucket. For
-// monthly series (1Y preset) every column is its own month so we place
-// a short month name at each column boundary. For short daily series
-// (1W / 1M) we label the first column of each day. For longer daily
-// series we fall back to month names at month boundaries.
-func renderXAxis(colDate []time.Time, monthIdx []int, months []provider.CostMonth, bucket provider.CostBucket, width int) string {
-	if bucket == provider.BucketMonth {
-		return renderXMonthly(colDate, width)
+// colourForPoint returns the style a point should render in based on
+// its month's total compared to the prior month — red for a steep rise,
+// warn for a modest one, green for a fall, accent otherwise.
+func colourForPoint(date time.Time, months []provider.CostMonth) lipgloss.Style {
+	mi := matchMonth(date, months)
+	if mi <= 0 || mi >= len(months) {
+		return styles.AccentS
 	}
-	// Daily buckets. When the overall span is short enough (~ <= 31 days
-	// between first and last date) label individual days; otherwise fall
-	// back to month boundaries.
-	if isShortRange(colDate) {
-		return renderXDaily(colDate, width)
+	prev := months[mi-1].Total
+	cur := months[mi].Total
+	switch {
+	case prev <= 0:
+		return styles.AccentS
+	case cur > prev*1.10:
+		return styles.Bad
+	case cur > prev*1.02:
+		return styles.WarnS
+	case cur < prev*0.98:
+		return styles.Good
+	default:
+		return styles.AccentS
 	}
-	return renderMonthAxis(monthIdx, months, width)
 }
 
-func isShortRange(dates []time.Time) bool {
-	if len(dates) < 2 {
-		return true
-	}
-	first, last := dates[0], dates[len(dates)-1]
-	return last.Sub(first) <= 32*24*time.Hour
-}
-
-// renderXMonthly labels each column with its month abbreviation. Labels
-// overlap so we only write when there's clear room — exactly like the
-// daily path.
-func renderXMonthly(colDate []time.Time, width int) string {
+// renderXAxis places labels along the X axis. Strategy depends on the
+// series bucket; in every case we advance by a "next-legal-position"
+// cursor so two labels never overlap.
+func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, months []provider.CostMonth, bucket provider.CostBucket, width int) string {
 	row := make([]rune, width)
 	for i := range row {
 		row[i] = ' '
 	}
-	lastLabel := ""
-	for x := 0; x < width; x++ {
-		if colDate[x].IsZero() {
-			continue
-		}
-		lbl := fmt.Sprintf("%s %d", shortMonth(colDate[x].Month()), colDate[x].Year()%100)
-		if lbl == lastLabel {
-			continue
-		}
-		if x+len(lbl) >= width {
-			continue
-		}
-		collision := false
-		for k := x; k < x+len(lbl); k++ {
-			if row[k] != ' ' {
-				collision = true
-				break
-			}
-		}
-		if collision {
-			continue
-		}
-		for k, r := range lbl {
-			row[x+k] = r
-		}
-		lastLabel = lbl
-	}
-	return styles.Help.Render(string(row))
-}
-
-// renderXDaily labels days-of-month on a short daily window. We pick a
-// stride that fits the width — labelling every day on a 7-day window,
-// every 3-5 days on a 30-day window.
-func renderXDaily(colDate []time.Time, width int) string {
-	row := make([]rune, width)
-	for i := range row {
-		row[i] = ' '
-	}
-	// Stride tuned so the labels don't collide. Each label is ~6 chars
-	// ("Mon 15") so we need ~8 columns of spacing.
-	stride := width / 8
-	if stride < 1 {
-		stride = 1
-	}
-	for x := 0; x < width; x += stride {
-		if x >= len(colDate) || colDate[x].IsZero() {
-			continue
-		}
-		lbl := fmt.Sprintf("%s %d", colDate[x].Format("Mon"), colDate[x].Day())
-		if x+len(lbl) >= width {
-			continue
-		}
-		for k, r := range lbl {
-			if x+k >= len(row) {
-				break
-			}
-			row[x+k] = r
-		}
-	}
-	return styles.Help.Render(string(row))
-}
-
-// renderMonthAxis lays month labels along the X axis at the first
-// column where each month appears. Labels are elided (empty spaces
-// kept) when they'd overlap, so the axis reads cleanly even on narrow
-// terminals.
-func renderMonthAxis(monthIdx []int, months []provider.CostMonth, width int) string {
-	row := make([]rune, width)
-	for i := range row {
-		row[i] = ' '
-	}
-	lastMonth := -2
-	for x := 0; x < width; x++ {
-		mi := monthIdx[x]
-		if mi < 0 || mi >= len(months) {
-			continue
-		}
-		if mi == lastMonth {
-			continue
-		}
-		lastMonth = mi
-		label := fmt.Sprintf("%s %d", shortMonth(months[mi].Month), months[mi].Year%100)
-		// Skip if there's not enough room before the next month begins.
-		if x+len(label) >= width {
-			continue
-		}
-		// Skip if we'd collide with a previously-placed label.
-		collision := false
-		for k := x; k < x+len(label); k++ {
-			if row[k] != ' ' {
-				collision = true
-				break
-			}
-		}
-		if collision {
-			continue
+	place := func(x int, label string) int {
+		if x < 0 || x+len(label) >= width {
+			return -1
 		}
 		for k, r := range label {
 			row[x+k] = r
 		}
+		return x + len(label) + 1
+	}
+
+	nextOK := 0
+	switch bucket {
+	case provider.BucketMonth:
+		// One label per data point is achievable on 1Y (~12 points).
+		for i, p := range points {
+			x := anchorX[i] / 2 // sub-columns back to terminal cols
+			if x < nextOK {
+				continue
+			}
+			lbl := fmt.Sprintf("%s %d", shortMonth(p.Date.Month()), p.Date.Year()%100)
+			n := place(x, lbl)
+			if n > 0 {
+				nextOK = n
+			}
+		}
+	default:
+		// Daily: label every Nth point with Mon DD, stride chosen so
+		// labels never collide.
+		sampleLabel := "Mon 31" // widest label shape; 6 chars
+		stride := len(sampleLabel) + 2
+		for i, p := range points {
+			x := anchorX[i] / 2
+			if x < nextOK {
+				continue
+			}
+			lbl := fmt.Sprintf("%s %d", p.Date.Format("Jan"), p.Date.Day())
+			if i == 0 || isMonthBoundary(points, i) || anchorX[i]/2 >= nextOK {
+				n := place(x, lbl)
+				if n > 0 {
+					nextOK = n + stride - len(lbl) - 1
+				}
+			}
+		}
 	}
 	return styles.Help.Render(string(row))
 }
 
-// matchMonth returns the index of the month bucket containing d, or -1.
+func isMonthBoundary(points []provider.CostHistoryPoint, i int) bool {
+	if i == 0 {
+		return true
+	}
+	return points[i].Date.Month() != points[i-1].Date.Month()
+}
+
 func matchMonth(d time.Time, months []provider.CostMonth) int {
 	if d.IsZero() {
 		return -1
@@ -571,9 +574,7 @@ func shortMonth(m time.Month) string {
 }
 
 // compactAmount renders a value with an adaptive suffix so the Y-axis
-// labels and month-strip totals stay narrow: 1.3k for 1,300, 12.4k for
-// 12,400, 1.1M for 1.1 million. For sub-thousand values we show the
-// raw number with at most one decimal.
+// labels and month-strip totals stay narrow.
 func compactAmount(v float64) string {
 	abs := math.Abs(v)
 	switch {
@@ -588,9 +589,6 @@ func compactAmount(v float64) string {
 	}
 }
 
-// currencySym returns the visual symbol for a currency code reusing the
-// same mapping as the rest of the app. Empty input falls back to "$"
-// so the chart never renders an unlabelled value.
 func currencySym(code string) string {
 	return currencyChar(code)
 }
@@ -600,4 +598,140 @@ func currencyCode(code string) string {
 		return currencyUSD
 	}
 	return strings.ToUpper(code)
+}
+
+// center pads s with spaces so it sits roughly mid-line inside width
+// columns. Short-circuits on already-too-wide strings so we don't blow
+// out the layout.
+func center(s string, width int) string {
+	wide := lipgloss.Width(s)
+	if wide >= width {
+		return s
+	}
+	pad := (width - wide) / 2
+	return strings.Repeat(" ", pad) + s
+}
+
+// ---------- braille canvas ----------
+
+// brailleCanvas is a simple off-screen buffer where each terminal cell
+// corresponds to 8 braille dot positions (2 wide × 4 tall). Setting a
+// sub-cell OR-s the matching bit into the cell's byte; rendering emits
+// one rune per cell at U+2800 + bits, preserving the per-cell style
+// most-recently written (good enough for single-line charts).
+type brailleCanvas struct {
+	cols, rows int
+	bits       []byte
+	style      []lipgloss.Style
+	set0       []bool
+}
+
+func newBrailleCanvas(cols, rows int) *brailleCanvas {
+	return &brailleCanvas{
+		cols:  cols,
+		rows:  rows,
+		bits:  make([]byte, cols*rows),
+		style: make([]lipgloss.Style, cols*rows),
+		set0:  make([]bool, cols*rows),
+	}
+}
+
+// set turns on the sub-cell at (subX, subY) in braille-dot space and
+// records the style to render the whole cell with. Out-of-bounds
+// coordinates are silently dropped so line-drawing can overshoot.
+func (c *brailleCanvas) set(subX, subY int, style lipgloss.Style) {
+	if subX < 0 || subY < 0 {
+		return
+	}
+	cellX := subX / 2
+	cellY := subY / 4
+	if cellX >= c.cols || cellY >= c.rows {
+		return
+	}
+	dx := subX % 2
+	dy := subY % 4
+	bit := brailleBit(dx, dy)
+	idx := cellY*c.cols + cellX
+	c.bits[idx] |= bit
+	c.style[idx] = style
+	c.set0[idx] = true
+}
+
+func (c *brailleCanvas) renderRow(y int) string {
+	var sb strings.Builder
+	for x := 0; x < c.cols; x++ {
+		idx := y*c.cols + x
+		if !c.set0[idx] {
+			sb.WriteByte(' ')
+			continue
+		}
+		r := rune(0x2800 + int(c.bits[idx]))
+		sb.WriteString(c.style[idx].Render(string(r)))
+	}
+	return sb.String()
+}
+
+// brailleBit maps a (dx, dy) sub-cell coordinate to the Unicode
+// 8-dot-braille bit. The mapping is fixed by Unicode — dots 1-3 are
+// the left column top-to-bottom-but-not-the-bottom, dots 4-6 the
+// right, dots 7-8 the very-bottom row.
+func brailleBit(dx, dy int) byte {
+	switch {
+	case dx == 0 && dy == 0:
+		return 0x01
+	case dx == 0 && dy == 1:
+		return 0x02
+	case dx == 0 && dy == 2:
+		return 0x04
+	case dx == 0 && dy == 3:
+		return 0x40
+	case dx == 1 && dy == 0:
+		return 0x08
+	case dx == 1 && dy == 1:
+		return 0x10
+	case dx == 1 && dy == 2:
+		return 0x20
+	case dx == 1 && dy == 3:
+		return 0x80
+	}
+	return 0
+}
+
+// drawBrailleLine walks the Bresenham path between two sub-cell points
+// and turns on every dot along the way. Each step carries the caller's
+// style — adjacent segments with different colours produce a crisp
+// transition rather than a faded middle.
+func drawBrailleLine(c *brailleCanvas, x0, y0, x1, y1 int, style lipgloss.Style) {
+	dx := absInt(x1 - x0)
+	dy := -absInt(y1 - y0)
+	sx, sy := 1, 1
+	if x0 > x1 {
+		sx = -1
+	}
+	if y0 > y1 {
+		sy = -1
+	}
+	err := dx + dy
+	for {
+		c.set(x0, y0, style)
+		if x0 == x1 && y0 == y1 {
+			return
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			x0 += sx
+		}
+		if e2 <= dx {
+			err += dx
+			y0 += sy
+		}
+	}
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

@@ -122,5 +122,5 @@ func (m *model) upgradeView() string {
 		"",
 		footer,
 	}, "\n")
-	return styles.Box.Render(body)
+	return fullScreenBox(m.width, m.height).Render(body)
 }

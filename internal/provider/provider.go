@@ -206,6 +206,12 @@ type CostHistory struct {
 	// provider couldn't resolve part of the history (e.g. one sub returned
 	// AuthorizationFailed). Renders as muted text.
 	Note string `json:"note,omitempty"`
+	// AccessDenied is set when the caller lacks cost-read permission on
+	// the scope they asked about (providers with permission-driven APIs
+	// like Azure Cost Management flip this on AuthorizationFailed).
+	// Drives the overlay's "jump to PIM" footer prompt so the user can
+	// elevate and retry.
+	AccessDenied bool `json:"accessDenied,omitempty"`
 }
 
 // CostBucket controls how CostHistory aggregates its points. Providers
@@ -229,10 +235,14 @@ const (
 // CostHistoryOptions is the request shape for the `$` cost-history
 // overlay. Days is the window length in days ending at "now"; Bucket
 // decides how the provider aggregates points before handing them back.
-// Zero-value means {Days: 90, Bucket: BucketDay} (last 3 months daily).
+// Scope narrows the query to a single subscription / account / project
+// when non-empty; the zero-value rolls up across every scope the caller
+// can read. Zero-value means {Days: 90, Bucket: BucketDay, Scope: ""}.
 type CostHistoryOptions struct {
-	Days   int
-	Bucket CostBucket
+	Days       int
+	Bucket     CostBucket
+	Scope      string
+	ScopeLabel string
 }
 
 // CostHistoryer is an optional capability surfacing a cost time-series
