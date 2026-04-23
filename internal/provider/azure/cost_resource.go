@@ -104,7 +104,7 @@ func parseResourceCostCells(data []byte) (map[string]costCell, error) {
 		if id == "" {
 			continue
 		}
-		cell := costCell{amount: amount, currency: "USD"}
+		cell := costCell{amount: amount, currency: defaultCurrency}
 		if currencyCol >= 0 && len(r) > currencyCol {
 			if c, ok := r[currencyCol].(string); ok {
 				cell.currency = c

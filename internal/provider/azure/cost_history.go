@@ -55,8 +55,8 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 	if len(subs) == 0 {
 		return provider.CostHistory{
 			Scope:      "azure",
-			Currency:   "USD",
-			Series:     provider.CostSeries{Label: "all subscriptions", Currency: "USD"},
+			Currency:   defaultCurrency,
+			Series:     provider.CostSeries{Label: "all subscriptions", Currency: defaultCurrency},
 			Bucket:     bucket,
 			WindowDays: days,
 		}, nil
@@ -105,7 +105,7 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 		}
 	}
 	if currency == "" {
-		currency = "USD"
+		currency = defaultCurrency
 	}
 
 	// Build a contiguous daily series across [from, to]. Month-bucketed
@@ -210,7 +210,7 @@ func parseDailyCost(data []byte) (map[string]float64, string, error) {
 		return nil, "", nil
 	}
 	out := make(map[string]float64, len(env.Properties.Rows))
-	currency := "USD"
+	currency := defaultCurrency
 	for _, r := range env.Properties.Rows {
 		if len(r) <= costCol || len(r) <= dateCol {
 			continue

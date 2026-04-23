@@ -165,7 +165,7 @@ func parseSubTotal(data []byte) (costCell, error) {
 	}
 	row := env.Properties.Rows[0]
 	amount, _ := row[costCol].(float64)
-	cell := costCell{amount: amount, currency: "USD"}
+	cell := costCell{amount: amount, currency: defaultCurrency}
 	if currencyCol >= 0 && len(row) > currencyCol {
 		if c, ok := row[currencyCol].(string); ok {
 			cell.currency = c

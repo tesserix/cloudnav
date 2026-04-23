@@ -16,6 +16,10 @@ const (
 	colCost         = "Cost"
 	colCurrency     = "Currency"
 	timeframeCustom = "Custom"
+	// defaultCurrency is the fallback currency label used when Cost
+	// Management omits the Currency column — which it does for rows with
+	// zero cost. Consistent across every cost_* file in this package.
+	defaultCurrency = "USD"
 )
 
 type costCell struct {
@@ -126,7 +130,7 @@ func parseCostCells(data []byte) (map[string]costCell, error) {
 		if !ok || rg == "" {
 			continue
 		}
-		currency := "USD"
+		currency := defaultCurrency
 		if currencyCol >= 0 && len(r) > currencyCol {
 			if c, ok := r[currencyCol].(string); ok {
 				currency = c
@@ -189,7 +193,7 @@ func lastMonthSamePeriod(now time.Time) (time.Time, time.Time) {
 
 func currencySymbol(code string) string {
 	switch strings.ToUpper(code) {
-	case "USD":
+	case defaultCurrency:
 		return "$"
 	case "GBP":
 		return "£"

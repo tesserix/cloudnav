@@ -212,7 +212,7 @@ func renderMonthStrip(months []provider.CostMonth, currency string) string {
 				style = styles.AccentS
 			} else {
 				pct := (mo.Total - prev) / prev * 100
-				arrow := "→"
+				var arrow string
 				switch {
 				case pct >= 10:
 					arrow = "▲"
@@ -421,8 +421,7 @@ func renderDotChart(points []provider.CostHistoryPoint, months []provider.CostMo
 // (1W / 1M) we label the first column of each day. For longer daily
 // series we fall back to month names at month boundaries.
 func renderXAxis(colDate []time.Time, monthIdx []int, months []provider.CostMonth, bucket provider.CostBucket, width int) string {
-	switch bucket {
-	case provider.BucketMonth:
+	if bucket == provider.BucketMonth {
 		return renderXMonthly(colDate, width)
 	}
 	// Daily buckets. When the overall span is short enough (~ <= 31 days
@@ -598,7 +597,7 @@ func currencySym(code string) string {
 
 func currencyCode(code string) string {
 	if code == "" {
-		return "USD"
+		return currencyUSD
 	}
 	return strings.ToUpper(code)
 }

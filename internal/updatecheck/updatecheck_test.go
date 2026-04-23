@@ -15,12 +15,12 @@ func TestIsNewer(t *testing.T) {
 		{"v1.2.3", "unknown", true}, // unreleased local build
 		{"", "v1.2.3", false},
 		{"v1.2.3", "", false},
-		{"1.2.3", "1.2.2", true},                       // no v prefix
-		{"v1.2.3-rc.1", "v1.2.3-rc.2", false},          // ignore suffix => equal
-		{"v1.2.3+meta", "v1.2.2", true},                // ignore build metadata
-		{"v1.10.0", "v1.2.0", true},                    // numeric (not lex) compare
-		{"v1.2", "v1.1", true},                         // two-component form
-		{"zzzz", "v1.2.3", true}, // lexicographic fallback when semver fails
+		{"1.2.3", "1.2.2", true},              // no v prefix
+		{"v1.2.3-rc.1", "v1.2.3-rc.2", false}, // ignore suffix => equal
+		{"v1.2.3+meta", "v1.2.2", true},       // ignore build metadata
+		{"v1.10.0", "v1.2.0", true},           // numeric (not lex) compare
+		{"v1.2", "v1.1", true},                // two-component form
+		{"zzzz", "v1.2.3", true},              // lexicographic fallback when semver fails
 	}
 	for _, tc := range cases {
 		got := IsNewer(tc.latest, tc.current)
@@ -32,11 +32,11 @@ func TestIsNewer(t *testing.T) {
 
 func TestParseSemver(t *testing.T) {
 	cases := map[string][]int{
-		"v1.2.3":        {1, 2, 3},
-		"1.2.3":         {1, 2, 3},
-		"v1.2":          {1, 2, 0},
-		"v1.2.3-rc.1":   {1, 2, 3},
-		"v1.2.3+abc":    {1, 2, 3},
+		"v1.2.3":      {1, 2, 3},
+		"1.2.3":       {1, 2, 3},
+		"v1.2":        {1, 2, 0},
+		"v1.2.3-rc.1": {1, 2, 3},
+		"v1.2.3+abc":  {1, 2, 3},
 	}
 	for in, want := range cases {
 		got := parseSemver(in)

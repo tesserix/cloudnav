@@ -40,6 +40,10 @@ const (
 	keyUp            = "up"
 	keyDown          = "down"
 	statusCostCached = "cost column on (cached)"
+	// currencyUSD is the fallback code used when a provider returns a
+	// blank Currency field — shared between the two currency-symbol
+	// helpers in this file.
+	currencyUSD = "USD"
 )
 
 func Run() error {
@@ -228,12 +232,12 @@ type model struct {
 	updateAvailable bool
 	latestVersion   string
 	latestURL       string
-	upgradeMode     bool  // confirmation overlay visible
+	upgradeMode     bool // confirmation overlay visible
 	upgradePlan     updatecheck.UpgradePlan
 	upgradeRunning  bool
 	upgradeResult   string
 	upgradeErr      error
-	drilling        bool // a drill-level load is in flight; block navigation
+	drilling        bool   // a drill-level load is in flight; block navigation
 	categoryFilter  string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
 	deleteTargets   []provider.Node
@@ -559,7 +563,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.CostHistory):
 			return m, m.loadCostHistory(defaultCostWindow())
 		case key.Matches(msg, m.keys.Upgrade):
-			return m, m.openUpgrade()
+			m.openUpgrade()
+			return m, nil
 		case key.Matches(msg, m.keys.Exec):
 			return m, m.execShell()
 		case key.Matches(msg, m.keys.Enter):
@@ -1186,7 +1191,7 @@ func formatAmount(amount float64, currency string) string {
 
 func currencyChar(code string) string {
 	switch strings.ToUpper(code) {
-	case "USD", "":
+	case currencyUSD, "":
 		return "$"
 	case "GBP":
 		return "£"
@@ -3282,7 +3287,7 @@ func forecastCell(forecast float64, currency string) string {
 // billing view doesn't need to reach into the azure package.
 func cliCurrencySymbol(code string) string {
 	switch strings.ToUpper(code) {
-	case "USD", "":
+	case currencyUSD, "":
 		return "$"
 	case "GBP":
 		return "£"
