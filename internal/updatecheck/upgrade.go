@@ -46,10 +46,15 @@ func PlanUpgrade(latestTag, releaseURL string) UpgradePlan {
 	exe, _ = filepath.EvalSymlinks(exe)
 
 	if isHomebrewBinary(exe) {
+		// 'brew upgrade cloudnav' on its own only consults the local
+		// formula cache. If the tap hasn't been refreshed since the new
+		// tag was published, brew reports "already installed" and
+		// nothing actually upgrades. Run update first so the upgrade
+		// sees the newest formula.
 		return UpgradePlan{
 			Method: UpgradeHomebrew,
-			Bin:    "brew",
-			Args:   []string{"upgrade", "cloudnav"},
+			Bin:    "sh",
+			Args:   []string{"-c", "brew update && brew upgrade cloudnav"},
 			URL:    releaseURL,
 			Why:    "binary lives under a Homebrew prefix",
 		}

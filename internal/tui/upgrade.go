@@ -106,7 +106,13 @@ func (m *model) upgradeView() string {
 	var action string
 	switch plan.Method {
 	case updatecheck.UpgradeGoInstall, updatecheck.UpgradeHomebrew:
-		action = styles.Key.Render("  $ "+plan.Bin+" "+strings.Join(plan.Args, " ")) + "\n" + why
+		// For sh -c "…" plans (homebrew), render the inner script so
+		// the user doesn't see the wrapper shell noise.
+		cmd := plan.Bin + " " + strings.Join(plan.Args, " ")
+		if plan.Bin == "sh" && len(plan.Args) == 2 && plan.Args[0] == "-c" {
+			cmd = plan.Args[1]
+		}
+		action = styles.Key.Render("  $ "+cmd) + "\n" + why
 	case updatecheck.UpgradeManual:
 		action = styles.Key.Render("  open release page") + "\n" + styles.Help.Render("  "+plan.URL)
 	}
