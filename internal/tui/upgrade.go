@@ -87,10 +87,11 @@ func (m *model) updateUpgrade(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // ticking while we wait on go install / brew / the browser handoff.
 func (m *model) runUpgrade() tea.Cmd {
 	plan := m.upgradePlan
+	target := m.latestVersion
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
-		out, err := updatecheck.Run(ctx, plan)
+		out, err := updatecheck.Run(ctx, plan, target)
 		return upgradeResultMsg{summary: out, err: err}
 	}
 }

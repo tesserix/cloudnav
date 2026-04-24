@@ -127,9 +127,12 @@ func isGoBinBinary(path string) bool {
 }
 
 // Run executes the upgrade plan and returns a short user-facing status
-// string on success, or an error. The command output is captured so
-// callers can surface it inside the TUI.
-func Run(ctx context.Context, plan UpgradePlan) (string, error) {
+// string on success, or an error. After a successful exit we verify
+// the binary on disk actually moved to targetTag — brew has a history
+// of exit-zero no-ops when its formula cache is stale, and users
+// deserve to know when that happens instead of a false success.
+// targetTag can be empty to skip the post-upgrade check.
+func Run(ctx context.Context, plan UpgradePlan, targetTag string) (string, error) {
 	switch plan.Method {
 	case UpgradeGoInstall, UpgradeHomebrew:
 		cmd := exec.CommandContext(ctx, plan.Bin, plan.Args...)
@@ -139,12 +142,40 @@ func Run(ctx context.Context, plan UpgradePlan) (string, error) {
 			return string(out), fmt.Errorf("%s %s: %w", plan.Bin, strings.Join(plan.Args, " "), err)
 		}
 		ClearCache()
-		return trimOutput(string(out)), nil
+		summary := trimOutput(string(out))
+		if installed, ok := installedVersion(ctx); ok && targetTag != "" && !IsNewer(installed, targetTag) && installed != targetTag && "v"+installed != targetTag {
+			return summary, fmt.Errorf(
+				"upgrade command exited ok but cloudnav is still reporting %s (expected %s) — "+
+					"try 'brew update && brew upgrade cloudnav' from a shell",
+				installed, targetTag)
+		}
+		return summary, nil
 	case UpgradeManual:
 		return "", openBrowser(plan.URL)
 	default:
 		return "", fmt.Errorf("unknown upgrade method %q", plan.Method)
 	}
+}
+
+// installedVersion invokes cloudnav on PATH and parses the version line
+// it prints, returning "0.22.7" (without any surrounding text). ok=false
+// means we couldn't find / run the binary — callers should treat that
+// as "skip the check" rather than as a failure.
+func installedVersion(ctx context.Context) (string, bool) {
+	path, err := exec.LookPath("cloudnav")
+	if err != nil {
+		return "", false
+	}
+	out, err := exec.CommandContext(ctx, path, "version").Output()
+	if err != nil {
+		return "", false
+	}
+	// Expected format: "cloudnav 0.22.7 (commit · date)"
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) < 2 {
+		return "", false
+	}
+	return fields[1], true
 }
 
 func openBrowser(url string) error {
