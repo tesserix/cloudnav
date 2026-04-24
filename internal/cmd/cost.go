@@ -21,9 +21,10 @@ func println(w io.Writer, s string)          { _, _ = fmt.Fprintln(w, s) }
 func printf(w io.Writer, f string, a ...any) { _, _ = fmt.Fprintf(w, f, a...) }
 
 var costCmd = &cobra.Command{
-	Use:   "cost",
-	Short: "Read-only cost reports across subs / RGs / regions / services",
-	Long:  "cloudnav never creates or modifies cloud resources. `cost` runs read-only CostManagement / Cost Explorer / BigQuery queries and prints them as a table.",
+	Use:     "cost",
+	Aliases: []string{"costs"},
+	Short:   "Read-only cost reports across subs / RGs / regions / services",
+	Long:    "cloudnav never creates or modifies cloud resources. `cost` runs read-only CostManagement / Cost Explorer / BigQuery queries and prints them as a table.",
 }
 
 var costSubsCmd = &cobra.Command{

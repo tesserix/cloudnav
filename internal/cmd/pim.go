@@ -12,9 +12,10 @@ import (
 )
 
 var pimCmd = &cobra.Command{
-	Use:   "pim",
-	Short: "Privileged Identity Management / JIT elevation",
-	Long:  "Azure: Privileged Identity Management across Azure resource RBAC, Entra directory roles, and PIM for Groups.\nAWS:   AWS SSO profile sign-in via browser.\nGCP:   Privileged Access Manager (PAM) entitlements — falls back to a conditional-IAM template when PAM isn't enabled.",
+	Use:     "pim",
+	Aliases: []string{"jit"},
+	Short:   "Privileged Identity Management / JIT elevation",
+	Long:    "Azure: Privileged Identity Management across Azure resource RBAC, Entra directory roles, and PIM for Groups.\nAWS:   AWS SSO profile sign-in via browser.\nGCP:   Privileged Access Manager (PAM) entitlements — falls back to a conditional-IAM template when PAM isn't enabled.",
 }
 
 var pimListCmd = &cobra.Command{

@@ -105,10 +105,18 @@ Run `cloudnav doctor` to verify everything is wired up.
 ### Non-interactive / scripting
 
 ```bash
+cloudnav find scopes prod
+cloudnav find resources web --cloud azure --subscription <id>
+cloudnav find pim admin --cloud azure
+
 cloudnav ls azure subs --json | jq '.[].name'
 cloudnav ls azure rgs --subscription <id>
 cloudnav ls azure resources --subscription <id> --resource-group my-rg --json
 ```
+
+`cloudnav find` is the discovery-first layer.
+Use it when you know part of a name or scope but not the exact path yet.
+`cloudnav ls` is still there as the lower-level, script-friendly primitive.
 
 ## Keybindings
 
@@ -158,6 +166,11 @@ Override per-invocation with env vars — `CLOUDNAV_THEME`, `CLOUDNAV_NO_COLOR`,
 cloudnav is a TUI by default, but every navigation step is also exposed as a scriptable command:
 
 ```bash
+cloudnav search scopes prod
+cloudnav find resources vm-01 --cloud azure --subscription <id> --details
+cloudnav jit list --cloud azure
+cloudnav costs services --json
+
 cloudnav ls azure subs --json | jq '.[].name'
 cloudnav ls azure rgs --subscription <id> --json
 cloudnav ls azure resources --subscription <id> --resource-group my-rg --json

@@ -28,6 +28,10 @@ First time?  Run 'cloudnav doctor' to see which clouds need attention.
   cloudnav login gcp          # wraps 'gcloud auth login'
   cloudnav login aws          # wraps 'aws sso login'
 
+  cloudnav find scopes prod
+  cloudnav find resources web --cloud azure --subscription <sub-id>
+  cloudnav find pim admin --cloud azure
+
 Or just open the TUI and press 'I' on a cloud row — it will install the
 CLI (if missing) and run login in one step. Credentials land in the
 cloud CLI's default location (~/.azure, ~/.config/gcloud, ~/.aws) which

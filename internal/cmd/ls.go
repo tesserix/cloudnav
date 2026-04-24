@@ -21,8 +21,9 @@ const (
 )
 
 var lsCmd = &cobra.Command{
-	Use:   "ls <provider> <kind>",
-	Short: "List resources non-interactively (pipeable)",
+	Use:     "ls <provider> <kind>",
+	Aliases: []string{"list"},
+	Short:   "List resources non-interactively (pipeable)",
 	Example: `  cloudnav ls azure subs --json
   cloudnav ls azure rgs --subscription 00000000-0000-0000-0000-000000000000
   cloudnav ls azure resources --subscription <id> --resource-group my-rg
