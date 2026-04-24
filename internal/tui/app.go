@@ -244,6 +244,7 @@ type model struct {
 	categoryFilter  string // resource category on the resource list (compute / data / network / security / other)
 	deleteMode      bool
 	deleteTargets   []provider.Node
+	deleteScope     deleteScope
 	deleteInput     textinput.Model
 	width           int
 	height          int
@@ -1173,24 +1174,57 @@ func (m *model) columnsFor(f *frame) []table.Column {
 		}
 		return cols
 	case provider.KindResource:
+		// Resource view has many columns; the COST column sits last and
+		// would otherwise be the first to clip on narrow terminals. We
+		// give COST a fixed budget (20) and compress the middle columns
+		// to fit whatever width remains. Terminal widths we target:
+		//  • 120 cells: drop HEALTH, compress TAGS.
+		//  • 140 cells: standard layout.
+		//  • 160+ cells: generous TAGS.
+		showCost := m.showCost && m.active != nil && m.active.Name() == pimSrcAzure
+		showAgg := f.aggregated
+		w := m.width
+		if w == 0 {
+			w = 160
+		}
+		// Budget the fixed columns first.
+		costW := 0
+		if showCost {
+			costW = 20
+		}
+		aggW := 0
+		if showAgg {
+			aggW = 28
+		}
+		// Reserve fixed columns + 2-cell padding between 8 columns.
+		fixed := 4 /*sel*/ + 40 /*name*/ + costW + aggW + 2*8
+		remaining := w - fixed
+		if remaining < 40 {
+			remaining = 40
+		}
+		// Split the remaining budget across type/location/created/health/tags
+		// proportionally. Health gets dropped first on narrow layouts.
+		typeW, locW, createdW, healthW, tagsW := splitResourceCols(remaining)
 		cols := []table.Column{
 			{Title: " ", Width: 4},
 			{Title: "NAME", Width: 40},
-			{Title: "TYPE", Width: 30},
-			{Title: "LOCATION", Width: 14},
-			{Title: "CREATED", Width: 12},
-			{Title: "HEALTH", Width: healthColWidth},
-			{Title: "TAGS", Width: tagsColWidth},
+			{Title: "TYPE", Width: typeW},
+			{Title: "LOCATION", Width: locW},
+			{Title: "CREATED", Width: createdW},
 		}
-		if f.aggregated {
-			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: 32})
+		if healthW > 0 {
+			cols = append(cols, table.Column{Title: "HEALTH", Width: healthW})
+		}
+		cols = append(cols, table.Column{Title: "TAGS", Width: tagsW})
+		if showAgg {
+			cols = append(cols, table.Column{Title: "RESOURCE GROUP", Width: aggW})
 		}
 		// Only Azure exposes a per-resource cost API. GCP's BigQuery billing
 		// export doesn't reliably surface a resource_name column, and AWS CE
 		// groups by service/region not individual resources, so the column
 		// would just be "—" everywhere.
-		if m.showCost && m.active != nil && m.active.Name() == pimSrcAzure {
-			cols = append(cols, table.Column{Title: "COST (MTD)", Width: 20})
+		if showCost {
+			cols = append(cols, table.Column{Title: "COST (MTD)", Width: costW})
 		}
 		return cols
 	default:
@@ -1249,7 +1283,38 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			}
 			rows = append(rows, row)
 		case provider.KindResource:
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Meta["type"], n.Location, shortDate(n.Meta["createdTime"]), healthBadge(n.Meta["health"]), shortenTags(n.Meta["tags"], tagsColWidth-1)}
+			// The HEALTH column is conditionally dropped on narrow
+			// terminals (see splitResourceCols). Mirror that choice
+			// here so row length matches column count — bubbles/table
+			// renders blank cells when they fall short, but a mismatched
+			// extra cell overflows the last visible column.
+			showHealth := true
+			w := m.width
+			if w > 0 {
+				costW := 0
+				if m.showCost && m.active != nil && m.active.Name() == pimSrcAzure {
+					costW = 20
+				}
+				aggW := 0
+				if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
+					aggW = 28
+				}
+				budget := w - (4 + 40 + costW + aggW + 2*8)
+				if budget < 80 {
+					showHealth = false
+				}
+			}
+			row := table.Row{
+				selectionMark(m.selected[n.ID]),
+				n.Name,
+				n.Meta["type"],
+				n.Location,
+				shortDate(n.Meta["createdTime"]),
+			}
+			if showHealth {
+				row = append(row, healthBadge(n.Meta["health"]))
+			}
+			row = append(row, shortenTags(n.Meta["tags"], tagsColWidth-1))
 			if len(m.stack) > 0 && m.stack[len(m.stack)-1].aggregated {
 				row = append(row, n.Meta["originRG"])
 			}
@@ -1289,6 +1354,36 @@ const (
 	// column looks aligned whether the row is healthy (blank) or not.
 	healthColWidth = 14
 )
+
+// splitResourceCols divides the remaining width budget among the flexible
+// resource-view columns. TAGS is last in priority: it gets whatever's
+// left after type/location/created/health are sized. HEALTH is dropped
+// entirely (width 0) when the budget is too tight to show it readably.
+func splitResourceCols(budget int) (typeW, locW, createdW, healthW, tagsW int) {
+	// Typical layouts:
+	//  • budget ≥ 100: generous — type 30, loc 14, created 12, health 14, tags 22+
+	//  • budget ≥ 80:  compressed but all columns visible
+	//  • budget <  80: drop HEALTH, keep the rest tight
+	switch {
+	case budget >= 100:
+		typeW, locW, createdW, healthW = 30, 14, 12, healthColWidth
+	case budget >= 80:
+		typeW, locW, createdW, healthW = 26, 12, 10, healthColWidth
+	case budget >= 60:
+		typeW, locW, createdW, healthW = 22, 10, 10, 0
+	default:
+		typeW, locW, createdW, healthW = 18, 8, 10, 0
+	}
+	used := typeW + locW + createdW + healthW
+	tagsW = budget - used
+	if tagsW < 10 {
+		tagsW = 10
+	}
+	if tagsW > tagsColWidth {
+		tagsW = tagsColWidth
+	}
+	return
+}
 
 // healthBadge renders the per-resource availability status returned by
 // Azure Resource Health. The provider only stores non-Available states
@@ -1746,6 +1841,9 @@ func (m *model) keybar() string {
 			label = "filter: " + m.categoryFilter
 		}
 		pairs = append(pairs, pair{"#", label})
+		if n := len(m.selected); n > 0 {
+			pairs = append(pairs, pair{"D", fmt.Sprintf("delete %d", n)})
+		}
 	}
 	pairs = append(pairs,
 		pair{"r", "refresh"},

@@ -44,7 +44,11 @@ func (r *Runner) Run(ctx context.Context, args ...string) ([]byte, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return stdout.Bytes(), fmt.Errorf("%s %s: %s", r.Bin, strings.Join(args, " "), msg)
+		// Put the real error message FIRST so the TUI status bar — which
+		// truncates by terminal width — surfaces what actually went
+		// wrong instead of the full command line. The command goes on a
+		// second line for reproduction; firstErrLine picks the head.
+		return stdout.Bytes(), fmt.Errorf("%s\n  (ran: %s %s)", msg, r.Bin, strings.Join(args, " "))
 	}
 	return stdout.Bytes(), nil
 }
