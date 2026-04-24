@@ -212,8 +212,7 @@ func (a *Azure) doTenantRequest(ctx context.Context, subID, method, url string, 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(req)
 	if err != nil {
 		return nil, err
 	}

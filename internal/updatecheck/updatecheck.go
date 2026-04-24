@@ -211,14 +211,34 @@ func writeCache(p cachedPayload) {
 	if path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0o644)
+	// Atomic write: write to a temp file in the same directory, then rename.
+	// Protects against torn writes when two goroutines race (and against
+	// half-written JSON when the process is killed mid-write).
+	tmp, err := os.CreateTemp(dir, ".updatecheck-*.tmp")
+	if err != nil {
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+	}
 }
 
 // ClearCache drops the local update-check cache so the next Check() is

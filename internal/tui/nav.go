@@ -1,0 +1,151 @@
+package tui
+
+import (
+	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/tesserix/cloudnav/internal/provider"
+	"github.com/tesserix/cloudnav/internal/provider/azure"
+)
+
+func (m *model) drillDown() tea.Cmd {
+	if m.atRGLevel() && len(m.selected) > 0 {
+		return m.drillAggregated()
+	}
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.visibleNodes) {
+		return nil
+	}
+	cur := m.visibleNodes[c]
+	switch cur.Kind {
+	case provider.KindCloud:
+		for _, p := range m.providers {
+			if p.Name() == cur.Name {
+				m.active = p
+				m.resetView()
+				return m.load(p.Name(), nil)
+			}
+		}
+	case provider.KindCloudDisabled:
+		m.status = "coming soon"
+	case provider.KindSubscription,
+		provider.KindResourceGroup,
+		provider.KindProject,
+		provider.KindAccount,
+		provider.KindRegion:
+		m.resetView()
+		return m.load(cur.Name, &cur)
+	}
+	return nil
+}
+
+func (m *model) drillAggregated() tea.Cmd {
+	selected := make([]provider.Node, 0, len(m.selected))
+	for _, n := range m.visibleNodes {
+		if m.selected[n.ID] {
+			selected = append(selected, n)
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	prov := m.active
+	ctx := m.ctx
+	m.loading = true
+	m.drilling = true
+	m.status = fmt.Sprintf("loading resources across %d resource group(s)...", len(selected))
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			var combined []provider.Node
+			for _, rg := range selected {
+				rg := rg
+				nodes, err := prov.Children(ctx, rg)
+				if err != nil {
+					continue
+				}
+				for i := range nodes {
+					if nodes[i].Meta == nil {
+						nodes[i].Meta = map[string]string{}
+					}
+					nodes[i].Meta["originRG"] = rg.Name
+				}
+				combined = append(combined, nodes...)
+			}
+			return nodesLoadedMsg{frame: frame{
+				title:      fmt.Sprintf("%d resource group(s)", len(selected)),
+				nodes:      combined,
+				aggregated: true,
+			}}
+		},
+	)
+}
+
+func (m *model) resetView() {
+	m.filter = ""
+	m.search.SetValue("")
+	m.searchMode = false
+	m.search.Blur()
+	m.tenantFilter = ""
+	m.categoryFilter = ""
+}
+
+func (m *model) goBack() tea.Cmd {
+	if len(m.stack) <= 1 {
+		return tea.Quit
+	}
+	m.stack = m.stack[:len(m.stack)-1]
+	if len(m.stack) == 1 {
+		m.active = nil
+	}
+	m.resetView()
+	m.refreshTable()
+	m.table.SetCursor(0)
+	m.status = ""
+	return nil
+}
+
+func (m *model) reload() tea.Cmd {
+	if len(m.stack) <= 1 || m.active == nil {
+		return nil
+	}
+	// If the user hits refresh at the subscription list, they're asking
+	// for fresh data — bypass the provider's short-lived Root() cache.
+	if az, ok := m.active.(*azure.Azure); ok {
+		az.InvalidateRootCache()
+	}
+	top := m.stack[len(m.stack)-1]
+	m.stack = m.stack[:len(m.stack)-1]
+	return m.load(top.title, top.parent)
+}
+
+func (m *model) load(title string, parent *provider.Node) tea.Cmd {
+	if m.active == nil {
+		return nil
+	}
+	m.loading = true
+	m.drilling = true
+	m.err = nil
+	m.status = "loading " + title + "..."
+	prov := m.active
+	ctx := m.ctx
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			var (
+				nodes []provider.Node
+				err   error
+			)
+			if parent == nil {
+				nodes, err = prov.Root(ctx)
+			} else {
+				nodes, err = prov.Children(ctx, *parent)
+			}
+			if err != nil {
+				return errMsg{err}
+			}
+			return nodesLoadedMsg{frame: frame{title: title, parent: parent, nodes: nodes}}
+		},
+	)
+}

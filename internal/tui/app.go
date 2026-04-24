@@ -7,12 +7,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -28,6 +26,7 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
 	"github.com/tesserix/cloudnav/internal/provider/gcp"
+	"github.com/tesserix/cloudnav/internal/tui/components"
 	"github.com/tesserix/cloudnav/internal/tui/keys"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 	"github.com/tesserix/cloudnav/internal/updatecheck"
@@ -47,7 +46,10 @@ const (
 )
 
 func Run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	m := newModel()
+	m.ctx = ctx
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
@@ -247,66 +249,38 @@ type model struct {
 	keys            keys.Map
 }
 
+// newPromptInput builds a textinput with the shared theme. All prompts
+// across the TUI are cyan bold (or red for destructive confirms).
+func newPromptInput(prompt, placeholder string, charLimit int, promptStyle lipgloss.Style) textinput.Model {
+	t := textinput.New()
+	t.Prompt = prompt
+	t.Placeholder = placeholder
+	t.CharLimit = charLimit
+	t.PromptStyle = promptStyle
+	return t
+}
+
 func newModel() *model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(styles.Cyan)
+	sp.Style = styles.Spinner
 
 	t := table.New(
 		table.WithFocused(true),
 		table.WithHeight(20),
 	)
 	ts := table.DefaultStyles()
-	ts.Header = ts.Header.
-		BorderStyle(lipgloss.Border{}).
-		Bold(true).
-		Foreground(styles.Fg).
-		Padding(0, 1)
-	ts.Selected = ts.Selected.
-		Background(styles.Purple).
-		Foreground(lipgloss.Color("#ffffff")).
-		Bold(true)
-	ts.Cell = ts.Cell.Padding(0, 1)
+	ts.Header, ts.Selected, ts.Cell = styles.TableStyles()
 	t.SetStyles(ts)
 
-	ti := textinput.New()
-	ti.Prompt = "/ "
-	ti.Placeholder = "filter by name"
-	ti.CharLimit = 120
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
-
-	pi := textinput.New()
-	pi.Prompt = ": "
-	pi.Placeholder = "search any sub / project / account, or switch cloud, or jump to bookmark"
-	pi.CharLimit = 120
-	pi.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
-
-	pimIn := textinput.New()
-	pimIn.Prompt = "justification: "
-	pimIn.Placeholder = "e.g. investigating prod incident INC-4812"
-	pimIn.CharLimit = 200
-	pimIn.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
-
-	pimFilt := textinput.New()
-	pimFilt.Prompt = "filter PIM: "
-	pimFilt.Placeholder = "tenant, subscription, or role..."
-	pimFilt.CharLimit = 120
-	pimFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
-
-	advFilt := textinput.New()
-	advFilt.Prompt = "filter Advisor: "
-	advFilt.Placeholder = "cost / security / high / sql / ..."
-	advFilt.CharLimit = 120
-	advFilt.PromptStyle = lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true)
-
-	delIn := textinput.New()
-	delIn.Prompt = "type DELETE to confirm: "
-	delIn.Placeholder = "DELETE"
-	delIn.CharLimit = 16
-	delIn.PromptStyle = lipgloss.NewStyle().Foreground(styles.Err).Bold(true)
+	ti := newPromptInput("/ ", "filter by name", 120, styles.Prompt)
+	pi := newPromptInput(": ", "search any sub / project / account, or switch cloud, or jump to bookmark", 120, styles.Prompt)
+	pimIn := newPromptInput("justification: ", "e.g. investigating prod incident INC-4812", 200, styles.Prompt)
+	pimFilt := newPromptInput("filter PIM: ", "tenant, subscription, or role...", 120, styles.Prompt)
+	advFilt := newPromptInput("filter Advisor: ", "cost / security / high / sql / ...", 120, styles.Prompt)
+	delIn := newPromptInput("type DELETE to confirm: ", "DELETE", 16, styles.PromptErr)
 
 	vp := viewport.New(80, 20)
-	vp.Style = lipgloss.NewStyle()
 
 	cfg, _ := config.Load()
 	if cfg == nil {
@@ -370,45 +344,6 @@ func (m *model) Init() tea.Cmd {
 // via loginStatusMsg so the home cloud list can badge each row with the
 // user's current auth state. Purely informational — drilling into a cloud
 // still triggers Root() which surfaces fresh errors.
-func (m *model) checkLogins() tea.Cmd {
-	providers := m.providers
-	ctx := m.ctx
-	return func() tea.Msg {
-		result := map[string]string{}
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		for _, p := range providers {
-			p := p
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				status := loginStateFor(ctx, p)
-				mu.Lock()
-				result[p.Name()] = status
-				mu.Unlock()
-			}()
-		}
-		wg.Wait()
-		return loginStatusMsg{status: result}
-	}
-}
-
-// loginStateFor returns a short UI-ready status string: the CLI missing, the
-// signed-in identity, or a "not logged in" hint.
-func loginStateFor(ctx context.Context, p provider.Provider) string {
-	if l, ok := p.(provider.Loginer); ok {
-		bin, _ := l.LoginCommand()
-		if _, err := exec.LookPath(bin); err != nil {
-			return "CLI not installed"
-		}
-	}
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := p.LoggedIn(cctx); err != nil {
-		return "not logged in"
-	}
-	return "logged in"
-}
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -742,6 +677,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateAvailable = msg.result.Available
 		m.latestVersion = msg.result.Latest
 		m.latestURL = msg.result.URL
+		// Opt-in auto-upgrade: if the user turned on AutoUpgrade in config
+		// AND a newer release is available AND the plan is non-interactive
+		// (go install / brew — we never auto-launch a browser), run it now
+		// without opening the confirm overlay.
+		if msg.result.Available && m.cfg != nil && m.cfg.AutoUpgrade && !m.upgradeRunning && m.upgradeResult == "" {
+			plan := updatecheck.PlanUpgrade(m.latestVersion, m.latestURL)
+			if plan.Method == updatecheck.UpgradeGoInstall || plan.Method == updatecheck.UpgradeHomebrew {
+				m.upgradePlan = plan
+				m.upgradeRunning = true
+				m.status = "auto-upgrading to " + m.latestVersion + "..."
+				return m, m.runUpgrade()
+			}
+		}
 		// If the user explicitly asked for a check via the U shortcut,
 		// close the loop: open the upgrade confirm when something is
 		// available, otherwise tell them we looked and they're current.
@@ -810,454 +758,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *model) openPalette() tea.Cmd {
-	m.paletteMode = true
-	m.paletteInput.SetValue("")
-	m.paletteInput.Focus()
-	m.paletteIdx = 0
-	m.rebuildPalette()
-	return m.preloadEntities()
-}
 
-func (m *model) preloadEntities() tea.Cmd {
-	cmds := []tea.Cmd{}
-	for _, p := range m.providers {
-		if _, ok := m.entities[p.Name()]; ok {
-			continue
-		}
-		prov := p
-		ctx := m.ctx
-		cmds = append(cmds, func() tea.Msg {
-			nodes, err := prov.Root(ctx)
-			if err != nil {
-				return entitiesLoadedMsg{provider: prov.Name(), nodes: nil}
-			}
-			return entitiesLoadedMsg{provider: prov.Name(), nodes: nodes}
-		})
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
-func (m *model) rebuildPalette() {
-	q := strings.ToLower(m.paletteInput.Value())
-	all := make([]paletteItem, 0, 32)
-
-	for _, p := range m.providers {
-		all = append(all, paletteItem{
-			label:  "☁  switch to " + p.Name(),
-			action: "switch-cloud",
-			arg:    p.Name(),
-		})
-	}
-	for _, bm := range m.cfg.Bookmarks {
-		all = append(all, paletteItem{
-			label:  "★ " + bm.Label,
-			action: "open-bookmark",
-			arg:    bm.Label,
-		})
-	}
-	for _, p := range m.providers {
-		for _, n := range m.entities[p.Name()] {
-			all = append(all, paletteItem{
-				label:    "▸ " + p.Name() + "  " + n.Name + "  " + shortID(n.ID),
-				action:   "jump-entity",
-				provider: p.Name(),
-				node:     n,
-			})
-		}
-	}
-
-	if q == "" {
-		m.paletteItems = all
-	} else {
-		filtered := make([]paletteItem, 0, len(all))
-		for _, it := range all {
-			if containsFold(it.label, q) || containsFold(it.arg, q) || containsFold(it.node.ID, q) {
-				filtered = append(filtered, it)
-			}
-		}
-		m.paletteItems = filtered
-	}
-	if m.paletteIdx >= len(m.paletteItems) {
-		m.paletteIdx = 0
-	}
-}
-
-func containsFold(haystack, needle string) bool {
-	if needle == "" {
-		return true
-	}
-	return strings.Contains(strings.ToLower(haystack), needle)
-}
-
-func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.paletteMode = false
-		m.paletteInput.Blur()
-		return m, nil
-	case keyUp:
-		if m.paletteIdx > 0 {
-			m.paletteIdx--
-		}
-		return m, nil
-	case keyDown:
-		if m.paletteIdx < len(m.paletteItems)-1 {
-			m.paletteIdx++
-		}
-		return m, nil
-	case keyEnter:
-		if m.paletteIdx < len(m.paletteItems) {
-			cmd := m.runPaletteItem(m.paletteItems[m.paletteIdx])
-			m.paletteMode = false
-			m.paletteInput.Blur()
-			return m, cmd
-		}
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.paletteInput, cmd = m.paletteInput.Update(msg)
-	m.rebuildPalette()
-	return m, cmd
-}
-
-func (m *model) runPaletteItem(it paletteItem) tea.Cmd {
-	switch it.action {
-	case "switch-cloud":
-		for _, p := range m.providers {
-			if p.Name() == it.arg {
-				m.active = p
-				m.resetView()
-				m.stack = m.stack[:1]
-				return m.load(p.Name(), nil)
-			}
-		}
-	case "open-bookmark":
-		for _, bm := range m.cfg.Bookmarks {
-			if bm.Label == it.arg {
-				return m.openBookmark(bm)
-			}
-		}
-	case "jump-entity":
-		for _, p := range m.providers {
-			if p.Name() != it.provider {
-				continue
-			}
-			m.active = p
-			m.resetView()
-			m.stack = m.stack[:1]
-			m.restorePath = []config.Crumb{{
-				Kind: string(it.node.Kind),
-				ID:   it.node.ID,
-				Name: it.node.Name,
-			}}
-			m.restoreLabel = p.Name() + " / " + it.node.Name
-			m.status = "jumping to " + m.restoreLabel + "..."
-			return m.load(p.Name(), nil)
-		}
-	}
-	return nil
-}
-
-func (m *model) openBookmark(bm config.Bookmark) tea.Cmd {
-	for _, p := range m.providers {
-		if p.Name() == bm.Provider {
-			m.active = p
-			m.resetView()
-			m.stack = m.stack[:1]
-			// Skip the first crumb — it's the cloud level we just set as active.
-			if len(bm.Path) > 1 {
-				m.restorePath = append(m.restorePath[:0], bm.Path[1:]...)
-				m.restoreLabel = bm.Label
-				m.status = "restoring ★ " + bm.Label + "..."
-			} else {
-				m.restorePath = nil
-				m.restoreLabel = ""
-				m.status = "★ " + bm.Label
-			}
-			return m.load(p.Name(), nil)
-		}
-	}
-	m.status = "bookmark refers to unavailable provider " + bm.Provider
-	return nil
-}
-
-// advanceRestore drills one level deeper along m.restorePath, if any.
-func (m *model) advanceRestore() tea.Cmd {
-	if len(m.restorePath) == 0 {
-		if m.restoreLabel != "" {
-			m.status = "★ " + m.restoreLabel
-			m.restoreLabel = ""
-		}
-		return nil
-	}
-	next := m.restorePath[0]
-	for i, n := range m.visibleNodes {
-		if (next.ID != "" && n.ID == next.ID) || (next.ID == "" && n.Name == next.Name) {
-			m.table.SetCursor(i)
-			m.restorePath = m.restorePath[1:]
-			return m.drillDown()
-		}
-	}
-	m.status = fmt.Sprintf("restore stopped at %q (not found)", next.Name)
-	m.restorePath = nil
-	m.restoreLabel = ""
-	return nil
-}
-
-func (m *model) toggleCost() tea.Cmd {
-	m.showCost = !m.showCost
-	if !m.showCost {
-		m.status = "cost column off"
-		m.refreshTable()
-		return nil
-	}
-	if m.active == nil {
-		m.status = "cost column on — enter a cloud first"
-		m.refreshTable()
-		return nil
-	}
-	scope, ok := m.costScope()
-	if !ok {
-		m.status = m.costHint()
-		m.refreshTable()
-		return nil
-	}
-	if kindOf(&m.stack[len(m.stack)-1]) == provider.KindSubscription {
-		return m.loadSubscriptionCosts()
-	}
-	if m.atResourceLevel() {
-		return m.loadResourceCosts()
-	}
-	coster, ok := m.active.(provider.Coster)
-	if !ok {
-		m.status = m.active.Name() + ": costs not supported yet"
-		m.refreshTable()
-		return nil
-	}
-	if _, cached := m.costs[scope.ID]; cached {
-		m.refreshTable()
-		m.status = statusCostCached
-		return nil
-	}
-	m.loading = true
-	m.status = "loading cost breakdown..."
-	ctx := m.ctx
-	scopeID := scope.ID
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			costs, err := coster.Costs(ctx, scope)
-			if err != nil {
-				return errMsg{err}
-			}
-			return costsLoadedMsg{parentID: scopeID, costs: costs}
-		},
-	)
-}
-
-func (m *model) loadAggregatedCost(top *frame) tea.Cmd {
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		return nil
-	}
-	rgs := map[string]bool{}
-	for _, n := range top.nodes {
-		rgs[n.Meta["originRG"]] = true
-	}
-	cacheKey := "agg:" + top.title
-	if _, cached := m.costs[cacheKey]; cached {
-		return nil
-	}
-	// Find subscription — use one node's meta.
-	subID := ""
-	for _, n := range top.nodes {
-		if s := n.Meta["subscriptionId"]; s != "" {
-			subID = s
-			break
-		}
-	}
-	if subID == "" {
-		return nil
-	}
-	ctx := m.ctx
-	return func() tea.Msg {
-		merged := map[string]string{}
-		for rg := range rgs {
-			out, err := az.ResourceCosts(ctx, subID, rg)
-			if err != nil {
-				continue
-			}
-			for k, v := range out {
-				merged[k] = v
-			}
-		}
-		return costsLoadedMsg{parentID: cacheKey, costs: merged}
-	}
-}
-
-func (m *model) loadResourceCosts() tea.Cmd {
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		m.status = m.active.Name() + ": per-resource cost is Azure-only for now"
-		m.refreshTable()
-		return nil
-	}
-	top := &m.stack[len(m.stack)-1]
-	if top.parent == nil || top.parent.Kind != provider.KindResourceGroup {
-		return nil
-	}
-	rg := top.parent.Name
-	subID := top.parent.Meta["subscriptionId"]
-	if subID == "" && top.parent.Parent != nil {
-		subID = top.parent.Parent.ID
-	}
-	if subID == "" {
-		m.status = "resource cost: missing subscription context"
-		m.refreshTable()
-		return nil
-	}
-	cacheKey := "res:" + subID + "/" + rg
-	if _, cached := m.costs[cacheKey]; cached {
-		m.refreshTable()
-		m.status = statusCostCached
-		return nil
-	}
-	m.loading = true
-	m.status = fmt.Sprintf("loading resource cost for %s...", rg)
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			costs, err := az.ResourceCosts(ctx, subID, rg)
-			if err != nil {
-				return errMsg{err}
-			}
-			return costsLoadedMsg{parentID: cacheKey, costs: costs}
-		},
-	)
-}
-
-func (m *model) loadSubscriptionCosts() tea.Cmd {
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		m.status = m.active.Name() + ": subscription-level costs are Azure-only for now"
-		m.refreshTable()
-		return nil
-	}
-	if _, cached := m.costs["__azure_subs__"]; cached {
-		m.refreshTable()
-		m.status = statusCostCached
-		return nil
-	}
-	top := m.stack[len(m.stack)-1]
-	ids := make([]string, 0, len(top.nodes))
-	for _, n := range top.nodes {
-		ids = append(ids, n.ID)
-	}
-	m.loading = true
-	m.status = fmt.Sprintf("loading cost for %d subscription(s)...", len(ids))
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			subCosts, _ := az.SubscriptionCosts(ctx, ids)
-			out := make(map[string]string, len(subCosts))
-			for _, c := range subCosts {
-				if c.Error != "" {
-					out[strings.ToLower(c.SubscriptionID)] = styles.Help.Render(c.Error)
-					continue
-				}
-				out[strings.ToLower(c.SubscriptionID)] = formatSubCost(c.Current, c.LastMonth, c.Currency)
-			}
-			return costsLoadedMsg{parentID: "__azure_subs__", costs: out}
-		},
-	)
-}
-
-func formatSubCost(current, last float64, currency string) string {
-	base := formatAmount(current, currency)
-	if last == 0 && current == 0 {
-		return base
-	}
-	if last == 0 {
-		return base + " new"
-	}
-	delta := (current - last) / last * 100
-	switch {
-	case delta > 2:
-		return fmt.Sprintf("%s ↑%d%%", base, int(delta+0.5))
-	case delta < -2:
-		return fmt.Sprintf("%s ↓%d%%", base, int(-delta+0.5))
-	default:
-		return base + " →"
-	}
-}
-
-func formatAmount(amount float64, currency string) string {
-	symbol := currencyChar(currency)
-	return fmt.Sprintf("%s%.2f", symbol, amount)
-}
-
-func currencyChar(code string) string {
-	switch strings.ToUpper(code) {
-	case currencyUSD, "":
-		return "$"
-	case "GBP":
-		return "£"
-	case "EUR":
-		return "€"
-	case "INR":
-		return "₹"
-	case "JPY":
-		return "¥"
-	case "AUD":
-		return "A$"
-	case "CAD":
-		return "C$"
-	default:
-		return code + " "
-	}
-}
-
-func (m *model) costScope() (provider.Node, bool) {
-	top := &m.stack[len(m.stack)-1]
-	switch kindOf(top) {
-	case provider.KindSubscription:
-		return provider.Node{ID: "__azure_subs__", Kind: provider.KindCloud}, true
-	case provider.KindResourceGroup:
-		if top.parent != nil && top.parent.Kind == provider.KindSubscription {
-			return *top.parent, true
-		}
-	case provider.KindResource:
-		if top.parent != nil && top.parent.Kind == provider.KindResourceGroup {
-			return *top.parent, true
-		}
-	case provider.KindRegion:
-		if top.parent != nil && top.parent.Kind == provider.KindAccount {
-			return *top.parent, true
-		}
-	case provider.KindProject:
-		return provider.Node{ID: providerGCP, Kind: provider.KindCloud}, true
-	}
-	return provider.Node{}, false
-}
-
-func (m *model) costHint() string {
-	switch m.active.Name() {
-	case pimSrcAzure:
-		return "cost column on — drill into a subscription's resource groups"
-	case "aws":
-		return "cost column on — drill into the account's regions"
-	case providerGCP:
-		return "cost column on — press c on the projects list"
-	default:
-		return "cost column on — not supported at this view"
-	}
-}
 
 func (m *model) saveBookmark() {
 	if len(m.stack) <= 1 || m.active == nil {
@@ -1296,881 +797,28 @@ func (m *model) saveBookmark() {
 	m.status = "★ bookmarked " + bm.Label
 }
 
-func (m *model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.searchMode = false
-		m.search.Blur()
-		m.filter = ""
-		m.search.SetValue("")
-		m.refreshTable()
-		return m, nil
-	case keyEnter:
-		m.searchMode = false
-		m.search.Blur()
-		return m, nil
-	case keyUp, keyDown, "pgup", "pgdown":
-		// Swallow list-navigation keys while typing a filter: moving the
-		// table cursor mid-search makes it unclear which row will be acted
-		// on when the filter is committed. Esc clears, Enter commits.
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.search, cmd = m.search.Update(msg)
-	m.filter = m.search.Value()
-	m.refreshTable()
-	return m, cmd
-}
 
-func (m *model) drillDown() tea.Cmd {
-	if m.atRGLevel() && len(m.selected) > 0 {
-		return m.drillAggregated()
-	}
-	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
-		return nil
-	}
-	cur := m.visibleNodes[c]
-	switch cur.Kind {
-	case provider.KindCloud:
-		for _, p := range m.providers {
-			if p.Name() == cur.Name {
-				m.active = p
-				m.resetView()
-				return m.load(p.Name(), nil)
-			}
-		}
-	case provider.KindCloudDisabled:
-		m.status = "coming soon"
-	case provider.KindSubscription,
-		provider.KindResourceGroup,
-		provider.KindProject,
-		provider.KindAccount,
-		provider.KindRegion:
-		m.resetView()
-		return m.load(cur.Name, &cur)
-	}
-	return nil
-}
 
-func (m *model) drillAggregated() tea.Cmd {
-	selected := make([]provider.Node, 0, len(m.selected))
-	for _, n := range m.visibleNodes {
-		if m.selected[n.ID] {
-			selected = append(selected, n)
-		}
-	}
-	if len(selected) == 0 {
-		return nil
-	}
-	prov := m.active
-	ctx := m.ctx
-	m.loading = true
-	m.drilling = true
-	m.status = fmt.Sprintf("loading resources across %d resource group(s)...", len(selected))
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			var combined []provider.Node
-			for _, rg := range selected {
-				rg := rg
-				nodes, err := prov.Children(ctx, rg)
-				if err != nil {
-					continue
-				}
-				for i := range nodes {
-					if nodes[i].Meta == nil {
-						nodes[i].Meta = map[string]string{}
-					}
-					nodes[i].Meta["originRG"] = rg.Name
-				}
-				combined = append(combined, nodes...)
-			}
-			return nodesLoadedMsg{frame: frame{
-				title:      fmt.Sprintf("%d resource group(s)", len(selected)),
-				nodes:      combined,
-				aggregated: true,
-			}}
-		},
-	)
-}
-
-func (m *model) resetView() {
-	m.filter = ""
-	m.search.SetValue("")
-	m.searchMode = false
-	m.search.Blur()
-	m.tenantFilter = ""
-	m.categoryFilter = ""
-}
-
-func (m *model) goBack() tea.Cmd {
-	if len(m.stack) <= 1 {
-		return tea.Quit
-	}
-	m.stack = m.stack[:len(m.stack)-1]
-	if len(m.stack) == 1 {
-		m.active = nil
-	}
-	m.resetView()
-	m.refreshTable()
-	m.table.SetCursor(0)
-	m.status = ""
-	return nil
-}
-
-func (m *model) reload() tea.Cmd {
-	if len(m.stack) <= 1 || m.active == nil {
-		return nil
-	}
-	// If the user hits refresh at the subscription list, they're asking
-	// for fresh data — bypass the provider's short-lived Root() cache.
-	if az, ok := m.active.(*azure.Azure); ok {
-		az.InvalidateRootCache()
-	}
-	top := m.stack[len(m.stack)-1]
-	m.stack = m.stack[:len(m.stack)-1]
-	return m.load(top.title, top.parent)
-}
-
-func (m *model) load(title string, parent *provider.Node) tea.Cmd {
-	if m.active == nil {
-		return nil
-	}
-	m.loading = true
-	m.drilling = true
-	m.err = nil
-	m.status = "loading " + title + "..."
-	prov := m.active
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			var (
-				nodes []provider.Node
-				err   error
-			)
-			if parent == nil {
-				nodes, err = prov.Root(ctx)
-			} else {
-				nodes, err = prov.Children(ctx, *parent)
-			}
-			if err != nil {
-				return errMsg{err}
-			}
-			return nodesLoadedMsg{frame: frame{title: title, parent: parent, nodes: nodes}}
-		},
-	)
-}
-
-func (m *model) loadDetail() tea.Cmd {
-	if m.active == nil {
-		return nil
-	}
-	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
-		return nil
-	}
-	cur := m.visibleNodes[c]
-	if cur.Kind == provider.KindCloud || cur.Kind == provider.KindCloudDisabled {
-		return nil
-	}
-	m.loading = true
-	m.status = "loading " + cur.Name + "..."
-	prov := m.active
-	ctx := m.ctx
-	// Formatted summary built up-front from what the TUI already knows
-	// (tags / health / location / cost / created time). Paired with the
-	// raw provider JSON below the separator so anyone who scrolls past
-	// the summary still gets the full payload — additive only.
-	summary := formatDetailSummary(cur)
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			data, err := prov.Details(ctx, cur)
-			if err != nil {
-				return errMsg{err}
-			}
-			body := summary + "\n" + strings.Repeat("─", 60) + "\n" + string(data)
-			return detailLoadedMsg{title: cur.Name, body: body}
-		},
-	)
-}
-
-// formatDetailSummary turns the cached Meta / Cost / state on a Node
-// into a readable header for the detail overlay. The output is plain
-// text (no ANSI) — the viewport renders it inside the styles.Box frame
-// already, and styling it mid-body would fight with the raw-JSON
-// section that follows.
-func formatDetailSummary(n provider.Node) string {
-	rows := []string{"  " + n.Name, ""}
-	addRow := func(label, value string) {
-		if value == "" {
-			return
-		}
-		rows = append(rows, fmt.Sprintf("  %-12s %s", label+":", value))
-	}
-	addRow("Kind", string(n.Kind))
-	addRow("ID", n.ID)
-	addRow("Location", n.Location)
-	addRow("State", n.State)
-	// shortDate returns an em-dash for empty or malformed dates, so
-	// only pass it through when the raw value is non-empty — otherwise
-	// we'd get a "Created: —" row for resources that don't have a
-	// creation timestamp (regions, accounts).
-	if n.Meta["createdTime"] != "" {
-		addRow("Created", shortDate(n.Meta["createdTime"]))
-	}
-	if n.Meta["changedTime"] != "" {
-		addRow("Changed", shortDate(n.Meta["changedTime"]))
-	}
-	addRow("Type", n.Meta["type"])
-	addRow("Sub", n.Meta["subscriptionId"])
-	addRow("Tenant", n.Meta["tenantName"])
-	addRow("Project", n.Meta["project"])
-	addRow("Account", n.Meta["accountId"])
-	addRow("Region", n.Meta["region"])
-	addRow("Tags", n.Meta["tags"])
-	addRow("Health", n.Meta["health"])
-	addRow("Cost (MTD)", n.Cost)
-	return strings.Join(rows, "\n")
-}
 
 // loadBilling fires the active provider's Billing() call and opens the
 // billing overlay. Implements the `B` key. Falls through with a status hint
 // when the active provider doesn't implement provider.Billing. For GCP we
 // also pull BillingStatus so the overlay can render a setup checklist when
 // the BQ export isn't live yet.
-func (m *model) loadBilling() tea.Cmd {
-	b, ok := m.active.(provider.Billing)
-	if !ok {
-		m.status = m.active.Name() + ": billing overview not supported"
-		return nil
-	}
-	summarer, _ := m.active.(provider.BillingSummarer)
-	m.loading = true
-	m.status = "loading " + m.active.Name() + " billing..."
-	ctx := m.ctx
-	scope := m.active.Name()
-	if gp, ok := m.active.(*gcp.GCP); ok {
-		prov := gp
-		return tea.Batch(
-			m.spinner.Tick,
-			func() tea.Msg {
-				lines, err := b.Billing(ctx)
-				if err != nil {
-					return errMsg{err}
-				}
-				status, _ := prov.BillingStatus(ctx)
-				summary := scopeSummaryFrom(ctx, summarer)
-				return billingLoadedMsg{lines: lines, scope: scope, gcpStatus: status, summary: summary}
-			},
-		)
-	}
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			lines, err := b.Billing(ctx)
-			if err != nil {
-				return errMsg{err}
-			}
-			summary := scopeSummaryFrom(ctx, summarer)
-			return billingLoadedMsg{lines: lines, scope: scope, summary: summary}
-		},
-	)
-}
-
-// scopeSummaryFrom calls the optional BillingSummary capability. Quiet on
-// error because every field is strictly additive — a failed summary just
-// means the TOTAL line reports per-row aggregates without a forecast or
-// budget indicator, same as before BillingSummarer existed.
-func scopeSummaryFrom(ctx context.Context, s provider.BillingSummarer) provider.BillingScope {
-	if s == nil {
-		return provider.BillingScope{}
-	}
-	out, err := s.BillingSummary(ctx)
-	if err != nil {
-		return provider.BillingScope{}
-	}
-	return out
-}
 
 // loadMetrics pulls a short-window time-series for the resource under
 // the cursor. Per-resource only; the caller must be on the resource
 // view. Uses provider.Metricser when the active cloud implements it.
-func (m *model) loadMetrics() tea.Cmd {
-	met, ok := m.active.(provider.Metricser)
-	if !ok {
-		m.status = m.active.Name() + ": metrics overlay not wired yet for this cloud"
-		return nil
-	}
-	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
-		return nil
-	}
-	cur := m.visibleNodes[c]
-	if cur.Kind != provider.KindResource {
-		m.status = "metrics needs a resource under the cursor"
-		return nil
-	}
-	label := cur.Name
-	if t := cur.Meta["type"]; t != "" {
-		label += " · " + t
-	}
-	m.loading = true
-	m.status = "loading metrics for " + cur.Name + "..."
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			data, err := met.Metrics(ctx, cur)
-			if err != nil {
-				return errMsg{err}
-			}
-			return metricsLoadedMsg{data: data, label: label}
-		},
-	)
-}
-
-// updateMetrics handles keys while the metrics overlay is visible.
-// Read-only overlay — only dismiss.
-func (m *model) updateMetrics(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc, "q", "M":
-		m.metricsMode = false
-		m.status = ""
-		return m, nil
-	}
-	return m, nil
-}
-
-// metricsView renders each returned Metric as a Unicode-block sparkline
-// with min / max / last labels so the reader can tell the shape of a
-// series at a glance without needing a full chart.
-func (m *model) metricsView() string {
-	header := styles.Title.Render("metrics") + "  " + styles.Help.Render(m.metricsLabel)
-	box := fullScreenBox(m.width, m.height)
-	if len(m.metricsData) == 0 {
-		return box.Render(strings.Join([]string{
-			header,
-			"",
-			styles.Help.Render("  no default metrics for this resource type yet"),
-			styles.Help.Render("  (cloudnav only whitelists a subset — VMs, App Service, SQL, Storage, AKS for now)"),
-			"",
-			styles.Help.Render("  esc/M close"),
-		}, "\n"))
-	}
-	lines := []string{header, ""}
-	for _, mm := range m.metricsData {
-		mn, mx, last := seriesStats(mm.Points)
-		unit := mm.Unit
-		if unit == "" {
-			unit = emDash
-		}
-		lines = append(lines, fmt.Sprintf("  %-30s  %s  min %8.2f  max %8.2f  last %8.2f %s",
-			shorten(mm.Name, 30), sparkline(mm.Points), mn, mx, last, unit))
-	}
-	lines = append(lines, "", styles.Help.Render("  last 60 min · 5 min bins · esc/M close"))
-	return box.Render(strings.Join(lines, "\n"))
-}
-
-// sparkline renders a series as a row of Unicode block runes. Zero-length
-// or all-zero series render as a flat bottom line so the column stays
-// aligned — better than collapsing to nothing and breaking the grid.
-func sparkline(points []float64) string {
-	if len(points) == 0 {
-		return strings.Repeat("▁", 12)
-	}
-	blocks := []rune("▁▂▃▄▅▆▇█")
-	mn, mx, _ := seriesStats(points)
-	if mx == mn {
-		return strings.Repeat(string(blocks[0]), len(points))
-	}
-	b := make([]rune, len(points))
-	for i, v := range points {
-		idx := int((v - mn) / (mx - mn) * float64(len(blocks)-1))
-		if idx < 0 {
-			idx = 0
-		}
-		if idx >= len(blocks) {
-			idx = len(blocks) - 1
-		}
-		b[i] = blocks[idx]
-	}
-	return string(b)
-}
-
-// seriesStats returns (min, max, last) across a series. Min and max are
-// set to 0 for empty slices so the caller can render without NaNs.
-func seriesStats(points []float64) (float64, float64, float64) {
-	if len(points) == 0 {
-		return 0, 0, 0
-	}
-	mn, mx := points[0], points[0]
-	for _, v := range points {
-		if v < mn {
-			mn = v
-		}
-		if v > mx {
-			mx = v
-		}
-	}
-	return mn, mx, points[len(points)-1]
-}
 
 // loadHealth opens the Service Health overlay, showing active incidents
 // affecting the caller's scope. Optional provider capability — we show a
 // status hint when the active cloud doesn't implement HealthEventer.
-func (m *model) loadHealth() tea.Cmd {
-	h, ok := m.active.(provider.HealthEventer)
-	if !ok {
-		m.status = m.active.Name() + ": service health not supported"
-		return nil
-	}
-	m.loading = true
-	m.status = "loading " + m.active.Name() + " service health..."
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			events, err := h.HealthEvents(ctx)
-			if err != nil {
-				return errMsg{err}
-			}
-			return healthLoadedMsg{events: events}
-		},
-	)
-}
 
 // loadAdvisor fetches cloud-native advisor recommendations for the scope
 // under the cursor and opens the advisor overlay. Azure goes to ARM Advisor,
 // GCP goes to Cloud Recommender. The provider.Advisor interface lets future
 // clouds drop in without touching the TUI.
-func (m *model) loadAdvisor() tea.Cmd {
-	adv, ok := m.active.(provider.Advisor)
-	if !ok {
-		m.status = m.active.Name() + ": advisor not supported"
-		return nil
-	}
-	scopeID, filterScope, displayName := m.advisorScopeForActive()
-	if scopeID == "" {
-		m.status = "advisor needs a subscription / project scope — drill in first"
-		return nil
-	}
-	m.loading = true
-	m.status = "loading " + m.active.Name() + " advisor recommendations..."
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			recs, err := adv.Recommendations(ctx, scopeID)
-			if err != nil {
-				return errMsg{err}
-			}
-			filtered := filterAdvisorByScope(recs, filterScope)
-			return advisorLoadedMsg{recs: filtered, scope: filterScope, scopeName: displayName}
-		},
-	)
-}
 
-// advisorScopeForActive resolves the advisor scope for the current provider.
-// Returns (apiScope, filterScope, display) where apiScope is what gets
-// passed to the provider (e.g. the sub id / project id) and filterScope is
-// the string client-side filtering uses to narrow results to the cursor.
-func (m *model) advisorScopeForActive() (string, string, string) {
-	switch m.active.Name() {
-	case pimSrcAzure:
-		subID, rgName, resourceID, name := m.advisorTarget()
-		filter := "/subscriptions/" + subID
-		if rgName != "" {
-			filter += "/resourceGroups/" + rgName
-		}
-		if resourceID != "" {
-			filter = resourceID
-		}
-		return subID, filter, name
-	case providerGCP:
-		projID, name := m.gcpAdvisorTarget()
-		return projID, "projects/" + projID, name
-	}
-	return "", "", ""
-}
-
-func (m *model) gcpAdvisorTarget() (string, string) {
-	if len(m.stack) == 0 {
-		return "", ""
-	}
-	top := &m.stack[len(m.stack)-1]
-	c := m.table.Cursor()
-	if kindOf(top) == provider.KindProject {
-		if c >= 0 && c < len(m.visibleNodes) {
-			return m.visibleNodes[c].ID, m.visibleNodes[c].Name
-		}
-	}
-	// Already drilled into a project — use the parent.
-	if top.parent != nil && top.parent.Kind == provider.KindProject {
-		return top.parent.ID, top.parent.Name
-	}
-	return "", ""
-}
-
-func filterAdvisorByScope(recs []provider.Recommendation, scope string) []provider.Recommendation {
-	scopeLow := strings.ToLower(scope)
-	out := make([]provider.Recommendation, 0, len(recs))
-	for _, r := range recs {
-		target := strings.ToLower(r.ResourceID)
-		if target == "" || strings.HasPrefix(target, scopeLow) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// advisorTarget returns the (subID, rgName, resourceID, display) tuple for
-// the cursor's current scope.
-func (m *model) advisorTarget() (string, string, string, string) {
-	if len(m.stack) == 0 {
-		return "", "", "", ""
-	}
-	top := &m.stack[len(m.stack)-1]
-	c := m.table.Cursor()
-	var cursor *provider.Node
-	if c >= 0 && c < len(m.visibleNodes) {
-		cursor = &m.visibleNodes[c]
-	}
-	switch kindOf(top) {
-	case provider.KindSubscription:
-		if cursor != nil {
-			return cursor.ID, "", "", cursor.Name
-		}
-	case provider.KindResourceGroup:
-		if cursor != nil {
-			sub := cursor.Meta["subscriptionId"]
-			return sub, cursor.Name, "", cursor.Name
-		}
-		if top.parent != nil {
-			return top.parent.ID, "", "", top.parent.Name
-		}
-	case provider.KindResource:
-		if cursor != nil {
-			sub := cursor.Meta["subscriptionId"]
-			return sub, parentRGName(cursor.ID), cursor.ID, cursor.Name
-		}
-		if top.parent != nil {
-			sub := top.parent.Meta["subscriptionId"]
-			if sub == "" && top.parent.Parent != nil {
-				sub = top.parent.Parent.ID
-			}
-			return sub, top.parent.Name, "", top.parent.Name
-		}
-	}
-	return "", "", "", ""
-}
-
-// parentRGName pulls the RG name out of a full Azure resource ID.
-func parentRGName(id string) string {
-	const marker = "/resourceGroups/"
-	i := strings.Index(id, marker)
-	if i < 0 {
-		return ""
-	}
-	rest := id[i+len(marker):]
-	if j := strings.Index(rest, "/"); j >= 0 {
-		return rest[:j]
-	}
-	return rest
-}
-
-func (m *model) loadPIM() tea.Cmd {
-	if m.active == nil {
-		m.status = "enter a cloud first (↵ on a cloud row) before requesting PIM roles"
-		return nil
-	}
-	if _, ok := m.active.(provider.PIMer); !ok {
-		m.status = m.active.Name() + ": JIT elevation not supported yet (planned — use Azure for now)"
-		return nil
-	}
-	m.loading = true
-	m.status = "loading PIM eligible roles..."
-	prov := m.active.(provider.PIMer)
-	ctx := m.ctx
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			roles, err := prov.ListEligibleRoles(ctx)
-			if err != nil {
-				return errMsg{err}
-			}
-			return pimLoadedMsg{roles: roles}
-		},
-	)
-}
-
-func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.pimActivate {
-		return m.updatePIMActivate(msg)
-	}
-	if m.pimFilterOn {
-		return m.updatePIMFilter(msg)
-	}
-	switch msg.String() {
-	case keyEsc, "q":
-		m.pimMode = false
-		m.status = ""
-		return m, nil
-	case keyUp, "k":
-		if m.pimCursor > 0 {
-			m.pimCursor--
-			m.syncPIMDurationToPolicy()
-		}
-		return m, nil
-	case keyDown, "j":
-		if m.pimCursor < len(m.filteredPIM())-1 {
-			m.pimCursor++
-			m.syncPIMDurationToPolicy()
-		}
-		return m, nil
-	case "/":
-		m.pimFilterOn = true
-		m.pimFilterIn.SetValue(m.pimFilter)
-		m.pimFilterIn.Focus()
-		return m, nil
-	case "a", keyEnter:
-		if len(m.filteredPIM()) == 0 {
-			return m, nil
-		}
-		m.pimActivate = true
-		m.pimInput.SetValue("")
-		m.pimInput.Focus()
-		return m, nil
-	case "+":
-		if m.pimDuration < m.pimDurationCap() {
-			m.pimDuration++
-		}
-		return m, nil
-	case "-":
-		if m.pimDuration > 1 {
-			m.pimDuration--
-		}
-		return m, nil
-	case "0":
-		m.pimSourceFilt = ""
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case "1":
-		m.pimSourceFilt = pimSrcAzure
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case "2":
-		m.pimSourceFilt = pimSrcEntra
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case "3":
-		m.pimSourceFilt = pimSrcGroup
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case "4":
-		m.pimSourceFilt = pimSrcGCP
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case "5":
-		m.pimSourceFilt = pimSrcAWSSSO
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m *model) updatePIMFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.pimFilterOn = false
-		m.pimFilter = ""
-		m.pimFilterIn.SetValue("")
-		m.pimFilterIn.Blur()
-		m.pimCursor = 0
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case keyEnter:
-		m.pimFilterOn = false
-		m.pimFilterIn.Blur()
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	case keyUp, keyDown:
-		if msg.String() == keyUp && m.pimCursor > 0 {
-			m.pimCursor--
-		}
-		if msg.String() == keyDown && m.pimCursor < len(m.filteredPIM())-1 {
-			m.pimCursor++
-		}
-		m.syncPIMDurationToPolicy()
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.pimFilterIn, cmd = m.pimFilterIn.Update(msg)
-	m.pimFilter = m.pimFilterIn.Value()
-	if m.pimCursor >= len(m.filteredPIM()) {
-		m.pimCursor = 0
-	}
-	m.syncPIMDurationToPolicy()
-	return m, cmd
-}
-
-// syncPIMDurationToPolicy sets pimDuration to the role's policy-defined max
-// when known, so + / - starts from the Azure-configured ceiling. Falls back
-// to 8h when the policy is unreadable.
-func (m *model) syncPIMDurationToPolicy() {
-	filt := m.filteredPIM()
-	if len(filt) == 0 || m.pimCursor >= len(filt) {
-		return
-	}
-	role := filt[m.pimCursor]
-	if role.MaxDurationHours > 0 {
-		m.pimDuration = role.MaxDurationHours
-		return
-	}
-	if m.pimDuration <= 0 {
-		m.pimDuration = 8
-	}
-}
-
-// pimDurationCap returns the upper bound for the duration stepper — the
-// current role's policy max when known, else 24h.
-func (m *model) pimDurationCap() int {
-	filt := m.filteredPIM()
-	if len(filt) == 0 || m.pimCursor >= len(filt) {
-		return 24
-	}
-	if max := filt[m.pimCursor].MaxDurationHours; max > 0 {
-		return max
-	}
-	return 24
-}
-
-func (m *model) filteredPIM() []provider.PIMRole {
-	q := strings.ToLower(m.pimFilter)
-	src := m.pimSourceFilt
-	out := make([]provider.PIMRole, 0, len(m.pimRoles))
-	for _, r := range m.pimRoles {
-		if src != "" && r.Source != src {
-			continue
-		}
-		if q != "" &&
-			!strings.Contains(strings.ToLower(r.RoleName), q) &&
-			!strings.Contains(strings.ToLower(r.ScopeName), q) &&
-			!strings.Contains(strings.ToLower(r.Scope), q) &&
-			!strings.Contains(strings.ToLower(r.TenantID), q) &&
-			!strings.Contains(strings.ToLower(r.Source), q) {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
-// pimSourceCounts returns { "azure": N, "entra": M, "group": K } so the tab
-// bar can show totals per source in the header.
-func (m *model) pimSourceCounts() map[string]int {
-	out := map[string]int{}
-	for _, r := range m.pimRoles {
-		src := r.Source
-		if src == "" {
-			src = pimSrcAzure
-		}
-		out[src]++
-	}
-	return out
-}
-
-func (m *model) updatePIMActivate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.pimActivate = false
-		m.pimInput.Blur()
-		return m, nil
-	case keyEnter:
-		reason := strings.TrimSpace(m.pimInput.Value())
-		if reason == "" {
-			m.status = "justification is required"
-			return m, nil
-		}
-		filt := m.filteredPIM()
-		if len(filt) == 0 || m.pimCursor >= len(filt) {
-			return m, nil
-		}
-		role := filt[m.pimCursor]
-		if role.Active {
-			m.pimActivate = false
-			m.pimInput.Blur()
-			m.status = fmt.Sprintf("%s on %s is already ACTIVE until %s — nothing to do", role.RoleName, scopeDisplay(role), humanUntil(role.ActiveUntil))
-			return m, nil
-		}
-		m.pimActivate = false
-		m.pimInput.Blur()
-		m.loading = true
-		m.status = fmt.Sprintf("activating %s on %s for %dh...", role.RoleName, scopeDisplay(role), m.pimDuration)
-		prov := m.active.(provider.PIMer)
-		ctx := m.ctx
-		dur := m.pimDuration
-		expires := time.Now().Add(time.Duration(dur) * time.Hour).UTC().Format(time.RFC3339)
-		return m, tea.Batch(
-			m.spinner.Tick,
-			func() tea.Msg {
-				err := prov.ActivateRole(ctx, role, reason, dur)
-				return pimActivatedMsg{
-					role:      role.RoleName + " on " + scopeDisplay(role),
-					roleID:    role.ID,
-					expiresAt: expires,
-					err:       err,
-				}
-			},
-		)
-	}
-	var cmd tea.Cmd
-	m.pimInput, cmd = m.pimInput.Update(msg)
-	return m, cmd
-}
-
-func humanUntil(iso string) string {
-	t, err := time.Parse(time.RFC3339, iso)
-	if err != nil {
-		if iso == "" {
-			return "expiry unknown"
-		}
-		return iso
-	}
-	rem := time.Until(t)
-	if rem <= 0 {
-		return "just expired"
-	}
-	local := t.Local().Format("15:04 Jan-02")
-	return fmt.Sprintf("%s (%s left)", local, humanDuration(rem))
-}
-
-func humanDuration(d time.Duration) string {
-	if d >= time.Hour {
-		h := int(d / time.Hour)
-		m := int(d%time.Hour) / int(time.Minute)
-		if m == 0 {
-			return fmt.Sprintf("%dh", h)
-		}
-		return fmt.Sprintf("%dh%dm", h, m)
-	}
-	return fmt.Sprintf("%dm", int(d/time.Minute))
-}
-
-func scopeDisplay(r provider.PIMRole) string {
-	if r.ScopeName != "" {
-		return r.ScopeName
-	}
-	return r.Scope
-}
 
 // loginCurrentCloud runs the active cloud's CLI login interactively. Suspends
 // the TUI via tea.ExecProcess so the browser redirect / device-code prompt
@@ -2178,141 +826,6 @@ func scopeDisplay(r provider.PIMRole) string {
 // refreshes so the cloud's nodes populate without a manual relaunch. When
 // the CLI itself is missing we run the install plan first (single TUI
 // suspension), then fall through to the login step.
-func (m *model) loginCurrentCloud() tea.Cmd {
-	prov := m.loginTargetProvider()
-	if prov == nil {
-		m.status = "move the cursor to a cloud row and press I to login"
-		return nil
-	}
-	loginer, ok := prov.(provider.Loginer)
-	if !ok {
-		m.status = prov.Name() + ": login flow not implemented"
-		return nil
-	}
-	bin, args := loginer.LoginCommand()
-	providerName := prov.Name()
-	if _, err := exec.LookPath(bin); err != nil {
-		return m.installThenLogin(prov, loginer, bin, args)
-	}
-	cmd := exec.Command(bin, args...)
-	cmd.Env = os.Environ()
-	m.status = "launching " + bin + " " + strings.Join(args, " ") + "..."
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		if err != nil {
-			return errMsg{fmt.Errorf("%s login failed: %w", providerName, err)}
-		}
-		return loginDoneMsg{cloud: providerName}
-	})
-}
-
-// installThenLogin chains install + login into a single sh -c so both run in
-// one TUI suspension. Falls back to a clear error if no install recipe
-// exists for the current OS.
-func (m *model) installThenLogin(prov provider.Provider, loginer provider.Loginer, loginBin string, loginArgs []string) tea.Cmd {
-	installer, ok := prov.(provider.Installer)
-	if !ok {
-		m.status = prov.Name() + ": " + loginer.InstallHint()
-		return nil
-	}
-	steps, ok := installer.InstallPlan(runtime.GOOS)
-	if !ok {
-		m.status = fmt.Sprintf("no install recipe for %s on %s — %s", prov.Name(), runtime.GOOS, loginer.InstallHint())
-		return nil
-	}
-	// Chain install steps then login into one shell so the TUI suspends
-	// exactly once and the user sees the full output in order.
-	parts := make([]string, 0, len(steps)+1)
-	for _, s := range steps {
-		parts = append(parts, shellQuote(s.Bin, s.Args))
-	}
-	parts = append(parts, shellQuote(loginBin, loginArgs))
-	script := strings.Join(parts, " && ")
-	cmd := exec.Command("sh", "-c", script)
-	cmd.Env = os.Environ()
-	m.status = "installing " + prov.Name() + " CLI..."
-	providerName := prov.Name()
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		if err != nil {
-			return errMsg{fmt.Errorf("%s install/login failed: %w", providerName, err)}
-		}
-		return loginDoneMsg{cloud: providerName}
-	})
-}
-
-// shellQuote produces a single shell-safe command string. Sufficient for the
-// handful of argv's InstallPlan returns — none contain quotes or globs.
-func shellQuote(bin string, args []string) string {
-	parts := []string{bin}
-	for _, a := range args {
-		if strings.ContainsAny(a, " \t'\"") {
-			parts = append(parts, "'"+strings.ReplaceAll(a, "'", "'\\''")+"'")
-		} else {
-			parts = append(parts, a)
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-// loginTargetProvider picks which provider the login key targets. When the
-// user is on the home (cloud list) view, the cursor row chooses. Once drilled
-// into a cloud, the active provider is used so the user can re-auth without
-// going back.
-func (m *model) loginTargetProvider() provider.Provider {
-	if len(m.stack) > 0 {
-		top := &m.stack[len(m.stack)-1]
-		if kindOf(top) == provider.KindCloud || kindOf(top) == provider.KindCloudDisabled {
-			c := m.table.Cursor()
-			if c >= 0 && c < len(m.visibleNodes) {
-				name := m.visibleNodes[c].Name
-				for _, p := range m.providers {
-					if p.Name() == name {
-						return p
-					}
-				}
-			}
-		}
-	}
-	return m.active
-}
-
-func (m *model) execShell() tea.Cmd {
-	if m.active == nil {
-		return nil
-	}
-	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
-		return nil
-	}
-	cur := m.visibleNodes[c]
-	subID := contextSubID(cur)
-	if subID == "" {
-		m.status = "no subscription context at this level"
-		return nil
-	}
-	rg := contextRG(cur)
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-
-	banner := fmt.Sprintf("cloudnav exec  sub=%s  rg=%s  —  exit to return\n", truncID(subID), rg)
-	script := fmt.Sprintf("printf %%s %q; exec %q", banner, shell)
-	shellCmd := exec.Command("sh", "-c", script)
-	shellCmd.Env = append(os.Environ(),
-		"CLOUDNAV_SUB="+subID,
-		"CLOUDNAV_SUB_NAME="+cur.Name,
-		"AZURE_SUBSCRIPTION_ID="+subID,
-	)
-	if rg != "" {
-		shellCmd.Env = append(shellCmd.Env, "CLOUDNAV_RG="+rg)
-	}
-	return tea.ExecProcess(shellCmd, func(err error) tea.Msg {
-		if err != nil {
-			return errMsg{err}
-		}
-		return nil
-	})
-}
 
 func contextSubID(n provider.Node) string {
 	if id := n.Meta["subscriptionId"]; id != "" {
@@ -2736,57 +1249,6 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	return rows
 }
 
-func (m *model) mergeCosts(f *frame) {
-	if !m.showCost {
-		return
-	}
-	var costs map[string]string
-	if f.aggregated {
-		costs = m.costs["agg:"+f.title]
-		for i, n := range m.visibleNodes {
-			if c, ok := costs[strings.ToLower(n.ID)]; ok {
-				m.visibleNodes[i].Cost = c
-			}
-		}
-		return
-	}
-	switch kindOf(f) {
-	case provider.KindSubscription:
-		costs = m.costs["__azure_subs__"]
-	case provider.KindResourceGroup:
-		if f.parent != nil {
-			costs = m.costs[f.parent.ID]
-		}
-	case provider.KindResource:
-		if f.parent != nil && f.parent.Parent != nil {
-			subID := f.parent.Meta["subscriptionId"]
-			if subID == "" {
-				subID = f.parent.Parent.ID
-			}
-			costs = m.costs["res:"+subID+"/"+f.parent.Name]
-		}
-	case provider.KindRegion:
-		if f.parent != nil {
-			costs = m.costs[f.parent.ID]
-		}
-	case provider.KindProject:
-		costs = m.costs["gcp"]
-	}
-	if costs == nil {
-		return
-	}
-	for i, n := range m.visibleNodes {
-		for _, key := range []string{
-			strings.ToLower(n.ID),
-			strings.ToLower(n.Name),
-		} {
-			if c, ok := costs[key]; ok {
-				m.visibleNodes[i].Cost = c
-				break
-			}
-		}
-	}
-}
 
 func shortID(s string) string {
 	if len(s) > 8 {
@@ -2878,21 +1340,6 @@ func selectionMark(selected bool) string {
 	return "[ ]"
 }
 
-const (
-	lockCanNotDelete = "CanNotDelete"
-	lockReadOnly     = "ReadOnly"
-)
-
-func lockBadgePlain(level string) string {
-	switch level {
-	case lockCanNotDelete:
-		return "🔒 CanNotDelete"
-	case lockReadOnly:
-		return "🔒 ReadOnly"
-	default:
-		return emDash
-	}
-}
 
 func shorten(s string, n int) string {
 	if len(s) <= n {
@@ -2918,9 +1365,8 @@ func firstErrLine(err error) string {
 }
 
 // fullScreenBox returns a rounded-border container sized to fill the
-// terminal. Width passed to lipgloss is the content width — padding (4)
-// and border (2) add on top — so content dimensions have to account for
-// that to avoid overflow.
+// terminal. Used by information-dense overlays (advisor, pim, billing)
+// that need the whole screen to render readable rows.
 func fullScreenBox(width, height int) lipgloss.Style {
 	w := width - 6
 	if w < 40 {
@@ -2931,6 +1377,21 @@ func fullScreenBox(width, height int) lipgloss.Style {
 		h = 10
 	}
 	return styles.Box.Width(w).Height(h)
+}
+
+// overlay renders content as a centered popup over the current shell
+// (header + footer remain visible for context). Use this for compact
+// dialogs like delete-confirm and upgrade; full-screen views should keep
+// using fullScreenBox.
+func (m *model) overlay(body string) string {
+	header := m.headerView()
+	footer := m.footerView()
+	bodyH := m.height - lipgloss.Height(header) - 1
+	if bodyH < 5 {
+		bodyH = 5
+	}
+	placed := components.Modal(m.width, bodyH, body)
+	return components.Shell(m.width, m.height, header, placed, footer)
 }
 
 func (m *model) View() string {
@@ -2965,7 +1426,7 @@ func (m *model) View() string {
 		return m.paletteView()
 	}
 	if m.detailMode {
-		return lipgloss.JoinVertical(lipgloss.Left,
+		return components.Shell(m.width, m.height,
 			m.detailHeader(),
 			m.detail.View(),
 			m.detailFooter(),
@@ -2977,12 +1438,11 @@ func (m *model) View() string {
 	} else if len(m.visibleNodes) == 0 && !m.loading && m.categoryFilter == "" {
 		body = m.emptyBody()
 	}
-	chunks := []string{m.headerView()}
+	header := m.headerView()
 	if bar := m.categoryBar(); bar != "" {
-		chunks = append(chunks, bar)
+		header = header + "\n" + bar
 	}
-	chunks = append(chunks, body, m.footerView())
-	return lipgloss.JoinVertical(lipgloss.Left, chunks...)
+	return components.Shell(m.width, m.height, header, body, m.footerView())
 }
 
 // categoryBar renders the resource-category filter tabs. Only shown on the
@@ -3001,9 +1461,9 @@ func (m *model) categoryBar() string {
 	tab := func(key, label, cat string, n int) string {
 		text := fmt.Sprintf("%s %s (%d)", key, label, n)
 		if m.categoryFilter == cat {
-			return styles.Selected.Render(" " + text + " ")
+			return styles.TabActive.Render(text)
 		}
-		return styles.Help.Render(" " + text + " ")
+		return styles.Tab.Render(text)
 	}
 	tabs := strings.Join([]string{
 		tab("0", "all", "", len(top.nodes)),
@@ -3012,7 +1472,7 @@ func (m *model) categoryBar() string {
 		tab("3", "network", catNetwork, counts[catNetwork]),
 		tab("4", "security", catSecurity, counts[catSecurity]),
 		tab("5", "other", catOther, counts[catOther]),
-	}, "")
+	}, " ")
 	return " " + tabs
 }
 
@@ -3037,612 +1497,12 @@ func (m *model) drillLoadingBody() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m *model) updateBilling(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc, "q", "B":
-		m.billingMode = false
-		m.status = ""
-		return m, nil
-	case keyUp, "k":
-		if m.billingIdx > 0 {
-			m.billingIdx--
-		}
-		return m, nil
-	case keyDown, "j":
-		if m.billingIdx < len(m.billingLines)-1 {
-			m.billingIdx++
-		}
-		return m, nil
-	case "o":
-		// In GCP setup mode, o opens the Cloud Billing export console.
-		if m.billingGCP != nil && m.billingGCP.SetupURL != "" {
-			go openURL(m.billingGCP.SetupURL)
-			m.status = "opened " + m.billingGCP.SetupURL
-		}
-		return m, nil
-	}
-	return m, nil
-}
 
-// billingView renders the cloud's portfolio-style cost breakdown: services
-// (AWS), subscriptions (Azure), projects (GCP). Delta arrows reuse the same
-// logic as the inline cost column so behaviour matches.
-func (m *model) billingView() string {
-	total := 0.0
-	totalLast := 0.0
-	totalForecast := 0.0
-	currency := ""
-	for _, l := range m.billingLines {
-		total += l.Current
-		totalLast += l.LastMonth
-		totalForecast += l.Forecast
-		if currency == "" {
-			currency = l.Currency
-		}
-	}
-	// Account-wide summary (AWS / GCP) supplements the per-row roll-up:
-	// if the per-line forecast is zero but the provider reported a scope
-	// forecast, surface that instead. Same for budget, which then drives
-	// the TOTAL line's 🟢/🟡/🔴 indicator for providers whose budgets are
-	// account-wide rather than per-line.
-	if totalForecast == 0 && m.billingSummary.Forecast > 0 {
-		totalForecast = m.billingSummary.Forecast
-	}
-	scopeBudget := m.billingSummary.Budget
-	if currency == "" {
-		currency = m.billingSummary.Currency
-	}
-
-	totalArrow := billingDelta(total, totalLast)
-	symbol := cliCurrencySymbol(currency)
-	totalIndicator := budgetIndicator(total, scopeBudget)
-	totalCell := fmt.Sprintf("%s → %s%s%s", symbol+fmt.Sprintf("%.2f", totalLast), symbol, fmt.Sprintf("%.2f", total), totalArrow)
-	if totalForecast > 0 {
-		// Forecast is optional — only surface it in the summary when at
-		// least one row produced a projection so the column doesn't read
-		// "proj $0.00" on clouds that don't support forecasting yet.
-		totalCell += "   proj " + symbol + fmt.Sprintf("%.2f", totalForecast)
-	}
-	if scopeBudget > 0 {
-		pct := int(total/scopeBudget*100 + 0.5)
-		totalCell += fmt.Sprintf("   %s budget %s%.0f (%d%%)", strings.TrimSpace(totalIndicator), symbol, scopeBudget, pct)
-	}
-
-	header := styles.Title.Render("billing — "+m.billingScope) + "  " +
-		styles.Help.Render(fmt.Sprintf("%d line(s)   TOTAL %s", len(m.billingLines), totalCell))
-
-	// For GCP, if the BQ export isn't live yet we have a rich diagnostic we
-	// can show instead of an empty pane — walks the user through the exact
-	// remaining steps to enable the export.
-	if m.billingScope == providerGCP && !m.gcpExportLive() && m.billingGCP != nil {
-		return m.gcpBillingSetupView(header)
-	}
-
-	box := fullScreenBox(m.width, m.height)
-	if len(m.billingLines) == 0 {
-		return box.Render(strings.Join([]string{
-			header,
-			"",
-			styles.Help.Render("No billing data yet."),
-			"",
-			styles.Help.Render("esc close   B toggle"),
-		}, "\n"))
-	}
-
-	window := 14
-	if m.height > 12 {
-		window = m.height - 12
-	}
-	if window < 5 {
-		window = 5
-	}
-	start := 0
-	if m.billingIdx >= window {
-		start = m.billingIdx - window + 1
-	}
-	end := start + window
-	if end > len(m.billingLines) {
-		end = len(m.billingLines)
-	}
-
-	lines := []string{header, ""}
-	if start > 0 {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
-	}
-	for i := start; i < end; i++ {
-		l := m.billingLines[i]
-		cur := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.Current)
-		last := cliCurrencySymbol(l.Currency) + fmt.Sprintf("%.2f", l.LastMonth)
-		proj := forecastCell(l.Forecast, l.Currency)
-		arrow := billingDelta(l.Current, l.LastMonth)
-		indicator := budgetIndicator(l.Current, l.Budget)
-		note := ""
-		switch {
-		case l.Note != "":
-			note = "   " + styles.Help.Render(l.Note)
-		case l.Budget > 0:
-			pct := int(l.Current/l.Budget*100 + 0.5)
-			note = "   " + styles.Help.Render(fmt.Sprintf("budget %s%.0f (%d%%)", cliCurrencySymbol(l.Currency), l.Budget, pct))
-		}
-		// The selection prefix expects a stable column count so rows align
-		// whether or not the sub has a budget configured. "indicator" is
-		// either an emoji or a padding space — both render at roughly one
-		// cell's width in monospace terminals.
-		row := fmt.Sprintf("%s %2d. %-40s   last %-12s   now %-12s   proj %-12s  %s%s",
-			indicator, i+1, shorten(l.Label, 40), last, cur, proj, arrow, note)
-		if i == m.billingIdx {
-			row = styles.Selected.Render("> " + row)
-		} else {
-			row = "  " + row
-		}
-		lines = append(lines, row)
-	}
-	if end < len(m.billingLines) {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(m.billingLines)-end)))
-	}
-	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/B close"))
-	return box.Render(strings.Join(lines, "\n"))
-}
-
-// gcpExportLive reports whether the BQ billing-export table is already live
-// for the caller. When false the billing overlay renders a setup checklist
-// instead of an empty "0 line(s)" pane.
-func (m *model) gcpExportLive() bool {
-	return m.billingGCP != nil && m.billingGCP.ExportTable != ""
-}
-
-// gcpBillingSetupView renders the step-by-step diagnostic for GCP BQ billing
-// export: billing account, IAM roles, dataset, export table. Each line is a
-// ✓ or ✗ so the user can tell at a glance which step is pending.
-func (m *model) gcpBillingSetupView(header string) string {
-	st := m.billingGCP
-	check := func(ok bool) string {
-		if ok {
-			return styles.Good.Render("✓")
-		}
-		return styles.Bad.Render("✗")
-	}
-	lines := []string{header, "", styles.Header.Render("GCP billing-export setup")}
-	lines = append(lines, fmt.Sprintf("  %s project             %s", check(st.Project != ""), st.Project))
-	lines = append(lines, fmt.Sprintf("  %s billing account     %s", check(st.BillingAccount != ""), nonempty(st.BillingAccount, "unknown")))
-	lines = append(lines, fmt.Sprintf("  %s billing enabled     %v", check(st.BillingEnabled), st.BillingEnabled))
-	if len(st.Roles) > 0 {
-		lines = append(lines, fmt.Sprintf("  %s your roles          %v", check(true), st.Roles))
-	} else {
-		lines = append(lines, fmt.Sprintf("  %s your roles          (unknown — need billing.viewer to read IAM)", check(false)))
-	}
-	lines = append(lines, fmt.Sprintf("  %s can admin billing   %v (need roles/billing.admin to enable export)", check(st.CanAdminBilling), st.CanAdminBilling))
-	lines = append(lines, fmt.Sprintf("  %s dataset %q   exists=%v", check(st.DatasetExists), st.Dataset, st.DatasetExists))
-	lines = append(lines, fmt.Sprintf("  %s export table        %s", check(st.ExportTable != ""), nonemptyOrDash(st.ExportTable)))
-	lines = append(lines, "")
-	lines = append(lines, styles.Header.Render("next steps"))
-	if !st.DatasetExists && st.CanAdminBilling {
-		lines = append(lines, "  1. run `cloudnav billing init` to create the billing_export dataset")
-	}
-	lines = append(lines, fmt.Sprintf("  %d. press o to open the setup page:", stepNum(st)))
-	lines = append(lines, "       "+styles.Help.Render(st.SetupURL))
-	lines = append(lines, "     choose project "+st.Project+", dataset "+st.Dataset+", detailed usage cost export")
-	lines = append(lines, fmt.Sprintf("  %d. wait a few hours for first export data to land, then press B again", stepNum(st)+1))
-	lines = append(lines, "")
-	lines = append(lines, styles.Help.Render("  o open console   esc/B close"))
-	return fullScreenBox(m.width, m.height).Render(strings.Join(lines, "\n"))
-}
-
-func stepNum(st *gcp.BillingStatus) int {
-	if st.DatasetExists {
-		return 1
-	}
-	return 2
-}
-
-func nonempty(a, fallback string) string {
-	if a == "" {
-		return fallback
-	}
-	return a
-}
-
-func nonemptyOrDash(s string) string {
-	if s == "" {
-		return emDash
-	}
-	return s
-}
-
-// anomalyThresholdPct is the MoM swing (in percent) at which the delta
-// arrow earns a ⚠ prefix so the user's eye snaps to it. Tuned conservatively
-// so typical week-over-week growth doesn't trip it.
-const anomalyThresholdPct = 25.0
-
-// billingDelta mirrors the inline-column arrow formatting so users see the
-// same up/down/flat indicators across the cost column and the billing view.
-// Deltas whose magnitude exceeds anomalyThresholdPct get a ⚠ prefix to flag
-// potential cost spikes or unexpected drop-offs.
-func billingDelta(current, last float64) string {
-	if last == 0 {
-		if current == 0 {
-			return emDash
-		}
-		return styles.Good.Render("new")
-	}
-	d := (current - last) / last * 100
-	anomaly := d >= anomalyThresholdPct || d <= -anomalyThresholdPct
-	switch {
-	case d > 2:
-		body := fmt.Sprintf("↑%d%%", int(d+0.5))
-		if anomaly {
-			return styles.Bad.Render("⚠ " + body)
-		}
-		return styles.Bad.Render(body)
-	case d < -2:
-		body := fmt.Sprintf("↓%d%%", int(-d+0.5))
-		if anomaly {
-			return styles.Good.Render("⚠ " + body)
-		}
-		return styles.Good.Render(body)
-	default:
-		return styles.Help.Render("→")
-	}
-}
-
-// budgetIndicator returns a single-rune traffic-light showing how close MTD
-// spend is to the configured monthly budget. Empty when no budget is set
-// so the column doesn't look noisy for un-budgeted subs.
-func budgetIndicator(current, budget float64) string {
-	if budget <= 0 {
-		return " "
-	}
-	ratio := current / budget
-	switch {
-	case ratio >= 1.0:
-		return styles.Bad.Render("🔴")
-	case ratio >= 0.75:
-		return styles.WarnS.Render("🟡")
-	default:
-		return styles.Good.Render("🟢")
-	}
-}
-
-// forecastCell formats the projected month-end total cell for the billing
-// overlay. Zero means "no forecast available" (first-of-month, caller lacks
-// Cost Management access, or the provider doesn't compute forecasts) and
-// renders as an em-dash so the column stays aligned.
-func forecastCell(forecast float64, currency string) string {
-	if forecast <= 0 {
-		return emDash
-	}
-	return cliCurrencySymbol(currency) + fmt.Sprintf("%.2f", forecast)
-}
-
-// cliCurrencySymbol is a copy of the per-provider currencySymbol so the
-// billing view doesn't need to reach into the azure package.
-func cliCurrencySymbol(code string) string {
-	switch strings.ToUpper(code) {
-	case currencyUSD, "":
-		return "$"
-	case "GBP":
-		return "£"
-	case "EUR":
-		return "€"
-	case "INR":
-		return "₹"
-	case "JPY":
-		return "¥"
-	case "AUD":
-		return "A$"
-	case "CAD":
-		return "C$"
-	default:
-		return code + " "
-	}
-}
-
-func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// When the filter input is active, keys feed it — mirrors the PIM
-	// filter behaviour so the two overlays feel identical to the user.
-	if m.advisorFilterOn {
-		switch msg.String() {
-		case keyEsc:
-			m.advisorFilter = ""
-			m.advisorFilterIn.SetValue("")
-			m.advisorFilterIn.Blur()
-			m.advisorFilterOn = false
-			m.advisorIdx = 0
-			return m, nil
-		case keyEnter:
-			m.advisorFilterIn.Blur()
-			m.advisorFilterOn = false
-			return m, nil
-		case keyUp, keyDown, "pgup", "pgdown":
-			// Swallow — otherwise the cursor moves mid-typing and the row
-			// that gets acted on isn't the one the user thinks they chose.
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.advisorFilterIn, cmd = m.advisorFilterIn.Update(msg)
-		m.advisorFilter = strings.ToLower(strings.TrimSpace(m.advisorFilterIn.Value()))
-		m.advisorIdx = 0
-		return m, cmd
-	}
-
-	filt := m.filteredAdvisor()
-	switch msg.String() {
-	case keyEsc, "q", "A":
-		m.advisorMode = false
-		m.advisorFilter = ""
-		m.advisorFilterIn.SetValue("")
-		m.advisorFilterOn = false
-		m.status = ""
-		return m, nil
-	case "/":
-		m.advisorFilterOn = true
-		m.advisorFilterIn.Focus()
-		return m, nil
-	case keyUp, "k":
-		if m.advisorIdx > 0 {
-			m.advisorIdx--
-		}
-		return m, nil
-	case keyDown, "j":
-		if m.advisorIdx < len(filt)-1 {
-			m.advisorIdx++
-		}
-		return m, nil
-	case "o":
-		if m.advisorIdx >= 0 && m.advisorIdx < len(filt) {
-			go openURL("https://portal.azure.com/#blade/Microsoft_Azure_Expert/AdvisorMenuBlade/overview")
-			m.status = "opened Advisor in portal"
-		}
-		return m, nil
-	}
-	return m, nil
-}
-
-// filteredAdvisor returns advisor recommendations matching the current
-// filter (case-insensitive substring against category, impact, problem
-// text, solution, and resource id). Empty filter returns the full slice.
-func (m *model) filteredAdvisor() []provider.Recommendation {
-	q := m.advisorFilter
-	if q == "" {
-		return m.advisorRecs
-	}
-	out := make([]provider.Recommendation, 0, len(m.advisorRecs))
-	for _, r := range m.advisorRecs {
-		if advisorMatchesFilter(r, q) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// advisorMatchesFilter reports whether a single recommendation contains q
-// (already lowercased) in any of the fields a user would reasonably search
-// on. Kept package-local and small so it shows up in test coverage.
-func advisorMatchesFilter(r provider.Recommendation, q string) bool {
-	fields := [...]string{
-		strings.ToLower(r.Category),
-		strings.ToLower(r.Impact),
-		strings.ToLower(r.Problem),
-		strings.ToLower(r.Solution),
-		strings.ToLower(r.ImpactedName),
-		strings.ToLower(r.ImpactedType),
-		strings.ToLower(r.ResourceID),
-	}
-	for _, f := range fields {
-		if strings.Contains(f, q) {
-			return true
-		}
-	}
-	return false
-}
 
 // updateHealth handles keys while the Service Health overlay is visible.
 // Kept small because the overlay is read-only — the only actions are
 // navigation and dismiss.
-func (m *model) updateHealth(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc, "q", "H":
-		m.healthMode = false
-		m.status = ""
-		return m, nil
-	case keyUp, "k":
-		if m.healthIdx > 0 {
-			m.healthIdx--
-		}
-		return m, nil
-	case keyDown, "j":
-		if m.healthIdx < len(m.healthEvents)-1 {
-			m.healthIdx++
-		}
-		return m, nil
-	}
-	return m, nil
-}
 
-// healthView renders the Service Health overlay — active incidents /
-// planned maintenance / advisories across the caller's subscriptions.
-// When nothing's active we show a clean "all clear" state so the user
-// knows the lookup succeeded (rather than being confused about an empty
-// pane).
-func (m *model) healthView() string {
-	header := styles.Title.Render("service health") + "  " +
-		styles.Help.Render(fmt.Sprintf("%d active event(s)", len(m.healthEvents)))
-	box := fullScreenBox(m.width, m.height)
-	if len(m.healthEvents) == 0 {
-		return box.Render(strings.Join([]string{
-			header,
-			"",
-			styles.Good.Render("  🟢 all clear — no active incidents, maintenance, or advisories"),
-			"",
-			styles.Help.Render("  esc/H close"),
-		}, "\n"))
-	}
-
-	window := 14
-	if m.height > 12 {
-		window = m.height - 12
-	}
-	if window < 5 {
-		window = 5
-	}
-	start := 0
-	if m.healthIdx >= window {
-		start = m.healthIdx - window + 1
-	}
-	end := start + window
-	if end > len(m.healthEvents) {
-		end = len(m.healthEvents)
-	}
-
-	lines := []string{header, ""}
-	if start > 0 {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
-	}
-	for i := start; i < end; i++ {
-		e := m.healthEvents[i]
-		badge := healthEventBadge(e.Level)
-		region := e.Region
-		if region == "" {
-			region = emDash
-		}
-		service := e.Service
-		if service == "" {
-			service = emDash
-		}
-		title := shorten(e.Title, 60)
-		line := fmt.Sprintf("%s  %-22s  %-18s  %s", badge, shorten(service, 22), shorten(region, 18), title)
-		if i == m.healthIdx {
-			line = styles.Selected.Render("> " + line)
-		} else {
-			line = "  " + line
-		}
-		lines = append(lines, line)
-	}
-	if end < len(m.healthEvents) {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(m.healthEvents)-end)))
-	}
-
-	if m.healthIdx >= 0 && m.healthIdx < len(m.healthEvents) {
-		e := m.healthEvents[m.healthIdx]
-		lines = append(lines, "",
-			styles.Header.Render("Details"),
-			"Level:   "+healthEventBadge(e.Level),
-			"Status:  "+e.Status,
-			"Service: "+nonemptyOrDash(e.Service),
-			"Region:  "+nonemptyOrDash(e.Region),
-			"Scope:   "+nonemptyOrDash(e.Scope),
-			"Since:   "+shortDate(e.StartTime),
-			"Title:   "+e.Title,
-		)
-		if e.Summary != "" {
-			lines = append(lines, "Summary: "+shorten(e.Summary, 120))
-		}
-	}
-	lines = append(lines, "", styles.Help.Render("  ↑↓/jk move   esc/H close"))
-	return box.Render(strings.Join(lines, "\n"))
-}
-
-// healthEventBadge colours a HealthEvent.Level for the overlay. Incidents
-// get the red treatment, maintenance goes yellow, advisories blue-ish,
-// anything else falls through to the muted style so we don't clobber a
-// future level value.
-func healthEventBadge(level string) string {
-	switch level {
-	case "incident":
-		return styles.Bad.Render("🔴 incident")
-	case "maintenance":
-		return styles.WarnS.Render("🟡 maintenance")
-	case "advisory":
-		return styles.AccentS.Render("🔵 advisory")
-	case "security":
-		return styles.Bad.Render("🛡  security")
-	default:
-		return styles.Help.Render("• " + level)
-	}
-}
-
-func (m *model) advisorView() string {
-	filt := m.filteredAdvisor()
-	count := fmt.Sprintf("%d recommendation(s) for %s", len(m.advisorRecs), m.advisorName)
-	if m.advisorFilter != "" {
-		count = fmt.Sprintf("%d/%d for %s", len(filt), len(m.advisorRecs), m.advisorName)
-	}
-	header := styles.Title.Render("Azure Advisor") + "  " + styles.Help.Render(count)
-	box := fullScreenBox(m.width, m.height)
-	if len(m.advisorRecs) == 0 {
-		return box.Render(strings.Join([]string{
-			header,
-			"",
-			"No recommendations at this scope.",
-			"",
-			styles.Help.Render("Advisor generates cost / security / reliability / performance tips."),
-			styles.Help.Render("Drill further and press A again, or check the full Advisor in the portal."),
-			"",
-			styles.Help.Render("esc close   o open Advisor in portal"),
-		}, "\n"))
-	}
-
-	lines := []string{header, ""}
-	if m.advisorFilterOn {
-		lines = append(lines, m.advisorFilterIn.View(), "")
-	} else if m.advisorFilter != "" {
-		lines = append(lines, "  "+styles.Help.Render("filter: "+m.advisorFilter+"  (/ to change, esc in filter clears)"), "")
-	}
-
-	if len(filt) == 0 {
-		lines = append(lines,
-			styles.Help.Render("  no recommendations match the current filter"),
-			"",
-			styles.Help.Render("  /, type, esc   |   o portal   esc/A close"),
-		)
-		return box.Render(strings.Join(lines, "\n"))
-	}
-
-	// Render the list on top, full detail for the cursor row below.
-	max := len(filt)
-	if max > 14 {
-		max = 14
-	}
-	start := 0
-	if m.advisorIdx >= max {
-		start = m.advisorIdx - max + 1
-	}
-	for i := start; i < start+max && i < len(filt); i++ {
-		r := filt[i]
-		marker := "  "
-		if i == m.advisorIdx {
-			marker = "> "
-		}
-		line := fmt.Sprintf("%s%s  %s  %s  %s",
-			marker,
-			padRight(categoryBadge(r.Category), 14),
-			padRight(impactBadge(r.Impact), 10),
-			padRight(shortTail(r.ResourceID, 40), 40),
-			shorten(r.Problem, 60),
-		)
-		if i == m.advisorIdx {
-			line = styles.Selected.Render(line)
-		}
-		lines = append(lines, line)
-	}
-	lines = append(lines, "")
-
-	if m.advisorIdx >= 0 && m.advisorIdx < len(filt) {
-		r := filt[m.advisorIdx]
-		lines = append(lines,
-			styles.Header.Render("Details"),
-			"Category: "+categoryBadge(r.Category)+"   Impact: "+impactBadge(r.Impact),
-			"Target:   "+r.ResourceID,
-			"Problem:  "+r.Problem,
-			"Solution: "+r.Solution,
-		)
-		if r.LastUpdated != "" {
-			lines = append(lines, "Updated:  "+shortDate(r.LastUpdated))
-		}
-	}
-	lines = append(lines, "", styles.Help.Render("↑↓/jk move   / filter   o portal   esc/A close"))
-	return box.Render(strings.Join(lines, "\n"))
-}
 
 // cloudRowStatus returns (status, hint) for the cloud-list view. status says
 // what the background LoggedIn probe found; hint tells a brand-new user what
@@ -3689,72 +1549,7 @@ func (m *model) providerByName(name string) provider.Provider {
 }
 
 // pimSourceBadge renders a short, color-tagged label for the PIM surface.
-func pimSourceBadge(src string) string {
-	switch src {
-	case pimSrcEntra:
-		return styles.AccentS.Render("entra")
-	case pimSrcGroup:
-		return styles.WarnS.Render("group")
-	case pimSrcGCP:
-		return styles.Good.Render("gcp-pam")
-	case pimSrcAWSSSO:
-		return styles.AccentS.Render("aws-sso")
-	case pimSrcAzure, "":
-		return styles.Help.Render(pimSrcAzure)
-	default:
-		return styles.Help.Render(src)
-	}
-}
 
-// pimSourceLabel is the raw (unstyled) form of pimSourceBadge, for contexts
-// where an outer row style (e.g. the Selected highlight) needs to span the
-// badge without being broken by the badge's own ANSI reset.
-func pimSourceLabel(src string) string {
-	switch src {
-	case pimSrcEntra:
-		return "entra"
-	case pimSrcGroup:
-		return "group"
-	case pimSrcGCP:
-		return "gcp-pam"
-	case pimSrcAWSSSO:
-		return "aws-sso"
-	case pimSrcAzure, "":
-		return pimSrcAzure
-	default:
-		return src
-	}
-}
-
-func categoryBadge(c string) string {
-	switch strings.ToLower(c) {
-	case "cost":
-		return styles.Cost.Render("Cost")
-	case "security":
-		return styles.Bad.Render("Security")
-	case "reliability", "highavailability", "high availability":
-		return styles.WarnS.Render("Reliability")
-	case "performance":
-		return styles.AccentS.Render("Performance")
-	case "operationalexcellence", "operational excellence":
-		return styles.Help.Render("OpsExcellence")
-	default:
-		return c
-	}
-}
-
-func impactBadge(i string) string {
-	switch strings.ToLower(i) {
-	case "high":
-		return styles.Bad.Render("HIGH")
-	case "medium":
-		return styles.WarnS.Render("MED")
-	case "low":
-		return styles.Help.Render("low")
-	default:
-		return i
-	}
-}
 
 // padRight pads s with spaces so the *visible* width equals n. Uses
 // lipgloss.Width so ANSI-styled strings measure correctly.
@@ -3775,203 +1570,7 @@ func shortTail(s string, n int) string {
 	return "…" + s[len(s)-n+1:]
 }
 
-func (m *model) pimView() string {
-	filt := m.filteredPIM()
-	headerCount := fmt.Sprintf("%d role(s)", len(m.pimRoles))
-	if m.pimFilter != "" {
-		headerCount = fmt.Sprintf("%d/%d", len(filt), len(m.pimRoles))
-	}
-	durHint := fmt.Sprintf("duration %dh", m.pimDuration)
-	if len(filt) > 0 && m.pimCursor < len(filt) {
-		if max := filt[m.pimCursor].MaxDurationHours; max > 0 {
-			durHint = fmt.Sprintf("duration %dh (policy max %dh)", m.pimDuration, max)
-		} else {
-			durHint = fmt.Sprintf("duration %dh (policy not readable, default 8h)", m.pimDuration)
-		}
-	}
-	counts := m.pimSourceCounts()
-	tab := func(key, label, src string, n int) string {
-		text := fmt.Sprintf("%s %s (%d)", key, label, n)
-		if m.pimSourceFilt == src {
-			return styles.Selected.Render(" " + text + " ")
-		}
-		return styles.Help.Render(" " + text + " ")
-	}
-	tabs := strings.Join([]string{
-		tab("0", "all", "", len(m.pimRoles)),
-		tab("1", "Azure", pimSrcAzure, counts[pimSrcAzure]),
-		tab("2", "Entra", pimSrcEntra, counts[pimSrcEntra]),
-		tab("3", "Groups", pimSrcGroup, counts[pimSrcGroup]),
-		tab("4", "GCP PAM", pimSrcGCP, counts[pimSrcGCP]),
-		tab("5", "AWS SSO", pimSrcAWSSSO, counts[pimSrcAWSSSO]),
-	}, "")
-	lines := []string{
-		styles.Title.Render("PIM eligible roles") + "  " +
-			styles.Help.Render(fmt.Sprintf("%s  %s (use +/- to change)", headerCount, durHint)),
-		tabs,
-		"",
-	}
-	if m.pimFilterOn {
-		lines = append(lines, m.pimFilterIn.View(), "")
-	} else if m.pimFilter != "" {
-		lines = append(lines, "  "+styles.Help.Render("filter: "+m.pimFilter+"  (/ to change, esc in filter clears)"), "")
-	}
-	if len(filt) == 0 {
-		if len(m.pimRoles) > 0 && m.pimFilter != "" {
-			lines = append(lines,
-				styles.Help.Render("  no roles match the current filter"),
-			)
-		} else {
-			lines = append(lines,
-				styles.Help.Render("  no eligible PIM assignments for this user"),
-				"",
-				styles.Help.Render("  if you expect some, check:"),
-				styles.Help.Render("    • PIM is enabled on the tenant"),
-				styles.Help.Render("    • you have read on roleEligibilityScheduleInstances"),
-			)
-		}
-	}
-	window := 14
-	if m.height > 12 {
-		window = m.height - 12
-	}
-	if window < 5 {
-		window = 5
-	}
-	start := 0
-	if len(filt) > window {
-		start = m.pimCursor - window/2
-		if start < 0 {
-			start = 0
-		}
-		if start+window > len(filt) {
-			start = len(filt) - window
-		}
-	}
-	end := start + window
-	if end > len(filt) {
-		end = len(filt)
-	}
-	if start > 0 {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↑ %d more above", start)))
-	}
-	for i := start; i < end; i++ {
-		r := filt[i]
-		state := ""
-		if r.Active {
-			state = "  " + styles.Good.Render("● ACTIVE until "+humanUntil(r.ActiveUntil))
-		}
-		// For the selected row, use the plain source label so lipgloss's
-		// Selected background spans the full line; the badge's own ANSI
-		// reset would otherwise terminate the highlight mid-row.
-		var src string
-		if i == m.pimCursor {
-			src = padRight(pimSourceLabel(r.Source), 8)
-		} else {
-			src = padRight(pimSourceBadge(r.Source), 8)
-		}
-		rowText := fmt.Sprintf("%2d. %s %-36s  on  %-30s", i+1, src, shorten(r.RoleName, 36), shorten(scopeDisplay(r), 30))
-		if i == m.pimCursor {
-			lines = append(lines, styles.Selected.Render("> "+rowText)+state)
-		} else {
-			lines = append(lines, "  "+rowText+state)
-		}
-	}
-	if end < len(filt) {
-		lines = append(lines, styles.Help.Render(fmt.Sprintf("  ↓ %d more below", len(filt)-end)))
-	}
-	switch {
-	case m.pimActivate && len(filt) > 0:
-		role := filt[m.pimCursor]
-		lines = append(lines,
-			"",
-			styles.Help.Render("activate: ")+role.RoleName+"  on  "+scopeDisplay(role)+fmt.Sprintf("  for %dh", m.pimDuration),
-			m.pimInput.View(),
-			styles.Help.Render("enter submit  esc cancel"),
-		)
-	case m.loading:
-		lines = append(lines,
-			"",
-			"  "+m.spinner.View()+" "+styles.Help.Render(m.status),
-		)
-	case m.err != nil:
-		lines = append(lines,
-			"",
-			"  "+styles.Bad.Render("error: ")+firstErrLine(m.err),
-			styles.Help.Render("  esc to close, a to retry"),
-		)
-	case m.status != "":
-		lines = append(lines,
-			"",
-			"  "+styles.Good.Render(m.status),
-			styles.Help.Render("  PIM activations can take up to a minute to become effective in Azure"),
-			styles.Help.Render("  ↑↓ / jk move  a activate  +/- duration  0/1/2/3 source  esc close"),
-		)
-	default:
-		lines = append(lines,
-			"",
-			styles.Help.Render("  ↑↓ / jk move  / filter  a activate  +/- duration  esc close"),
-		)
-	}
-	return fullScreenBox(m.width, m.height).Render(strings.Join(lines, "\n"))
-}
 
-func (m *model) paletteView() string {
-	window := 10
-	if m.height > 14 {
-		window = m.height - 12
-	}
-	if window < 4 {
-		window = 4
-	}
-	start := 0
-	if len(m.paletteItems) > window {
-		start = m.paletteIdx - window/2
-		if start < 0 {
-			start = 0
-		}
-		if start+window > len(m.paletteItems) {
-			start = len(m.paletteItems) - window
-		}
-	}
-	end := start + window
-	if end > len(m.paletteItems) {
-		end = len(m.paletteItems)
-	}
-
-	counter := fmt.Sprintf("%d items", len(m.paletteItems))
-	if len(m.paletteItems) > window {
-		counter = fmt.Sprintf("%d–%d of %d", start+1, end, len(m.paletteItems))
-	}
-	lines := []string{
-		styles.Title.Render("palette") + "  " + styles.Help.Render(counter),
-		"",
-		m.paletteInput.View(),
-		"",
-	}
-	if start > 0 {
-		lines = append(lines, styles.Help.Render("  ↑ "+fmt.Sprintf("%d more above", start)))
-	}
-	for i := start; i < end; i++ {
-		it := m.paletteItems[i]
-		line := "  " + it.label
-		if i == m.paletteIdx {
-			line = styles.Selected.Render("> " + it.label)
-		}
-		lines = append(lines, line)
-	}
-	if end < len(m.paletteItems) {
-		lines = append(lines, styles.Help.Render("  ↓ "+fmt.Sprintf("%d more below", len(m.paletteItems)-end)))
-	}
-	if len(m.paletteItems) == 0 {
-		lines = append(lines, styles.Help.Render("  no matches"))
-	}
-	lines = append(lines,
-		"",
-		styles.Help.Render("↑↓ nav  ↵ select  esc close  (type to filter)"),
-	)
-	return styles.Box.Render(strings.Join(lines, "\n"))
-}
 
 func (m *model) emptyBody() string {
 	msg := "  no items here"
@@ -4011,40 +1610,24 @@ func (m *model) emptyBody() string {
 }
 
 func (m *model) detailHeader() string {
-	title := styles.Title.Render("cloudnav") + "  " + styles.Crumb.Render("detail › "+m.detailTitle)
+	title := components.Breadcrumb("cloudnav", []string{"detail › " + m.detailTitle})
 	right := styles.Help.Render(fmt.Sprintf("%d%%", int(m.detail.ScrollPercent()*100)))
-	if m.width == 0 {
-		return title + "   " + right
-	}
-	gap := m.width - lipgloss.Width(title) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	return title + strings.Repeat(" ", gap) + right
+	return components.TwoCol(m.width, title, right)
 }
 
 func (m *model) detailFooter() string {
 	hints := strings.Join([]string{
-		styles.Key.Render("↑↓") + " scroll",
-		styles.Key.Render("esc") + " close",
-		styles.Key.Render("q") + " close",
+		components.KeyPair("↑↓", "scroll"),
+		components.KeyPair("esc", "close"),
+		components.KeyPair("q", "close"),
 	}, "  ")
 	return styles.StatusBar.Render(hints)
 }
 
 func (m *model) headerView() string {
-	path := []string{styles.Title.Render("cloudnav")}
-	path = append(path, breadcrumbs(m.stack)...)
-	crumb := strings.Join(path, styles.CrumbSep)
+	crumb := components.Breadcrumb("cloudnav", breadcrumbs(m.stack))
 	right := m.updateIndicator()
-	if m.width == 0 {
-		return crumb + "   " + right + "\n" + m.keybar() + "\n"
-	}
-	gap := m.width - lipgloss.Width(crumb) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	top := crumb + strings.Repeat(" ", gap) + right
+	top := components.TwoCol(m.width, crumb, right)
 	return top + "\n" + m.keybar() + "\n"
 }
 
@@ -4127,43 +1710,10 @@ func (m *model) keybar() string {
 		pair{"q", "quit"},
 	)
 	parts := make([]string, 0, len(pairs))
-	widths := make([]int, 0, len(pairs))
 	for _, p := range pairs {
-		text := styles.Key.Render("<"+p.key+">") + " " + styles.Help.Render(p.action)
-		parts = append(parts, text)
-		widths = append(widths, lipgloss.Width(text))
+		parts = append(parts, components.KeyPair(p.key, p.action))
 	}
-	// Pack entries into as many lines as the terminal width needs. One line
-	// when we have space, wrapping cleanly when we don't — beats truncating.
-	const indent = "  "
-	const sep = "  "
-	budget := m.width - len(indent)
-	if budget <= 20 {
-		// No width info yet (first frame) or pathologically narrow — just
-		// return the single line and let the renderer do what it can.
-		return indent + strings.Join(parts, sep)
-	}
-	var lines []string
-	cur := make([]string, 0, len(parts))
-	curW := 0
-	for i, s := range parts {
-		need := widths[i]
-		if len(cur) > 0 {
-			need += len(sep)
-		}
-		if len(cur) > 0 && curW+need > budget {
-			lines = append(lines, indent+strings.Join(cur, sep))
-			cur = cur[:0]
-			curW = 0
-			need = widths[i]
-		}
-		cur = append(cur, s)
-		curW += need
-	}
-	if len(cur) > 0 {
-		lines = append(lines, indent+strings.Join(cur, sep))
-	}
-	return strings.Join(lines, "\n")
+	return components.Keybar(m.width, parts)
 }
 
 func (m *model) atSubscriptionLevel() bool {
@@ -4175,21 +1725,19 @@ func (m *model) atSubscriptionLevel() bool {
 }
 
 // applyChromeHeight sets the table height based on the current terminal
-// height minus the surrounding chrome — breadcrumb row, keybar (which can
-// wrap across 1-3 lines depending on width), blank separator, optional
-// category bar, and footer. Computed dynamically so wide terminals keep
-// their extra table row while narrow ones don't overflow.
+// height minus the surrounding chrome. We compute the header height by
+// measuring the actual render with lipgloss.Height so changes to keybar
+// wrapping stay in sync automatically.
 func (m *model) applyChromeHeight() {
 	if m.height <= 0 {
 		return
 	}
-	chrome := 1 // breadcrumb row
-	chrome += strings.Count(m.keybar(), "\n") + 1
-	chrome++ // blank line between header block and table
+	header := m.headerView()
+	chrome := lipgloss.Height(header)
 	if m.categoryBar() != "" {
 		chrome++
 	}
-	chrome++ // footer
+	chrome++ // footer (always one line)
 	h := m.height - chrome
 	if h < 3 {
 		h = 3
@@ -4244,187 +1792,7 @@ func (m *model) currentSubID() string {
 	return top.parent.ID
 }
 
-func (m *model) maybeAutoLoadCost() tea.Cmd {
-	if !m.showCost {
-		return nil
-	}
-	if len(m.stack) == 0 {
-		return nil
-	}
-	top := &m.stack[len(m.stack)-1]
-	if top.aggregated {
-		return m.loadAggregatedCost(top)
-	}
-	scope, ok := m.costScope()
-	if !ok {
-		return nil
-	}
-	cacheKey := scope.ID
-	if m.atResourceLevel() && scope.Kind == provider.KindResourceGroup {
-		subID := scope.Meta["subscriptionId"]
-		if subID == "" && scope.Parent != nil {
-			subID = scope.Parent.ID
-		}
-		if subID == "" {
-			return nil
-		}
-		cacheKey = "res:" + subID + "/" + scope.Name
-	}
-	if m.atSubscriptionLevel() {
-		cacheKey = "__azure_subs__"
-	}
-	if m.atRGLevel() && scope.Kind == provider.KindSubscription {
-		cacheKey = scope.ID
-	}
-	if _, cached := m.costs[cacheKey]; cached {
-		return nil
-	}
-	return m.toggleCostInner()
-}
 
-// toggleCostInner fires the same load paths as the <c> keybinding without
-// flipping the showCost flag.
-func (m *model) toggleCostInner() tea.Cmd {
-	if m.atSubscriptionLevel() {
-		return m.loadSubscriptionCosts()
-	}
-	if m.atResourceLevel() {
-		return m.loadResourceCosts()
-	}
-	coster, ok := m.active.(provider.Coster)
-	if !ok {
-		return nil
-	}
-	scope, ok := m.costScope()
-	if !ok {
-		return nil
-	}
-	if _, cached := m.costs[scope.ID]; cached {
-		return nil
-	}
-	ctx := m.ctx
-	scopeID := scope.ID
-	return func() tea.Msg {
-		costs, err := coster.Costs(ctx, scope)
-		if err != nil {
-			return costsLoadedMsg{parentID: scopeID, costs: nil}
-		}
-		return costsLoadedMsg{parentID: scopeID, costs: costs}
-	}
-}
-
-func (m *model) maybeLoadLocks(f frame) tea.Cmd {
-	if len(f.nodes) == 0 || f.nodes[0].Kind != provider.KindResourceGroup || f.parent == nil {
-		return nil
-	}
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		return nil
-	}
-	subID := f.parent.ID
-	if _, cached := m.locks[subID]; cached {
-		return nil
-	}
-	// mark as in-flight so the same drill doesn't fire twice
-	m.locks[subID] = map[string][]azure.Lock{}
-	ctx := m.ctx
-	return func() tea.Msg {
-		locks, err := az.ResourceGroupLocks(ctx, subID)
-		if err != nil {
-			return locksLoadedMsg{subID: subID, locks: map[string][]azure.Lock{}}
-		}
-		return locksLoadedMsg{subID: subID, locks: locks}
-	}
-}
-
-func (m *model) reloadLocksForActive() tea.Cmd {
-	subID := m.currentSubID()
-	if subID == "" {
-		return nil
-	}
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		return nil
-	}
-	ctx := m.ctx
-	return func() tea.Msg {
-		locks, err := az.ResourceGroupLocks(ctx, subID)
-		if err != nil {
-			return locksLoadedMsg{subID: subID, locks: map[string][]azure.Lock{}}
-		}
-		return locksLoadedMsg{subID: subID, locks: locks}
-	}
-}
-
-func (m *model) rgLockLevel(rgName string) string {
-	subID := m.currentSubID()
-	if subID == "" {
-		return ""
-	}
-	locks := m.locks[subID]
-	if locks == nil {
-		return ""
-	}
-	list := locks[strings.ToLower(rgName)]
-	if len(list) == 0 {
-		return ""
-	}
-	for _, lk := range list {
-		if strings.EqualFold(lk.Level, lockReadOnly) {
-			return lockReadOnly
-		}
-	}
-	return lockCanNotDelete
-}
-
-func (m *model) toggleLock() tea.Cmd {
-	if !m.atRGLevel() {
-		m.status = "L works on the resource-groups view (Azure)"
-		return nil
-	}
-	az, ok := m.active.(*azure.Azure)
-	if !ok {
-		m.status = "lock management is Azure-only"
-		return nil
-	}
-	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
-		return nil
-	}
-	rg := m.visibleNodes[c]
-	subID := m.currentSubID()
-	existing := m.locks[subID][strings.ToLower(rg.Name)]
-	ctx := m.ctx
-	if len(existing) > 0 {
-		lk := existing[0]
-		m.loading = true
-		m.status = fmt.Sprintf("removing lock %q on %s...", lk.Name, rg.Name)
-		return tea.Batch(
-			m.spinner.Tick,
-			func() tea.Msg {
-				err := az.DeleteRGLock(ctx, subID, rg.Name, lk.Name)
-				return lockChangedMsg{
-					subID: subID,
-					msg:   fmt.Sprintf("removed lock %q from %s", lk.Name, rg.Name),
-					err:   err,
-				}
-			},
-		)
-	}
-	m.loading = true
-	m.status = fmt.Sprintf("adding CanNotDelete lock on %s...", rg.Name)
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			err := az.CreateRGLock(ctx, subID, rg.Name, "cloudnav-protect", "CanNotDelete")
-			return lockChangedMsg{
-				subID: subID,
-				msg:   fmt.Sprintf("added CanNotDelete lock on %s", rg.Name),
-				err:   err,
-			}
-		},
-	)
-}
 
 func (m *model) toggleSelection() {
 	if len(m.visibleNodes) == 0 {
@@ -4457,134 +1825,6 @@ func (m *model) selectAllVisible() {
 // locks) short-circuits with a status hint; only a clean selection opens the
 // confirmation modal. The actual azure call doesn't fire until the user types
 // DELETE in executeDelete.
-func (m *model) promptDelete() {
-	if !m.atRGLevel() {
-		m.status = "D works on the resource-groups view"
-		return
-	}
-	if _, ok := m.active.(*azure.Azure); !ok {
-		m.status = "delete is Azure-only"
-		return
-	}
-	targets := []provider.Node{}
-	for _, n := range m.visibleNodes {
-		if m.selected[n.ID] {
-			targets = append(targets, n)
-		}
-	}
-	if len(targets) == 0 {
-		m.status = "nothing selected — use space to select rows, [ to select all, D to delete"
-		return
-	}
-	for _, t := range targets {
-		if lv := m.rgLockLevel(t.Name); lv != "" {
-			m.status = fmt.Sprintf("refused — %s has a %s lock; press L to remove it first", t.Name, lv)
-			return
-		}
-	}
-	m.deleteMode = true
-	m.deleteTargets = targets
-	m.deleteInput.SetValue("")
-	m.deleteInput.Focus()
-	m.status = ""
-}
-
-// executeDelete fires the actual async deletion after the user has typed the
-// confirmation word. Runs one request per target and reports a single summary
-// message — Azure handles the multi-hour async teardown.
-func (m *model) executeDelete() tea.Cmd {
-	az, ok := m.active.(*azure.Azure)
-	if !ok || len(m.deleteTargets) == 0 {
-		m.deleteMode = false
-		return nil
-	}
-	targets := m.deleteTargets
-	subID := m.currentSubID()
-	ctx := m.ctx
-	m.deleteMode = false
-	m.deleteInput.Blur()
-	m.deleteTargets = nil
-	m.selected = map[string]bool{}
-	m.loading = true
-	m.status = fmt.Sprintf("deleting %d resource group(s) asynchronously...", len(targets))
-	return tea.Batch(
-		m.spinner.Tick,
-		func() tea.Msg {
-			fails := 0
-			for _, t := range targets {
-				if err := az.DeleteResourceGroup(ctx, subID, t.Name); err != nil {
-					fails++
-				}
-			}
-			if fails > 0 {
-				return deletedMsg{
-					msg: fmt.Sprintf("%d of %d deletions failed", fails, len(targets)),
-					err: fmt.Errorf("%d failures", fails),
-				}
-			}
-			return deletedMsg{msg: fmt.Sprintf("requested deletion of %d RG(s) — Azure is processing", len(targets))}
-		},
-	)
-}
-
-// updateDeleteConfirm handles keys inside the delete confirmation overlay.
-// Enter with "DELETE" typed fires; anything else (including esc or Enter with
-// a wrong word) cancels. Matching is case-insensitive for user comfort but
-// an empty input never proceeds — that's the safety floor.
-func (m *model) updateDeleteConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case keyEsc:
-		m.deleteMode = false
-		m.deleteTargets = nil
-		m.deleteInput.Blur()
-		m.status = "deletion cancelled"
-		return m, nil
-	case keyEnter:
-		if strings.EqualFold(strings.TrimSpace(m.deleteInput.Value()), "DELETE") {
-			return m, m.executeDelete()
-		}
-		m.deleteMode = false
-		m.deleteTargets = nil
-		m.deleteInput.Blur()
-		m.status = "deletion cancelled — confirmation word did not match 'DELETE'"
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.deleteInput, cmd = m.deleteInput.Update(msg)
-	return m, cmd
-}
-
-// deleteConfirmView renders the destructive-action modal. The disclaimer is
-// blunt on purpose: the user is about to tell Azure to tear down resource
-// groups that may hold production data, and cloudnav does not have the state
-// or authority to undo that. Making the wording visible makes it harder to
-// wave away.
-func (m *model) deleteConfirmView() string {
-	lines := []string{
-		styles.Bad.Render("⚠  DELETE RESOURCE GROUPS"),
-		"",
-		styles.Header.Render("This will permanently delete:"),
-	}
-	for i, t := range m.deleteTargets {
-		line := fmt.Sprintf("  %2d. %s   %s", i+1, t.Name, styles.Help.Render(t.Location))
-		lines = append(lines, line)
-	}
-	lines = append(lines,
-		"",
-		styles.Bad.Render("Everything inside each resource group — VMs, databases, storage,"),
-		styles.Bad.Render("keys, backups — goes with it. Azure async-tears it down and the"),
-		styles.Bad.Render("operation cannot be undone once the request is accepted."),
-		"",
-		styles.Help.Render("cloudnav forwards the request to the Azure CLI. You are responsible"),
-		styles.Help.Render("for the consequences of this action. Recovery is a support ticket,"),
-		styles.Help.Render("and in most cases there is no recovery at all."),
-		"",
-		m.deleteInput.View(),
-		"",
-		styles.Help.Render("enter  proceed     esc  cancel"),
-	)
-	return styles.Box.Render(strings.Join(lines, "\n"))
-}
 
 func (m *model) cycleTenant() {
 	if !m.atSubscriptionLevel() {
@@ -4680,7 +1920,7 @@ func (m *model) footerView() string {
 // cyan + bold so it reads as "something is happening" instead of melting into
 // the dim filter text.
 func (m *model) loadingFooter(text string) string {
-	return m.spinner.View() + " " + lipgloss.NewStyle().Foreground(styles.Cyan).Bold(true).Render(text)
+	return m.spinner.View() + " " + styles.Loading.Render(text)
 }
 
 // filterFooter renders the tenant / search filter strip with an N/total
@@ -4702,25 +1942,3 @@ func (m *model) filterFooter() string {
 	return ""
 }
 
-func (m *model) helpView() string {
-	body := strings.Join([]string{
-		styles.Title.Render("cloudnav keybindings"),
-		styles.Header.Render("Nav") + "    ↵/l drill   esc/h back   jk move   / filter   : palette   f flag   r refresh",
-		styles.Header.Render("View") + "   i info   o portal   c costs   s sort   t tenant",
-		styles.Header.Render("Auth") + "   I login (runs az/gcloud/aws login inside the TUI)",
-		styles.Header.Render("Select") + " ␣ toggle   [ select-all   ] clear   D delete   L lock",
-		styles.Header.Render("Filter") + " 0-5 on resource views — 0 all / 1 compute / 2 data / 3 network / 4 security / 5 other",
-		styles.Header.Render("Ops") + "    A advisor (Azure / GCP / AWS via Compute Optimizer + TA) — cost / security / reliability / perf / ops",
-		styles.Header.Render("Health") + " H service-health overlay — active incidents / maintenance / advisories",
-		styles.Header.Render("Metrics") + " M metrics on a resource — last 60 min sparklines (Azure Monitor, CloudWatch, GCP Monitoring)",
-		styles.Header.Render("Billing") + " B portfolio view — per-sub (Azure), per-service (AWS), per-project (GCP)",
-		styles.Header.Render("Costs") + "   $ cost-history chart — last 3 / 6 months with MoM deltas (Azure)",
-		styles.Header.Render("Upgrade") + " U upgrade cloudnav when a newer release is available on GitHub",
-		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
-		"         / filter   a activate   +/- duration   j/k move",
-		styles.Header.Render("Misc") + "   x exec   ? help   q quit",
-		"",
-		styles.Help.Render("press any key to close"),
-	}, "\n")
-	return styles.Box.Render(body)
-}

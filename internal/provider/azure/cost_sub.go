@@ -56,19 +56,40 @@ func (a *Azure) SubscriptionCosts(ctx context.Context, subIDs []string) ([]Subsc
 			}
 			res.Current = cur.amount
 			res.Currency = cur.currency
-			if last, err := a.querySubTotal(ctx, id, &fromLast, &toLast); err == nil {
-				res.LastMonth = last.amount
+
+			// Last-month / forecast / budget are independent and additive —
+			// fan them out in parallel inside the current semaphore slot so
+			// users don't wait 3× sequentially. Local vars avoid concurrent
+			// writes to res.
+			var (
+				lastAmt, fcstRem, budget float64
+				inner                    sync.WaitGroup
+			)
+			inner.Add(3)
+			go func() {
+				defer inner.Done()
+				if last, err := a.querySubTotal(ctx, id, &fromLast, &toLast); err == nil {
+					lastAmt = last.amount
+				}
+			}()
+			go func() {
+				defer inner.Done()
+				if r, err := a.querySubForecast(ctx, id); err == nil && r > 0 {
+					fcstRem = r
+				}
+			}()
+			go func() {
+				defer inner.Done()
+				if b, err := a.querySubBudget(ctx, id); err == nil && b > 0 {
+					budget = b
+				}
+			}()
+			inner.Wait()
+			res.LastMonth = lastAmt
+			if fcstRem > 0 {
+				res.Forecast = res.Current + fcstRem
 			}
-			// Forecast and budget are strictly additive — failures leave
-			// the fields zero and the UI falls back to the plain MTD view.
-			// They run serially inside the already-capped semaphore slot
-			// so we don't fan out past 8 concurrent Cost Management calls.
-			if remainder, err := a.querySubForecast(ctx, id); err == nil && remainder > 0 {
-				res.Forecast = res.Current + remainder
-			}
-			if budget, err := a.querySubBudget(ctx, id); err == nil && budget > 0 {
-				res.Budget = budget
-			}
+			res.Budget = budget
 			results <- result{cost: res}
 		}()
 	}

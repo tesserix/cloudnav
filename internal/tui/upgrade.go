@@ -18,8 +18,9 @@ import (
 // updateCheckMsg carries an empty Latest and the header falls back to
 // the quiet state.
 func (m *model) loadUpdateCheck() tea.Cmd {
+	parent := m.ctx
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 		defer cancel()
 		return updateCheckMsg{result: updatecheck.Check(ctx, version.Version)}
 	}
@@ -121,5 +122,5 @@ func (m *model) upgradeView() string {
 		"",
 		footer,
 	}, "\n")
-	return fullScreenBox(m.width, m.height).Render(body)
+	return m.overlay(body)
 }

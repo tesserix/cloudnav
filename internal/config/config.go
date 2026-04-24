@@ -29,6 +29,11 @@ type Config struct {
 	Theme           string     `json:"theme,omitempty"`
 	Bookmarks       []Bookmark `json:"bookmarks,omitempty"`
 	GCP             GCPConfig  `json:"gcp,omitempty"`
+	// AutoUpgrade, when true, lets cloudnav upgrade itself silently at startup
+	// whenever a newer release is detected on GitHub. Off by default — users
+	// opt in explicitly so a background TUI never surprises them with a
+	// binary swap mid-session.
+	AutoUpgrade bool `json:"auto_upgrade,omitempty"`
 }
 
 // GCPConfig holds GCP-specific preferences. Optional; environment variables

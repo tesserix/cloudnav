@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 )
@@ -56,7 +55,7 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpClient
 
 	type listerEntry struct {
 		source string // pimSrc{Azure,Entra,Group} for diagnostics
