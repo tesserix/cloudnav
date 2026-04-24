@@ -245,6 +245,15 @@ type model struct {
 	deleteMode      bool
 	deleteTargets   []provider.Node
 	deleteScope     deleteScope
+	// pendingDelete is a sticky confirmation shown in the footer so the
+	// user can see that a delete request succeeded even after the
+	// auto-refresh overwrites m.status. Cleared when they press esc or
+	// the targeted rows disappear from the list.
+	pendingDelete string
+	// pendingDeleteUntil hides the banner after this moment so it
+	// doesn't hang around forever — Azure usually finishes RG deletes
+	// within a few minutes.
+	pendingDeleteUntil time.Time
 	deleteInput     textinput.Model
 	width           int
 	height          int
@@ -515,6 +524,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Enter):
 			return m, m.drillDown()
 		case key.Matches(msg, m.keys.Back):
+			// esc dismisses the sticky deletion banner before popping
+			// the nav stack, so a single tap clears the confirmation
+			// without navigating away.
+			if m.pendingDelete != "" {
+				m.pendingDelete = ""
+				m.pendingDeleteUntil = time.Time{}
+				return m, nil
+			}
 			return m, m.goBack()
 		case key.Matches(msg, m.keys.Refresh):
 			return m, m.reload()
@@ -578,6 +595,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.status = msg.msg
+		// Sticky banner — survives the follow-up reload so the user
+		// sees the confirmation even after the table re-renders.
+		// 10 minutes covers the typical Azure RG teardown; after that
+		// the row is usually gone anyway.
+		m.pendingDelete = "✓ " + msg.msg + " — watch the STATE column for 'Deleting'"
+		m.pendingDeleteUntil = time.Now().Add(10 * time.Minute)
 		m.selected = map[string]bool{}
 		return m, m.reload()
 
@@ -1277,7 +1300,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			rows = append(rows, row)
 		case provider.KindResourceGroup:
 			lock := lockBadgePlain(m.rgLockLevel(n.Name))
-			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, n.State, lock, shortenTags(n.Meta["tags"], tagsColWidth-1)}
+			row := table.Row{selectionMark(m.selected[n.ID]), n.Name, n.Location, stateBadge(n.State), lock, shortenTags(n.Meta["tags"], tagsColWidth-1)}
 			if m.showCost {
 				row = append(row, costOrDash(n.Cost))
 			}
@@ -1391,6 +1414,22 @@ func splitResourceCols(budget int) (typeW, locW, createdW, healthW, tagsW int) {
 // lookup cycle. Unknown stays blank as well — surfacing it on every
 // resource that Resource Health hasn't classified yet would drown out
 // actual degraded signals.
+// stateBadge colours the STATE column so the "Deleting" rows jump out
+// of the list after a delete request. Azure returns provisioningState
+// verbatim, so the match is on the raw string.
+func stateBadge(state string) string {
+	switch strings.ToLower(state) {
+	case "deleting":
+		return styles.WarnS.Bold(true).Render("⟳ Deleting")
+	case "failed":
+		return styles.Bad.Render(state)
+	case "canceled", "cancelled":
+		return styles.Help.Render(state)
+	default:
+		return state
+	}
+}
+
 func healthBadge(state string) string {
 	switch state {
 	case "Unavailable":
@@ -2019,6 +2058,12 @@ func (m *model) footerView() string {
 	if m.searchMode {
 		return " " + m.search.View()
 	}
+	// Sticky deletion banner — wins over most footer content so the
+	// user can see the confirmation even after the reload repopulates.
+	// Errors and the active search input still take precedence.
+	if banner := m.deletionBanner(); banner != "" && m.err == nil {
+		return " " + banner
+	}
 	// Filter context (tenant / search) always wins over the loading spinner
 	// so the user can see what filter is active even while costs stream in.
 	if filt := m.filterFooter(); filt != "" {
@@ -2055,6 +2100,20 @@ func (m *model) footerView() string {
 		return " " + styles.WarnS.Render("⚠ "+right)
 	}
 	return " " + styles.Help.Render(right)
+}
+
+// deletionBanner renders the sticky confirmation after a delete. Empty
+// when no banner is active or it's past its TTL. Pressing esc dismisses
+// it via clearDeletionBanner.
+func (m *model) deletionBanner() string {
+	if m.pendingDelete == "" {
+		return ""
+	}
+	if !m.pendingDeleteUntil.IsZero() && time.Now().After(m.pendingDeleteUntil) {
+		return ""
+	}
+	return styles.Good.Bold(true).Render(m.pendingDelete) + "  " +
+		styles.ModalHint.Render("(esc to dismiss)")
 }
 
 // loadingFooter renders the active-spinner footer line with the status in
