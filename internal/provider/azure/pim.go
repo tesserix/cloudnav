@@ -229,39 +229,37 @@ type pimLister func(ctx context.Context, tenantID string, client *http.Client) (
 // subscription there. The map value is the human-readable tenant name when
 // known, for diagnostic rows.
 func (a *Azure) pimTenants(ctx context.Context) (map[string]string, error) {
-	tenants := map[string]string{}
+	// allTenants merges every discovery source we have — az account
+	// tenant list, ARM /tenants, and the per-sub tenantIds — so
+	// cross-tenant guest memberships that a single source misses still
+	// get probed for PIM eligibilities.
+	tenants := a.allTenants(ctx)
 
-	// 1) Subscription-owning tenants. We do this rather than calling
-	// a.pimTenants before to tolerate fetchTenants failures.
-	out, err := a.az.Run(ctx, "account", "list", "-o", "json")
-	if err != nil {
-		return nil, fmt.Errorf("list subscriptions for PIM: %w", err)
-	}
-	var subs []subJSON
-	if err := json.Unmarshal(out, &subs); err != nil {
-		return nil, fmt.Errorf("parse az account list: %w", err)
-	}
-	for _, s := range subs {
-		if s.TenantID != "" {
-			tenants[s.TenantID] = ""
+	// Fallback: if discovery returned nothing (brand-new profile with
+	// no az login yet), fall back to the original az account list.
+	if len(tenants) == 0 {
+		out, err := a.az.Run(ctx, "account", "list", "-o", "json")
+		if err != nil {
+			return nil, fmt.Errorf("list subscriptions for PIM: %w", err)
+		}
+		var subs []subJSON
+		if err := json.Unmarshal(out, &subs); err != nil {
+			return nil, fmt.Errorf("parse az account list: %w", err)
+		}
+		for _, s := range subs {
+			if s.TenantID != "" {
+				tenants[s.TenantID] = ""
+			}
 		}
 	}
 
-	// 2) Directory-only tenants. fetchTenants populates a.tenants from
-	// https://management.azure.com/tenants — that list includes tenants
-	// where the user holds only directory roles. Run it on demand so PIM
-	// works even if the subs view wasn't visited first.
+	// Enrich with the tenant-name cache so diagnostic rows have
+	// readable labels even when allTenants returned empty names.
 	a.mu.RLock()
 	known := a.tenants
 	a.mu.RUnlock()
-	if len(known) == 0 {
-		a.fetchTenants(ctx)
-		a.mu.RLock()
-		known = a.tenants
-		a.mu.RUnlock()
-	}
 	for tid, name := range known {
-		if _, seen := tenants[tid]; !seen || name != "" {
+		if _, seen := tenants[tid]; !seen || (name != "" && tenants[tid] == "") {
 			tenants[tid] = name
 		}
 	}

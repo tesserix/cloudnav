@@ -292,8 +292,9 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 		return nodes, nil
 	}
 
-	// 3. Live fetch. Subscriptions via the SDK (no process spawn) and
-	// the tenants lookup run concurrently.
+	// 3. Live fetch. Multi-tenant discovery first — fans out
+	// /subscriptions per tenant so guest memberships in other tenants
+	// still surface. Falls back to single-tenant SDK, then az CLI.
 	var (
 		wg    sync.WaitGroup
 		nodes []provider.Node
@@ -302,10 +303,14 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		if multi, mtErr := a.listSubscriptionsMultiTenant(ctx); mtErr == nil && len(multi) > 0 {
+			nodes = subsJSONToNodes(multi)
+			return
+		}
 		nodes, err = a.listSubscriptionsSDK(ctx)
 		if err != nil {
-			// Fallback to az CLI when the SDK credential chain can't
-			// resolve (az not installed, no cached login, etc.).
+			// Final fallback to az CLI when every SDK / REST path
+			// fails (no cached login, az not installed, etc.).
 			var out []byte
 			out, err = a.az.Run(ctx, "account", "list", "-o", "json")
 			if err == nil {
@@ -422,20 +427,31 @@ func parseSubs(data []byte) ([]provider.Node, error) {
 	if err := json.Unmarshal(data, &subs); err != nil {
 		return nil, fmt.Errorf("parse az account list: %w", err)
 	}
+	return subsJSONToNodes(subs), nil
+}
+
+// subsJSONToNodes turns subJSON records (from parseSubs or
+// listSubscriptionsMultiTenant) into provider.Node values with a
+// consistent Meta shape.
+func subsJSONToNodes(subs []subJSON) []provider.Node {
 	nodes := make([]provider.Node, 0, len(subs))
 	for _, s := range subs {
+		meta := map[string]string{}
+		if s.TenantID != "" {
+			meta["tenantId"] = s.TenantID
+		}
+		if s.User.Name != "" {
+			meta["user"] = s.User.Name
+		}
 		nodes = append(nodes, provider.Node{
 			ID:    s.ID,
 			Name:  s.Name,
 			Kind:  provider.KindSubscription,
 			State: s.State,
-			Meta: map[string]string{
-				"tenantId": s.TenantID,
-				"user":     s.User.Name,
-			},
+			Meta:  meta,
 		})
 	}
-	return nodes, nil
+	return nodes
 }
 
 // subIDFromScope extracts the subscription UUID from an Azure resource scope
