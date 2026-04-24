@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.25] — 2026-04-24
+
+### Fixed
+- **Advisor popup no longer shrinks / grows while scrolling.** Every
+  recommendation card is now normalised to exactly four lines, the
+  top and bottom scroll indicators each reserve a line whether or
+  not they have text, and unused card slots are padded with blank
+  four-line blocks. Total popup height is constant regardless of
+  where the cursor is in the list.
+
+### Changed
+- **Centered section rule between resource context and cards.** The
+  blank separator has been replaced with a centered
+  `━━━ Recommendations (N) ━━━` divider so the cost / resource
+  block and the card list read as two distinct sections.
+
 ## [0.22.10] — 2026-04-24
 
 ### Changed
@@ -253,7 +269,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.10...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.25...HEAD
+[0.22.25]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.25
 [0.22.10]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.10
 [0.22.9]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.9
 [0.22.8]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.8
