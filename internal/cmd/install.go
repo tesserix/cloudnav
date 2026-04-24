@@ -18,15 +18,15 @@ var installCmd = &cobra.Command{
 	Short:     "Install a cloud CLI (az / gcloud / aws) using your OS's package manager",
 	Long:      "Detects the current OS and runs the right install command — Homebrew on macOS (and Linux when available), the official curl installer on other Linux distros, or winget on Windows. After install finishes, run 'cloudnav login <cloud>' to authenticate; credentials land in the CLI's standard location (~/.azure, ~/.config/gcloud, ~/.aws) which cloudnav reads transparently.",
 	Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-	ValidArgs: []string{"azure", "aws", "gcp"},
+	ValidArgs: []string{cloudAzure, cloudAWS, cloudGCP},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var p provider.Provider
 		switch args[0] {
-		case "azure":
+		case cloudAzure:
 			p = azure.New()
-		case "aws":
+		case cloudAWS:
 			p = aws.New()
-		case "gcp":
+		case cloudGCP:
 			p = gcp.New()
 		}
 		inst, ok := p.(provider.Installer)
