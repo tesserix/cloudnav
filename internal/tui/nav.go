@@ -177,15 +177,28 @@ func (m *model) reload() tea.Cmd {
 	}
 	top := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
-	return m.load(top.title, top.parent)
+	// Quiet reload: user is already looking at this level, so keep the
+	// table visible and show progress only in the footer spinner. A
+	// drill load (drillLoadingBody) would flash-replace the table which
+	// reads as "jumbled".
+	return m.loadInto(top.title, top.parent, false)
 }
 
 func (m *model) load(title string, parent *provider.Node) tea.Cmd {
+	return m.loadInto(title, parent, true)
+}
+
+// loadInto is the shared load path. drill=true swaps the table for the
+// full-screen loading panel (used for fresh drill-downs where the user
+// has no context yet). drill=false keeps the current table visible and
+// only shows the footer spinner — appropriate for refresh / reload
+// after a delete.
+func (m *model) loadInto(title string, parent *provider.Node, drill bool) tea.Cmd {
 	if m.active == nil {
 		return nil
 	}
 	m.loading = true
-	m.drilling = true
+	m.drilling = drill
 	m.err = nil
 	m.status = "loading " + title + "..."
 	prov := m.active

@@ -1418,9 +1418,15 @@ func splitResourceCols(budget int) (typeW, locW, createdW, healthW, tagsW int) {
 // of the list after a delete request. Azure returns provisioningState
 // verbatim, so the match is on the raw string.
 func stateBadge(state string) string {
+	// Keep the text short and predictable. bubbles/table's cell
+	// truncation walks the string as runes, not as ANSI tokens, so a
+	// styled badge longer than the column cell would get chopped mid
+	// escape and leak visible "…──0m" fragments. Plain 'Deleting' fits
+	// the 12-cell STATE column with slack; users still see the state
+	// change against the surrounding Succeeded rows.
 	switch strings.ToLower(state) {
 	case "deleting":
-		return styles.WarnS.Bold(true).Render("⟳ Deleting")
+		return styles.WarnS.Bold(true).Render("Deleting")
 	case "failed":
 		return styles.Bad.Render(state)
 	case "canceled", "cancelled":

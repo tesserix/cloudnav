@@ -10,6 +10,13 @@ import (
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 )
 
+// ansiReset is emitted between Shell sections so a styled background
+// (e.g. a selected table row with Background(Purple)) doesn't bleed
+// onto the pad lines that follow. Without this the terminal keeps
+// applying the last style to every subsequent cell until it hits a
+// reset, which shows up as a purple splash-screen below the list.
+const ansiReset = "\x1b[0m"
+
 // Shell renders header + body + footer so the output is exactly
 // width × height cells. Body is padded or truncated to fit.
 func Shell(width, height int, header, body, footer string) string {
@@ -20,7 +27,7 @@ func Shell(width, height int, header, body, footer string) string {
 	if bH < 1 {
 		bH = 1
 	}
-	return header + "\n" + fitHeight(body, bH) + "\n" + footer
+	return header + ansiReset + "\n" + fitHeight(body, bH) + ansiReset + "\n" + footer
 }
 
 func fitHeight(content string, n int) string {
@@ -31,7 +38,12 @@ func fitHeight(content string, n int) string {
 	if len(lines) > n {
 		return strings.Join(lines[:n], "\n")
 	}
+	// Each pad line starts with a reset so the previous row's styling
+	// can't bleed past. Empty string alone wouldn't trigger that reset.
 	pad := make([]string, n-len(lines))
+	for i := range pad {
+		pad[i] = ansiReset
+	}
 	return strings.Join(append(lines, pad...), "\n")
 }
 
