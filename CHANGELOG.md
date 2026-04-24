@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-04-24
+
 ### Added
 - **Azure SDK migration — phases 1–3.** `azcore` + `azidentity` +
   `armsubscription` + `armresources` + `armlocks` replace the hot
@@ -101,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.21.0
 [0.6.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.6.0
 
 ## [0.5.2] — 2026-04-17
