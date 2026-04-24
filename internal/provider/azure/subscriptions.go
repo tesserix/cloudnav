@@ -9,6 +9,33 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
+// subIDs returns every subscription id the caller can see. Used by
+// billing / cost-history / pim tenant enumeration — the places that
+// just need the ids, not the full Node objects. Tries the SDK path
+// first and falls back to `az account list` when the credential chain
+// can't resolve.
+func (a *Azure) subIDs(ctx context.Context) ([]string, error) {
+	subs, err := a.listSubscriptionsSDK(ctx)
+	if err != nil {
+		out, cliErr := a.az.Run(ctx, "account", "list", "-o", "json")
+		if cliErr != nil {
+			return nil, cliErr
+		}
+		cliSubs, parseErr := parseSubs(out)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		subs = cliSubs
+	}
+	ids := make([]string, 0, len(subs))
+	for _, s := range subs {
+		if s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+	}
+	return ids, nil
+}
+
 // listSubscriptionsSDK pulls the caller's subscriptions from the ARM
 // subscriptions client. Same shape as the old `az account list` output
 // so callers can use the result interchangeably.

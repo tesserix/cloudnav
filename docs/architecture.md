@@ -99,9 +99,15 @@ resolve (no cached login, az not installed).
   before expiry. A PIM list across N tenants acquires N tokens once per
   session instead of 2N processes per refresh.
 - **Subscriptions** — `armsubscription.NewSubscriptionsClient` pager.
+- **Resource groups** — `armresources.NewResourceGroupsClient`.
+- **Resources in a single RG** — `armresources.NewClient` with
+  `$expand=createdTime,changedTime` for audit timestamps.
 - **Resources across RGs** — one Resource Graph (KQL) POST covers all
   selected RGs in a single request. Replaces the N-sequential
   `az resource list` fanout that made 10-RG drills take 10-30 s.
+- **Locks** — `armlocks.NewManagementLocksClient` for list / create /
+  delete.
+- **Resource group delete** — `armresources.NewResourceGroupsClient.BeginDelete`.
 - **ARM REST** — a single package-level `http.Client` with keep-alive,
   HTTP/2, and connection pooling. All requests flow through
   `doWithRetry` which honours `Retry-After` on 429/503 up to 3
@@ -113,9 +119,14 @@ resolve (no cached login, az not installed).
 
 ### Still on the CLI
 
-Per-resource listing (`az resource list --resource-group`), lock
-management, and Cost Management remain on `cli.Runner`. These are
-Phases 2–4 of the SDK migration and will move over incrementally.
+`az` stays in two places:
+1. As the login bootstrap — cloudnav never runs `az login` for you.
+2. As the fallback whenever the SDK credential chain can't resolve
+   (e.g. the user has a custom `AZURE_CONFIG_DIR`, or they removed
+   `az` cache files but the binary itself still works).
+
+VM start / stop / show and resource detail (`az resource show`) remain
+on `cli.Runner` — lower-traffic paths that are fine shelling out.
 
 ## Caching
 

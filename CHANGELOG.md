@@ -8,13 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Azure SDK migration (phase 1 of 4).** `azcore` + `azidentity` +
-  `armsubscription` replace the hottest `az`-shell paths.
+- **Azure SDK migration — phases 1–3.** `azcore` + `azidentity` +
+  `armsubscription` + `armresources` + `armlocks` replace the hot
+  `az`-shell paths across auth, subscriptions, resource groups,
+  resources, locks, and resource-group deletion.
   `DefaultAzureCredential` reads the `az login` cache in-process so
-  token acquisition no longer spawns a subprocess per tenant. Root()
-  lists subscriptions via `armsubscription.NewSubscriptionsClient`.
-  Phases 2–4 (resources, locks, Cost Management) are still on the CLI
-  and will migrate incrementally.
+  token acquisition no longer spawns a subprocess per tenant. Every
+  SDK path keeps a CLI fallback for when the credential chain can't
+  resolve (no cached login, az not installed). Cost Management queries
+  stay on hand-rolled REST calls because they already flow through the
+  shared retrying `http.Client` — the `armcostmanagement` SDK would
+  add binary weight without a perf change.
 - **Azure Resource Graph fast path** for multi-RG drills. When `D`-ing
   or drilling into several selected RGs, one KQL POST returns every
   resource across them instead of N sequential `az resource list`

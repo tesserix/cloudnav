@@ -15,6 +15,9 @@ type Lock struct {
 }
 
 func (a *Azure) ResourceGroupLocks(ctx context.Context, subID string) (map[string][]Lock, error) {
+	if locks, err := a.listLocksSDK(ctx, subID); err == nil {
+		return locks, nil
+	}
 	out, err := a.az.Run(ctx, "lock", "list", "--subscription", subID, "-o", "json")
 	if err != nil {
 		return nil, fmt.Errorf("azure lock list: %w", err)
@@ -68,6 +71,9 @@ func (a *Azure) CreateRGLock(ctx context.Context, subID, rg, name, level string)
 	if name == "" {
 		name = "cloudnav-" + strings.ToLower(level)
 	}
+	if err := a.createRGLockSDK(ctx, subID, rg, name, level); err == nil {
+		return nil
+	}
 	_, err := a.az.Run(ctx,
 		"lock", "create",
 		"--name", name,
@@ -79,6 +85,9 @@ func (a *Azure) CreateRGLock(ctx context.Context, subID, rg, name, level string)
 }
 
 func (a *Azure) DeleteRGLock(ctx context.Context, subID, rg, lockName string) error {
+	if err := a.deleteRGLockSDK(ctx, subID, rg, lockName); err == nil {
+		return nil
+	}
 	_, err := a.az.Run(ctx,
 		"lock", "delete",
 		"--name", lockName,
@@ -89,6 +98,9 @@ func (a *Azure) DeleteRGLock(ctx context.Context, subID, rg, lockName string) er
 }
 
 func (a *Azure) DeleteResourceGroup(ctx context.Context, subID, rg string) error {
+	if err := a.deleteResourceGroupSDK(ctx, subID, rg); err == nil {
+		return nil
+	}
 	_, err := a.az.Run(ctx,
 		"group", "delete",
 		"--name", rg,

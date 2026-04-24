@@ -2,7 +2,6 @@ package azure
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/tesserix/cloudnav/internal/provider"
@@ -12,17 +11,9 @@ import (
 // the caller has access to, rolled up across all tenants. Implements
 // provider.Billing so the TUI's `B` overlay can show it.
 func (a *Azure) Billing(ctx context.Context) ([]provider.CostLine, error) {
-	out, err := a.az.Run(ctx, "account", "list", "-o", "json")
+	ids, err := a.subIDs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("azure billing: list subscriptions: %w", err)
-	}
-	var subs []subJSON
-	if err := json.Unmarshal(out, &subs); err != nil {
-		return nil, fmt.Errorf("azure billing: parse subs: %w", err)
-	}
-	ids := make([]string, 0, len(subs))
-	for _, s := range subs {
-		ids = append(ids, s.ID)
+		return nil, fmt.Errorf("azure billing: %w", err)
 	}
 	rows, err := a.SubscriptionCosts(ctx, ids)
 	if err != nil {

@@ -34,16 +34,17 @@ func (a *Azure) CostHistory(ctx context.Context, opts provider.CostHistoryOption
 
 	var subs []subJSON
 	if opts.Scope != "" {
-		// Single-subscription scope — skip the CLI call, just trust what
-		// the caller handed us. Keeps the "I know which sub" path cheap.
+		// Single-subscription scope — skip the SDK call, trust what the
+		// caller handed us. Keeps the "I know which sub" path cheap.
 		subs = []subJSON{{ID: opts.Scope, Name: opts.ScopeLabel}}
 	} else {
-		out, err := a.az.Run(ctx, "account", "list", "-o", "json")
+		ids, err := a.subIDs(ctx)
 		if err != nil {
-			return provider.CostHistory{}, fmt.Errorf("azure cost history: list subscriptions: %w", err)
+			return provider.CostHistory{}, fmt.Errorf("azure cost history: %w", err)
 		}
-		if err := json.Unmarshal(out, &subs); err != nil {
-			return provider.CostHistory{}, fmt.Errorf("azure cost history: parse subs: %w", err)
+		subs = make([]subJSON, 0, len(ids))
+		for _, id := range ids {
+			subs = append(subs, subJSON{ID: id, Name: a.subName(id)})
 		}
 	}
 

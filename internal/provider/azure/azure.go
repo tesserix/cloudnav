@@ -452,8 +452,12 @@ type rgJSON struct {
 func (a *Azure) resourceGroups(ctx context.Context, sub provider.Node) ([]provider.Node, error) {
 	// ARM doesn't expose createdTime on the group-list response and Azure
 	// Resource Graph's resourcecontainers table only has it for a subset of
-	// tenants, so we don't show it on the RG view. Per-resource creation
-	// dates (below) come from $expand=createdTime which is reliable.
+	// tenants, so we don't show it on the RG view.
+	if nodes, err := a.listResourceGroupsSDK(ctx, sub); err == nil {
+		return nodes, nil
+	}
+	// CLI fallback for when the SDK credential chain can't resolve
+	// (az not installed, sub in a tenant we have no cached login for).
 	out, err := a.az.Run(ctx, "group", "list", "--subscription", sub.ID, "-o", "json")
 	if err != nil {
 		return nil, err
@@ -507,14 +511,10 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 	if subID == "" {
 		return nil, fmt.Errorf("azure: resource group %q has no subscription context", rg.Name)
 	}
-	// $expand=createdTime,changedTime surfaces per-resource audit timestamps
-	// that ARM doesn't return by default. Some providers / api-versions
-	// reject this expand — fall back to the plain list so drilling always
-	// works; we just lose the CREATED column for those resources.
-	//
+
 	// Resource Health runs in parallel with the resource list so health
 	// badges don't add round-trip latency. Failure is non-fatal — the
-	// resource list still renders, just without the HEALTH column values.
+	// resource list still renders, just without HEALTH column values.
 	var (
 		wg     sync.WaitGroup
 		health map[string]string
@@ -525,6 +525,15 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 		health = a.resourceHealth(ctx, subID)
 	}()
 
+	sub := provider.Node{ID: subID, Meta: map[string]string{"tenantId": rg.Meta["tenantId"]}}
+	if nodes, err := a.listResourcesInRGSDK(ctx, sub, rg); err == nil {
+		wg.Wait()
+		return overlayHealth(nodes, health), nil
+	}
+
+	// CLI fallback. $expand=createdTime,changedTime surfaces per-resource
+	// audit timestamps that ARM doesn't return by default. Some providers
+	// / api-versions reject this expand, so drop it on the second try.
 	out, err := a.az.Run(ctx,
 		"resource", "list",
 		"--resource-group", rg.Name,
@@ -540,12 +549,31 @@ func (a *Azure) resources(ctx context.Context, rg provider.Node) ([]provider.Nod
 			"-o", "json",
 		)
 		if err != nil {
-			wg.Wait() // don't leak the health goroutine
+			wg.Wait()
 			return nil, err
 		}
 	}
 	wg.Wait()
 	return parseResourcesWithHealth(out, rg, subID, health)
+}
+
+// overlayHealth merges per-resource health classifications onto the
+// SDK-returned nodes. The CLI path does the same via
+// parseResourcesWithHealth; we keep SDK and CLI paths parallel so
+// either shape drives the TUI identically.
+func overlayHealth(nodes []provider.Node, health map[string]string) []provider.Node {
+	if len(health) == 0 {
+		return nodes
+	}
+	for i := range nodes {
+		if h := health[strings.ToLower(nodes[i].ID)]; h != "" && h != HealthAvailable {
+			if nodes[i].Meta == nil {
+				nodes[i].Meta = map[string]string{}
+			}
+			nodes[i].Meta["health"] = h
+		}
+	}
+	return nodes
 }
 
 func parseResources(data []byte, rg provider.Node, subID string) ([]provider.Node, error) {
