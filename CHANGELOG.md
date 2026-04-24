@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-04-24
+
+### Changed
+- **Azure SDK migration complete.** The remaining `az` CLI call sites
+  — tenant discovery, `LoggedIn` probe, `Details` (resource / sub /
+  resource group), VM list / show / start / stop, and tenant-for-sub
+  lookup — now use the Azure SDK or direct ARM REST with SDK-minted
+  tokens. `az.Run` remains only as the fallback inside each SDK-first
+  path, plus the intentional `az login` handoff for interactive auth
+  and one `account list` in PIM that needs `TenantID` per sub (omitted
+  from the SDK `Subscription` model). Adds `armcompute/v5` (~2 MB) for
+  VM operations.
+
+### Fixed
+- **PIM scope names resolve for sub IDs you don't own directly.**
+  Previously a PIM eligibility for a subscription not in your
+  `az account list` rendered as `/subscriptions/<guid>...` in the scope
+  column. One Resource Graph query against `resourcecontainers` now
+  hydrates those names the first time you open the PIM view; resolved
+  names are cached in-process for the session.
+
+## [0.21.1] — 2026-04-24
+
+### Fixed
+- Visible delete feedback: sticky green confirmation banner in the
+  footer (survives the auto-refresh) and a coloured `⟳ Deleting`
+  badge in the STATE column so you can see that a delete request
+  actually went through. `esc` dismisses the banner.
+
 ## [0.21.0] — 2026-04-24
 
 ### Added
@@ -103,7 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.0
+[0.21.1]: https://github.com/tesserix/cloudnav/releases/tag/v0.21.1
 [0.21.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.21.0
 [0.6.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.6.0
 
