@@ -39,12 +39,19 @@ func tokenCacheKey(tenantID, resource string) string {
 // token we just handed out doesn't die mid-request on a slow network.
 const tokenCacheSkew = 2 * time.Minute
 
-// tenantTokenFor returns a bearer token for a specific audience — ARM
-// for subscription-scoped calls, Graph for Entra / Groups PIM. Results
-// are cached in memory per (tenant, audience) until near expiry, so a
-// second PIM list within the same session reuses the token instead of
-// re-running `az account get-access-token`.
+// tenantTokenFor returns a bearer token for the given audience. First
+// tries the Azure SDK credential (which reads the az login cache
+// directly, no process spawn) and falls back to 'az account
+// get-access-token' only when that fails. Cached per (tenant, audience)
+// in memory until near expiry.
 func (a *Azure) tenantTokenFor(ctx context.Context, tenantID, resource string) (string, error) {
+	if tok, err := a.sdkToken(ctx, tenantID, resource); err == nil {
+		return tok, nil
+	}
+	return a.tenantTokenViaCLI(ctx, tenantID, resource)
+}
+
+func (a *Azure) tenantTokenViaCLI(ctx context.Context, tenantID, resource string) (string, error) {
 	key := tokenCacheKey(tenantID, resource)
 
 	tokenCacheMu.Lock()
@@ -65,8 +72,8 @@ func (a *Azure) tenantTokenFor(ctx context.Context, tenantID, resource string) (
 	}
 	var t struct {
 		AccessToken string `json:"accessToken"`
-		ExpiresOn   string `json:"expiresOn"`   // legacy local-time
-		ExpiresOnT  string `json:"expires_on"`  // unix seconds as string (some az versions)
+		ExpiresOn   string `json:"expiresOn"`  // legacy local-time
+		ExpiresOnT  string `json:"expires_on"` // unix seconds (newer az)
 	}
 	if err := json.Unmarshal(out, &t); err != nil {
 		return "", err
@@ -75,9 +82,6 @@ func (a *Azure) tenantTokenFor(ctx context.Context, tenantID, resource string) (
 		return "", fmt.Errorf("empty token for tenant %s (audience %s)", tenantID, resource)
 	}
 
-	// Store in the cache. Parse whichever expiry field is present, and
-	// fall back to a conservative 50-minute TTL if neither parses
-	// (Azure tokens are 60min so we still leave 10min of headroom).
 	expiresAt := parseAzExpiry(t.ExpiresOn, t.ExpiresOnT)
 	if expiresAt.IsZero() {
 		expiresAt = time.Now().Add(50 * time.Minute)

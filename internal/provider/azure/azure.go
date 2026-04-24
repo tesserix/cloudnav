@@ -268,18 +268,26 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 		return nodes, nil
 	}
 
-	// 3. Live fetch. `az account list` and the tenants API call are
-	// independent, so run them concurrently — previously the tenants fetch
-	// added a second az CLI startup to the critical path.
+	// 3. Live fetch. Subscriptions via the SDK (no process spawn) and
+	// the tenants lookup run concurrently.
 	var (
-		wg      sync.WaitGroup
-		listOut []byte
-		listErr error
+		wg    sync.WaitGroup
+		nodes []provider.Node
+		err   error
 	)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		listOut, listErr = a.az.Run(ctx, "account", "list", "-o", "json")
+		nodes, err = a.listSubscriptionsSDK(ctx)
+		if err != nil {
+			// Fallback to az CLI when the SDK credential chain can't
+			// resolve (az not installed, no cached login, etc.).
+			var out []byte
+			out, err = a.az.Run(ctx, "account", "list", "-o", "json")
+			if err == nil {
+				nodes, err = parseSubs(out)
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -287,10 +295,6 @@ func (a *Azure) Root(ctx context.Context) ([]provider.Node, error) {
 	}()
 	wg.Wait()
 
-	if listErr != nil {
-		return nil, listErr
-	}
-	nodes, err := parseSubs(listOut)
 	if err != nil {
 		return nil, err
 	}
