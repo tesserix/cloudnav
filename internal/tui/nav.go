@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,31 +56,90 @@ func (m *model) drillAggregated() tea.Cmd {
 	m.loading = true
 	m.drilling = true
 	m.status = fmt.Sprintf("loading resources across %d resource group(s)...", len(selected))
+
+	// Fast path: Azure Resource Graph returns resources for all selected
+	// RGs in one KQL call. Replaces N sequential `az resource list`
+	// fanouts that otherwise made a 10-RG drill take 10-30s.
+	if az, ok := prov.(*azure.Azure); ok {
+		subID := selected[0].Meta["subscriptionId"]
+		if subID == "" && selected[0].Parent != nil {
+			subID = selected[0].Parent.ID
+		}
+		if subID != "" {
+			rgNames := make([]string, 0, len(selected))
+			for _, n := range selected {
+				rgNames = append(rgNames, n.Name)
+			}
+			return tea.Batch(
+				m.spinner.Tick,
+				func() tea.Msg {
+					nodes, err := az.ResourcesInRGs(ctx, subID, rgNames)
+					if err != nil {
+						// Fallback to per-RG fanout when Resource Graph
+						// fails (e.g. user lacks RG reader at the
+						// subscription level).
+						return nodesLoadedMsg{frame: aggregateFromChildren(ctx, prov, selected)}
+					}
+					// Stamp originRG so the cost merge can bucket rows
+					// back by their source RG.
+					nodes = tagOriginRG(nodes)
+					return nodesLoadedMsg{frame: frame{
+						title:      fmt.Sprintf("%d resource group(s)", len(selected)),
+						nodes:      nodes,
+						aggregated: true,
+					}}
+				},
+			)
+		}
+	}
+
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			var combined []provider.Node
-			for _, rg := range selected {
-				rg := rg
-				nodes, err := prov.Children(ctx, rg)
-				if err != nil {
-					continue
-				}
-				for i := range nodes {
-					if nodes[i].Meta == nil {
-						nodes[i].Meta = map[string]string{}
-					}
-					nodes[i].Meta["originRG"] = rg.Name
-				}
-				combined = append(combined, nodes...)
-			}
-			return nodesLoadedMsg{frame: frame{
-				title:      fmt.Sprintf("%d resource group(s)", len(selected)),
-				nodes:      combined,
-				aggregated: true,
-			}}
+			return nodesLoadedMsg{frame: aggregateFromChildren(ctx, prov, selected)}
 		},
 	)
+}
+
+// aggregateFromChildren walks the provider's Children() API per RG — the
+// fallback when Resource Graph isn't available (non-Azure providers or a
+// KQL failure). Same semantics as before the Resource Graph fast path.
+func aggregateFromChildren(ctx context.Context, prov provider.Provider, selected []provider.Node) frame {
+	var combined []provider.Node
+	for _, rg := range selected {
+		rg := rg
+		nodes, err := prov.Children(ctx, rg)
+		if err != nil {
+			continue
+		}
+		for i := range nodes {
+			if nodes[i].Meta == nil {
+				nodes[i].Meta = map[string]string{}
+			}
+			nodes[i].Meta["originRG"] = rg.Name
+		}
+		combined = append(combined, nodes...)
+	}
+	return frame{
+		title:      fmt.Sprintf("%d resource group(s)", len(selected)),
+		nodes:      combined,
+		aggregated: true,
+	}
+}
+
+// tagOriginRG derives each resource's origin RG from its ID and stamps
+// Meta["originRG"] so the aggregated cost merge can find it. Resource
+// Graph returns the RG name as a field, which we surface via parentRGName.
+func tagOriginRG(nodes []provider.Node) []provider.Node {
+	for i := range nodes {
+		if nodes[i].Meta == nil {
+			nodes[i].Meta = map[string]string{}
+		}
+		if nodes[i].Meta["originRG"] == "" {
+			nodes[i].Meta["originRG"] = parentRGName(nodes[i].ID)
+		}
+	}
+	return nodes
 }
 
 func (m *model) resetView() {

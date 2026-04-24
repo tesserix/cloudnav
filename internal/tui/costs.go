@@ -11,6 +11,25 @@ import (
 	"github.com/tesserix/cloudnav/internal/tui/styles"
 )
 
+// warmCostCache checks the disk cache for a given scope key and hydrates
+// the in-memory m.costs map if a fresh entry exists. Returns true when a
+// cache hit populates the in-memory state, so callers can skip the
+// network fetch.
+func (m *model) warmCostCache(key string) bool {
+	if m.costCache == nil {
+		return false
+	}
+	if _, ok := m.costs[key]; ok {
+		return true
+	}
+	cached, ok := m.costCache.Get(key)
+	if !ok {
+		return false
+	}
+	m.costs[key] = cached
+	return true
+}
+
 func (m *model) toggleCost() tea.Cmd {
 	m.showCost = !m.showCost
 	if !m.showCost {
@@ -41,7 +60,7 @@ func (m *model) toggleCost() tea.Cmd {
 		m.refreshTable()
 		return nil
 	}
-	if _, cached := m.costs[scope.ID]; cached {
+	if m.warmCostCache(scope.ID) {
 		m.refreshTable()
 		m.status = statusCostCached
 		return nil
@@ -72,7 +91,7 @@ func (m *model) loadAggregatedCost(top *frame) tea.Cmd {
 		rgs[n.Meta["originRG"]] = true
 	}
 	cacheKey := "agg:" + top.title
-	if _, cached := m.costs[cacheKey]; cached {
+	if m.warmCostCache(cacheKey) {
 		return nil
 	}
 	// Find subscription — use one node's meta.
@@ -124,7 +143,7 @@ func (m *model) loadResourceCosts() tea.Cmd {
 		return nil
 	}
 	cacheKey := "res:" + subID + "/" + rg
-	if _, cached := m.costs[cacheKey]; cached {
+	if m.warmCostCache(cacheKey) {
 		m.refreshTable()
 		m.status = statusCostCached
 		return nil
@@ -151,7 +170,7 @@ func (m *model) loadSubscriptionCosts() tea.Cmd {
 		m.refreshTable()
 		return nil
 	}
-	if _, cached := m.costs["__azure_subs__"]; cached {
+	if m.warmCostCache("__azure_subs__") {
 		m.refreshTable()
 		m.status = statusCostCached
 		return nil
@@ -343,7 +362,7 @@ func (m *model) maybeAutoLoadCost() tea.Cmd {
 	if m.atRGLevel() && scope.Kind == provider.KindSubscription {
 		cacheKey = scope.ID
 	}
-	if _, cached := m.costs[cacheKey]; cached {
+	if m.warmCostCache(cacheKey) {
 		return nil
 	}
 	return m.toggleCostInner()
@@ -366,7 +385,7 @@ func (m *model) toggleCostInner() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	if _, cached := m.costs[scope.ID]; cached {
+	if m.warmCostCache(scope.ID) {
 		return nil
 	}
 	ctx := m.ctx

@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/tesserix/cloudnav/internal/cache"
 	"github.com/tesserix/cloudnav/internal/config"
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/aws"
@@ -247,6 +248,10 @@ type model struct {
 	width           int
 	height          int
 	keys            keys.Map
+	// costCache persists cost results between runs so a second `c` press
+	// after a restart serves from disk instead of repeating the 1–2s
+	// Cost Management query.
+	costCache *cache.Store[map[string]string]
 }
 
 // newPromptInput builds a textinput with the shared theme. All prompts
@@ -308,6 +313,11 @@ func newModel() *model {
 		keys:            keys.Default(),
 		table:           t,
 		showCost:        true,
+		// 15-minute TTL is a balance: long enough that flipping between
+		// views within a session stays instant, short enough that a new
+		// purchase / new resource shows up after a refresh without the
+		// user having to press X (clear cache).
+		costCache: cache.NewStore[map[string]string](cache.Path(), "costs", 15*time.Minute),
 	}
 	m.pushHome()
 	return m
@@ -584,6 +594,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = nil
 		m.costs[msg.parentID] = msg.costs
+		// Persist to disk so a second cloudnav run doesn't repeat the
+		// Cost Management query. Best-effort; ignore errors.
+		if m.costCache != nil && len(msg.costs) > 0 {
+			_ = m.costCache.Set(msg.parentID, msg.costs)
+		}
 		m.refreshTable()
 		m.status = fmt.Sprintf("costs: %d RGs", len(msg.costs))
 		return m, nil
@@ -1379,19 +1394,47 @@ func fullScreenBox(width, height int) lipgloss.Style {
 	return styles.Box.Width(w).Height(h)
 }
 
-// overlay renders content as a centered popup over the current shell
-// (header + footer remain visible for context). Use this for compact
-// dialogs like delete-confirm and upgrade; full-screen views should keep
-// using fullScreenBox.
+// overlay renders content as a centered popup composited over the
+// current list view. Unlike a plain Shell-swap, the table stays visible
+// behind the modal (aztimator-style z-order) thanks to the ANSI-aware
+// compositor. Use for compact dialogs like delete-confirm, help,
+// upgrade, and palette; information-dense screens can still use
+// fullScreenBox.
 func (m *model) overlay(body string) string {
-	header := m.headerView()
-	footer := m.footerView()
-	bodyH := m.height - lipgloss.Height(header) - 1
-	if bodyH < 5 {
-		bodyH = 5
+	bg := m.listBackground()
+	if bg == "" {
+		// Fall back to the old non-composited layout when we don't have
+		// list state to draw on (e.g. before the first window size).
+		header := m.headerView()
+		footer := m.footerView()
+		bodyH := m.height - lipgloss.Height(header) - 1
+		if bodyH < 5 {
+			bodyH = 5
+		}
+		placed := components.Modal(m.width, bodyH, body)
+		return components.Shell(m.width, m.height, header, placed, footer)
 	}
-	placed := components.Modal(m.width, bodyH, body)
-	return components.Shell(m.width, m.height, header, placed, footer)
+	return components.CenterOverlay(m.width, m.height, bg, body)
+}
+
+// listBackground renders the list view (header + table + footer) that
+// any overlay sits on top of. Kept separate from View() so the compositor
+// can sample it without triggering the overlay branch recursively.
+func (m *model) listBackground() string {
+	if m.width <= 0 || m.height <= 0 {
+		return ""
+	}
+	body := m.table.View()
+	if m.isDrillLoading() {
+		body = m.drillLoadingBody()
+	} else if len(m.visibleNodes) == 0 && !m.loading && m.categoryFilter == "" {
+		body = m.emptyBody()
+	}
+	header := m.headerView()
+	if bar := m.categoryBar(); bar != "" {
+		header = header + "\n" + bar
+	}
+	return components.Shell(m.width, m.height, header, body, m.footerView())
 }
 
 func (m *model) View() string {
