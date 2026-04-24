@@ -65,7 +65,36 @@ func (m *model) advisorScopeForActive() (string, string, string) {
 		return subID, filter, name
 	case providerGCP:
 		projID, name := m.gcpAdvisorTarget()
+		// On a resource row, filter to just that resource's own
+		// Recommender output rather than every suggestion across the
+		// whole project.
+		if m.atResourceLevel() {
+			if c := m.table.Cursor(); c >= 0 && c < len(m.visibleNodes) {
+				n := m.visibleNodes[c]
+				return projID, n.ID, n.Name
+			}
+		}
 		return projID, "projects/" + projID, name
+	case "aws":
+		// Compute Optimizer / Trusted Advisor return recommendations
+		// spanning the whole account; there is no per-scope API. We
+		// still pass a non-empty scope so the load fires, and filter
+		// client-side by the resource's ARN when the user pressed A on
+		// a resource row.
+		scope := "account"
+		name := "AWS account"
+		if len(m.stack) > 0 {
+			if top := &m.stack[len(m.stack)-1]; top.parent != nil {
+				name = top.parent.Name
+			}
+		}
+		if m.atResourceLevel() {
+			if c := m.table.Cursor(); c >= 0 && c < len(m.visibleNodes) {
+				n := m.visibleNodes[c]
+				return scope, n.ID, n.Name
+			}
+		}
+		return scope, "", name
 	}
 	return "", "", ""
 }
@@ -291,14 +320,20 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 	}
 	addMeta("Resource", r.Name)
 	addMeta("Type", r.Meta["type"])
-	addMeta("Group", parentRGName(r.ID))
+	// Parent container label differs per cloud: resource group on
+	// Azure, project on GCP, account on AWS. Prefer what Meta carries
+	// rather than re-parsing the ID string.
+	switch {
+	case parentRGName(r.ID) != "":
+		addMeta("Group", parentRGName(r.ID))
+	case r.Meta["project"] != "":
+		addMeta("Project", r.Meta["project"])
+	case r.Meta["accountId"] != "":
+		addMeta("Account", r.Meta["accountId"])
+	}
 	addMeta("Region", r.Location)
-	if sku := r.Meta["sku"]; sku != "" {
-		addMeta("SKU", sku)
-	}
-	if r.Cost != "" {
-		addMeta("Cost / 30d", r.Cost)
-	}
+	addMeta("SKU", r.Meta["sku"])
+	addMeta("Cost / 30d", r.Cost)
 
 	lines = append(lines, "")
 
