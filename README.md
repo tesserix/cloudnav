@@ -181,21 +181,28 @@ When stdout is not a terminal (pipe, CI, Docker without `-t`), `cloudnav ls` wil
 ## Architecture
 
 ```
-┌──────────────────┐   ┌───────────────┐   ┌────────────────────────┐
-│   Bubbletea TUI  │◀─▶│ provider API  │◀─▶│  exec az / gcloud / aws │
-│  (pages + keys)  │   │  (normalized) │   │   (JSON → structs)      │
-└──────────────────┘   └───────────────┘   └────────────────────────┘
+┌──────────────────┐   ┌───────────────┐   ┌────────────────────────────┐
+│   Bubbletea TUI  │◀─▶│ provider API  │◀─▶│  Azure SDK + ARM REST       │
+│ components+styles│   │  (normalized) │   │  cli.Runner (gcloud / aws)  │
+└──────────────────┘   └───────────────┘   └────────────────────────────┘
 ```
 
 - `cmd/cloudnav` — entrypoint.
-- `internal/cmd` — Cobra commands (`tui`, `doctor`, `version`, `ls`, `completion`).
-- `internal/provider` — `Provider` interface + Azure/GCP/AWS implementations. Each provider owns its CLI adapter and JSON unmarshaling.
-- `internal/cli` — generic subprocess runner with timeout + context.
+- `internal/cmd` — Cobra commands (`tui`, `doctor`, `version`, `ls`, `find`, `completion`).
+- `internal/provider` — `Provider` interface + Azure / GCP / AWS implementations.
+- `internal/provider/azure` — SDK-first (`azcore` / `azidentity` / `armsubscription`) with `cli.Runner` fallback. Direct ARM REST via a shared `http.Client` with HTTP/2, connection pooling, and `Retry-After` backoff. Resource Graph (KQL) for multi-RG and multi-sub enumeration.
+- `internal/cli` — generic subprocess runner with timeout + context, used for `gcloud` / `aws` and the Azure fallback path.
+- `internal/cache` — on-disk key-value store (JSON per key, atomic writes) powering the persistent cost cache.
 - `internal/nav` — navigation stack (breadcrumbs, back, context).
-- `internal/tui` — Bubbletea model, pages (home/list/detail), keymap, styles.
+- `internal/tui` — Bubbletea model, per-feature files (advisor / billing / costs / delete / detail / health / palette / pim …).
+- `internal/tui/components` — reusable layout widgets (`Shell`, `Breadcrumb`, `Keybar`, `Modal`, `Composite`).
+- `internal/tui/styles` — single-source lipgloss theme.
 - `internal/iam` — provisioning of scoped SP / SA / IAM Role with least-privilege presets.
 
-See [`docs/architecture.md`](docs/architecture.md) for the full design.
+See [`docs/architecture.md`](docs/architecture.md) for the full design,
+and [`CHANGELOG.md`](CHANGELOG.md) for recent performance + UX work
+(SDK migration, Resource Graph, persistent cost cache, overlay
+compositor, adaptive resource columns, PIM hardening).
 
 ## Roadmap
 

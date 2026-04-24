@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Azure SDK migration (phase 1 of 4).** `azcore` + `azidentity` +
+  `armsubscription` replace the hottest `az`-shell paths.
+  `DefaultAzureCredential` reads the `az login` cache in-process so
+  token acquisition no longer spawns a subprocess per tenant. Root()
+  lists subscriptions via `armsubscription.NewSubscriptionsClient`.
+  Phases 2–4 (resources, locks, Cost Management) are still on the CLI
+  and will migrate incrementally.
+- **Azure Resource Graph fast path** for multi-RG drills. When `D`-ing
+  or drilling into several selected RGs, one KQL POST returns every
+  resource across them instead of N sequential `az resource list`
+  calls. 10-RG drills drop from ~15 s to ~1–2 s. Falls back to the
+  per-RG walk when the caller lacks sub-level reader.
+- **Resource-level multi-select delete.** `D` now works on the
+  resources view as well as resource groups. Each target is removed via
+  a direct ARM `DELETE`, up to 8 in parallel. Errors are collected
+  per-target with the resource name, so the status says
+  `foo: cannot delete while attached` instead of `2 failures`. The
+  confirmation overlay adapts heading / disclaimer to match the scope.
+- **Persistent cost cache** at `~/.cache/cloudnav/costs/`. A restart
+  serves the cost column from disk instead of repeating Cost Management
+  queries. 15-minute TTL; JSON-per-key files with atomic tmp-and-rename
+  writes.
+- **Opt-in auto-upgrade.** Set `auto_upgrade: true` in config.json to
+  have cloudnav run the detected `go install` or `brew upgrade` plan
+  silently at startup when a newer release ships on GitHub. The manual
+  `U` flow is unchanged.
+- **ANSI-aware overlay compositor.** Modals (help / delete / upgrade /
+  palette) now render over the list view with the table still visible
+  behind them, instead of replacing the whole screen.
+- **Reusable layout components** under `internal/tui/components`:
+  `Shell` guarantees full-terminal fill, plus `Breadcrumb`, `Keybar`,
+  `Modal`, `Composite`. Styles consolidated in `internal/tui/styles`.
+- **TUI integration tests** (`internal/tui/integration_test.go`) cover
+  shell height math, keybar wrapping, overlay open/close, window
+  resize — no cloud access required.
+- **`cloudnav find` subcommand** for discovery-first lookups
+  (scopes / resources / pim) when you know part of a name but not the
+  exact path. Short aliases added: `list` → `ls`, `costs` → `cost`,
+  `jit` → `pim`.
+
+### Changed
+- **TUI package carved into feature files.** The 4700-line `app.go`
+  split into `advisor.go`, `billing.go`, `costs.go`, `delete.go`,
+  `detail.go`, `health.go`, `help.go`, `locks.go`, `login.go`,
+  `metrics.go`, `nav.go`, `palette.go`, `pim.go`, `search.go`. `app.go`
+  now hosts only the model, Update dispatch, main View, and table
+  rendering.
+- **PIM tokens cached in-memory** per (tenant, audience) until ~2 min
+  before expiry. Second PIM list in the same session no longer re-hits
+  the credential chain.
+- **All Azure REST paths share a single HTTP client** with keep-alive,
+  HTTP/2, and a per-host connection pool. Requests run through
+  `doWithRetry` which honours `Retry-After` on 429 / 503 / 5xx up to 3
+  attempts, respects the request context.
+- **API errors show the real reason first.** `trimAPIErr` unwraps the
+  `{"error":{"code","message"}}` envelope that Azure and Graph use, so
+  the status bar renders `AuthorizationFailed: ...` instead of a
+  truncated HTTP URL. Applied to the Azure REST, PIM activation, Graph
+  POST, Cost Management, and `cli.Runner` paths.
+- **Subscription cost fetch parallelised.** Within one subscription,
+  the current / last-month / forecast / budget queries now run
+  concurrently. Cost column loads ~3× faster on tenants with many
+  visible subs.
+- **Adaptive resource column widths.** On narrow terminals `COST (MTD)`
+  no longer clips — `TAGS` absorbs the slack, `HEALTH` is dropped on
+  <80-cell budgets, `TYPE` / `LOCATION` / `CREATED` step down in tiers.
+
+### Fixed
+- `cli.Runner` error format flipped so the stderr reason is line one
+  and the command that ran goes on line two. The TUI status bar
+  (which truncates by terminal width) now shows something useful
+  instead of the command with the reason chopped off.
+- Atomic `updatecheck` cache write (tmp + rename) fixes torn JSON when
+  two `Check()` calls race.
+- TUI context threaded through `Run()` with `context.WithCancel` so
+  quit cancels in-flight provider calls instead of leaking goroutines.
+
 ## [0.6.0] — 2026-04-18
 
 ### Added

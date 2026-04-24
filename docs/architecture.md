@@ -5,37 +5,68 @@ cloudnav is three layers wired together by a navigation stack.
 ```
 ┌────────────────────────────────────────────┐
 │                Bubbletea TUI               │  internal/tui
-│    pages · keys · styles · nav stack       │
+│  app · components · styles · keys · pages  │
 └───────────────────┬────────────────────────┘
                     │ provider.Node values
 ┌───────────────────▼────────────────────────┐
 │             provider.Provider              │  internal/provider
 │   Azure · GCP · AWS implementations        │
 └───────────────────┬────────────────────────┘
-                    │ exec az / gcloud / aws
+                    │ Azure SDK + ARM REST + cli.Runner
 ┌───────────────────▼────────────────────────┐
-│                 cli.Runner                 │  internal/cli
-│     subprocess with timeout + stderr       │
+│    Azure SDK (azcore + azidentity)         │  primary path
+│    cli.Runner (az / gcloud / aws)          │  fallback / non-Azure
+│    cache.Store                             │  persistent cost cache
 └────────────────────────────────────────────┘
 ```
 
 ## Invariants
 
-- **Cloud concepts stay out of the TUI.** The TUI layer works against the
-  generic `provider.Node` and `provider.Provider`. Anything cloud-specific
-  must live in `internal/provider/<cloud>/`.
-- **Only `internal/cli` shells out.** Providers depend on `cli.Runner`, not on
-  `os/exec` directly. This gives one place to add timeouts, metrics, or
-  recording for tests.
-- **No credentials in our process.** cloudnav never asks the user for tokens,
-  keys, or passwords. Authentication is whatever the wrapped CLI is already
-  configured with (`az login`, `gcloud auth`, `aws sso login`).
+- **Cloud concepts stay out of the TUI.** The TUI works against the
+  generic `provider.Node` and `provider.Provider`. Anything
+  cloud-specific lives in `internal/provider/<cloud>/`.
+- **No credentials in our process.** cloudnav never asks for tokens or
+  passwords. Auth is whatever `az login` / `gcloud auth` / `aws sso
+  login` already configured.
+
+## TUI layer
+
+`internal/tui` is organised per feature. Each overlay owns its file:
+
+```
+app.go        model struct · Update dispatch · View root · table render
+advisor.go    advisor overlay
+billing.go    portfolio cost view
+cost_history  cost chart
+costs.go      cost column load paths
+delete.go     RG + resource delete confirm
+detail.go     detail viewport
+health.go     service-health overlay
+help.go       keybindings reference
+locks.go      RG lock badges
+login.go      I-key login flow
+metrics.go    sparkline overlay
+nav.go        drill / back / reload
+palette.go    : palette (cross-cloud jump)
+pim.go        PIM list / activate
+search.go     / filter
+upgrade.go    self-upgrade flow
+```
+
+`internal/tui/components` holds reusable widgets:
+`Shell` (3-band layout that fills the terminal), `Breadcrumb`, `Keybar`,
+`Modal`, `Composite` (ANSI-aware z-ordered compositing so modals render
+over the table body instead of replacing it).
+
+`internal/tui/styles` is the single source of lipgloss styles —
+`lipgloss.NewStyle()` should not appear outside that package.
 
 ## Navigation
 
-`internal/nav.Stack` is a LIFO of `Frame` objects. Each frame is "where the
-user currently is" — its title (for the breadcrumb), parent node (for reload),
-and the list of child nodes being shown. Drill-down pushes a frame; `esc` pops.
+`internal/nav.Stack` is a LIFO of `Frame` objects. Each frame is "where
+the user currently is" — title (for the breadcrumb), parent node (for
+reload), and the child nodes being rendered. Drill-down pushes; `esc`
+pops.
 
 ## Provider contract
 
@@ -43,35 +74,81 @@ and the list of child nodes being shown. Drill-down pushes a frame; `esc` pops.
 type Provider interface {
     Name() string
     LoggedIn(ctx) error
-    Root(ctx) ([]Node, error)                     // top level (subs / projects / accounts)
-    Children(ctx, Node) ([]Node, error)           // drill down
-    PortalURL(Node) string                        // for the `o` keybinding
-    Details(ctx, Node) ([]byte, error)            // raw JSON for the `i` keybinding
+    Root(ctx) ([]Node, error)             // top level
+    Children(ctx, Node) ([]Node, error)   // drill down
+    PortalURL(Node) string                // for the `o` key
+    Details(ctx, Node) ([]byte, error)    // for the `i` key
 }
 ```
 
-Adding a cloud = implementing this interface, registering it in the TUI, and
-adding fixtures in `test/fixtures/<cloud>/`.
+Optional capabilities (`Coster`, `PIMer`, `Advisor`, `Billing`,
+`HealthEventer`, `Metricser`, `CostHistoryer`, `BillingSummarer`) are
+type-asserted at call sites, so providers opt in per feature. Adding a
+cloud means implementing the base + whichever optionals make sense.
 
-## Auth model
+## Azure — SDK-first, CLI-fallback
 
-| Phase | Source of credentials |
-|-------|-----------------------|
-| 1–3   | Whatever `az` / `gcloud` / `aws` are logged in as — user or SSO session |
-| 4     | Optional scoped Service Principal / Service Account / IAM Role provisioned via `cloudnav iam bootstrap` and consumed by the wrapped CLI |
+cloudnav was originally a pure CLI wrapper. It now uses the Azure SDK
+for Go (`azcore`, `azidentity`, `armsubscription`) for the hottest paths
+and falls back to the `az` CLI only when the SDK credential chain can't
+resolve (no cached login, az not installed).
 
-In Phase 4, cloudnav only *provisions* the identity and prints the exact
-command the user (or their CI) should run to configure their CLI. cloudnav
-does not store secrets.
+- **Auth** — `DefaultAzureCredential` / `AzureCLICredential`. Reads the
+  `az login` cache directly, no process spawn per call.
+- **Tokens** — cached in-process per (tenant, audience) until ~2 min
+  before expiry. A PIM list across N tenants acquires N tokens once per
+  session instead of 2N processes per refresh.
+- **Subscriptions** — `armsubscription.NewSubscriptionsClient` pager.
+- **Resources across RGs** — one Resource Graph (KQL) POST covers all
+  selected RGs in a single request. Replaces the N-sequential
+  `az resource list` fanout that made 10-RG drills take 10-30 s.
+- **ARM REST** — a single package-level `http.Client` with keep-alive,
+  HTTP/2, and connection pooling. All requests flow through
+  `doWithRetry` which honours `Retry-After` on 429/503 up to 3
+  attempts.
+- **Error surface** — `trimAPIErr` unwraps
+  `{"error":{"code","message"}}` envelopes so the TUI status bar shows
+  the actual reason (`AuthorizationFailed: ...`) instead of a truncated
+  HTTP URL.
 
-## Why wrap CLIs instead of using SDKs?
+### Still on the CLI
 
-- Every user's cloud auth is already configured the right way for their org
-  (SSO, federated, MFA, conditional access). Re-implementing that is a
-  support nightmare.
-- The official CLIs are the canonical reference for endpoints, API versions,
-  and retry behavior.
-- The binary stays small and dependency-light.
+Per-resource listing (`az resource list --resource-group`), lock
+management, and Cost Management remain on `cli.Runner`. These are
+Phases 2–4 of the SDK migration and will move over incrementally.
 
-Downside: subprocess latency. We accept it because navigation is bursty and
-each call is ~200ms; cache and async loads cover the rest.
+## Caching
+
+| Layer     | Where                                   | TTL    | Purpose |
+|-----------|-----------------------------------------|--------|---------|
+| Token     | in-memory (pim_tokens.go)               | 58 min | avoid per-call az spawn |
+| Root      | in-memory + disk                        | 90 s / session | sub list across back/forward |
+| Cost      | in-memory + disk (`cache.Store`)        | 15 min | warm the cost column on restart |
+| Resource Health | in-memory per sub                 | 60 s   | avoid per-resource lookups |
+| Update check | disk (updatecheck)                   | 24 h   | quieter startup |
+
+Disk caches live under `$XDG_CACHE_HOME/cloudnav` (or
+`~/.cache/cloudnav` / `%LOCALAPPDATA%\cloudnav`). Override with
+`CLOUDNAV_CACHE`.
+
+## Upgrade
+
+`internal/updatecheck` checks GitHub Releases on startup. The header
+shows an `↑ update available` badge when a newer tag exists; `U` opens
+a confirmation overlay that runs the resolved install plan (`go
+install` / `brew upgrade` / browser for manual releases).
+
+Opt-in auto-upgrade: set `"auto_upgrade": true` in
+`~/.config/cloudnav/config.json` to have cloudnav silently run the
+non-interactive plans at startup when a newer release ships.
+
+## Testing
+
+- **Unit tests** live next to the code (`*_test.go`). `go test -race
+  ./...` should be clean on every commit.
+- **Integration tests** for the TUI live in
+  `internal/tui/integration_test.go` and drive the Bubble Tea model via
+  its own `Update` / `View` methods — no network, no CLI, just state
+  transitions.
+- **End-to-end tests** live in `test/e2e/*.sh`. They run the binary
+  against a live cloud login. Opt-in; not part of CI.
