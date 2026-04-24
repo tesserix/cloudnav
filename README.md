@@ -206,6 +206,8 @@ When stdout is not a terminal (pipe, CI, Docker without `-t`), `cloudnav ls` wil
 - `internal/iam` — provisioning of scoped SP / SA / IAM Role with least-privilege presets.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design,
+[`docs/design-system.md`](docs/design-system.md) for the UI style rules
+and palette that every view shares,
 [`docs/config.md`](docs/config.md) for every config knob, and
 [`CHANGELOG.md`](CHANGELOG.md) for recent work — including the SDK
 migration, cross-tenant discovery, Resource Graph fast path, persistent

@@ -383,11 +383,11 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 
 
 // renderChart draws the cost time-series using ntcharts' Braille line
-// chart — the same library azpirin uses. Far simpler and more robust
-// than hand-rolled axis / slope-glyph rendering: ntcharts handles
-// scaling, axis drawing, label placement, and Braille compositing in
-// ~40 lines of caller code. Today's point is dropped because it is
-// still accumulating and always drags the line down unrealistically.
+// chart. Much simpler and more robust than hand-rolled axis /
+// slope-glyph rendering: ntcharts handles scaling, axis drawing,
+// label placement, and Braille compositing in ~40 lines of caller
+// code. Today's point is dropped because it is still accumulating and
+// always drags the line down unrealistically.
 func renderChart(points []provider.CostHistoryPoint, width, height int, currency string) string {
 	if len(points) < 2 || width < 40 || height < 8 {
 		return ""

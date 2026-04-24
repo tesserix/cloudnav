@@ -1852,8 +1852,16 @@ func (m *model) detailFooter() string {
 func (m *model) headerView() string {
 	crumb := components.Breadcrumb("cloudnav", breadcrumbs(m.stack))
 	right := m.updateIndicator()
-	top := components.TwoCol(m.width, crumb, right)
-	return top + "\n" + m.keybar() + "\n"
+	// Paint both lines with the HeaderBar background so the breadcrumb +
+	// keybar form a single visual zone. Width is the terminal width so
+	// the dark strip reaches edge-to-edge.
+	w := m.width
+	if w <= 0 {
+		w = 120
+	}
+	top := styles.HeaderBar.Width(w).Render(components.TwoCol(w-2, crumb, right))
+	bar := styles.HeaderBar.Width(w).Render(m.keybar())
+	return top + "\n" + bar + "\n"
 }
 
 // updateIndicator renders the top-right badge. When a newer release is
