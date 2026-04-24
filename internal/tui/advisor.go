@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -323,18 +324,36 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 	ruleW := 46 // consistent divider width — popup content is ~50 cells
 	lines := []string{}
 
-	// Title + category subtitle.
+	// Title — "<Advisor> — <category> recommendations".
 	title := styles.ModalTitle.Render(advisorName)
 	if sub := dominantCategory(filt); sub != "" {
-		title += "  " + styles.ModalLabel.Render("·  "+sub)
+		title += "  " + styles.ModalLabel.Render("— "+sub+" recommendations")
 	}
-	lines = append(lines, title)
-	lines = append(lines, styles.ModalHint.Render(strings.Repeat("━", ruleW)))
+	lines = append(lines, title, "")
 
-	// Resource-context — name as a bold header, details as a single
-	// pipe-separated line so the popup doesn't need four label rows.
-	lines = append(lines, styles.ModalValue.Render(r.Name))
-	lines = append(lines, styles.ModalLabel.Render(resourceSummaryLine(r)))
+	// Resource-context block — aligned label rows so the popup reads
+	// like the Azure portal's resource header rather than a one-liner
+	// that loses the type / SKU / cost-window detail.
+	labelW := 11
+	addMeta := func(label, value string) {
+		if value == "" {
+			return
+		}
+		lines = append(lines, "  "+styles.ModalLabel.Render(padRight(label+":", labelW))+" "+styles.ModalValue.Render(value))
+	}
+	addMeta("Resource", r.Name)
+	addMeta("Type", r.Meta["type"])
+	switch {
+	case parentRGName(r.ID) != "":
+		addMeta("Group", parentRGName(r.ID))
+	case r.Meta["project"] != "":
+		addMeta("Project", r.Meta["project"])
+	case r.Meta["accountId"] != "":
+		addMeta("Account", r.Meta["accountId"])
+	}
+	addMeta("Region", r.Location)
+	addMeta("SKU", r.Meta["sku"])
+	addMeta("Cost / 30d", costWindowLine(r.Cost))
 	lines = append(lines, "")
 
 	// Empty-state fallback.
@@ -408,6 +427,29 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 	lines = append(lines, "")
 	lines = append(lines, styles.ModalHint.Render("↑↓ scroll  ·  esc  close"))
 	return m.overlay(strings.Join(lines, "\n"))
+}
+
+// costWindowLine takes the plain MTD cost string stored on the node
+// and appends the date window + method metadata so the advisor header
+// matches what the portal shows: "GBP 5.60  2026-03-25 → 2026-04-24 ·
+// ActualCost · pre-tax". Returns empty when the node has no cost.
+func costWindowLine(cost string) string {
+	cost = strings.TrimSpace(cost)
+	if cost == "" {
+		return ""
+	}
+	// Strip any trailing ↑/↓/→ arrow so the date range reads cleanly.
+	for _, suffix := range []string{" ↑", " ↓", " →"} {
+		if idx := strings.Index(cost, suffix); idx > 0 {
+			cost = cost[:idx]
+			break
+		}
+	}
+	// 30-day rolling window ending today.
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -30)
+	return fmt.Sprintf("%s  %s → %s · ActualCost · pre-tax",
+		cost, from.Format("2006-01-02"), to.Format("2006-01-02"))
 }
 
 // resourceSummaryLine renders a single-line summary of a resource for
