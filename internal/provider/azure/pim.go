@@ -144,6 +144,12 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		}
 	}
 
+	// Resolve raw /subscriptions/<guid> scope strings to display names
+	// for subs the user doesn't have in their az account list (a classic
+	// PIM case — eligible to activate into a sub, not directly listed).
+	// One Resource Graph query covers every unknown id at once.
+	a.hydrateScopeNames(ctx, out)
+
 	// Stable ordering so the list doesn't shuffle run-to-run. Azure first,
 	// then Entra, then Groups — matching the surface tabs in the UI; within
 	// each source, by role name.
@@ -158,6 +164,57 @@ func (a *Azure) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, erro
 		return nil, fmt.Errorf("list eligible PIM roles: %w", lastErr)
 	}
 	return out, nil
+}
+
+// hydrateScopeNames fills ScopeName for any Azure PIM row whose scope is
+// a raw /subscriptions/<guid> path we can't resolve from the local subs
+// cache. Uses Resource Graph once, then stamps the cached names onto
+// every matching row in place.
+func (a *Azure) hydrateScopeNames(ctx context.Context, roles []provider.PIMRole) {
+	// 1) collect unknown sub ids + pick any known sub id as the KQL anchor
+	unknown := map[string]struct{}{}
+	anchor := ""
+	for _, r := range roles {
+		if r.ScopeName != "" {
+			continue
+		}
+		id := subIDFromScope(r.Scope)
+		if id == "" {
+			continue
+		}
+		if a.resolveSubName(id) != "" {
+			if anchor == "" {
+				anchor = id
+			}
+			continue
+		}
+		unknown[id] = struct{}{}
+		if anchor == "" {
+			anchor = id
+		}
+	}
+	if len(unknown) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(unknown))
+	for id := range unknown {
+		ids = append(ids, id)
+	}
+	a.learnSubNames(ctx, anchor, ids)
+
+	// 2) stamp resolved names onto the roles
+	for i := range roles {
+		if roles[i].ScopeName != "" {
+			continue
+		}
+		id := subIDFromScope(roles[i].Scope)
+		if id == "" {
+			continue
+		}
+		if name := a.resolveSubName(id); name != "" {
+			roles[i].ScopeName = name
+		}
+	}
 }
 
 // pimLister fetches eligibilities for a single tenant. Each PIM surface

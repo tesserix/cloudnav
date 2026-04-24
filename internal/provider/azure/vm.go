@@ -21,6 +21,9 @@ type vmJSON struct {
 }
 
 func (a *Azure) ListVMs(ctx context.Context, scope provider.Node) ([]provider.VM, error) {
+	if vms, ok := a.listVMsSDK(ctx, scope); ok {
+		return vms, nil
+	}
 	args := []string{"vm", "list", "--show-details", "--output", "json"}
 	switch scope.Kind {
 	case provider.KindSubscription:
@@ -57,16 +60,25 @@ func (a *Azure) ListVMs(ctx context.Context, scope provider.Node) ([]provider.VM
 	return vms, nil
 }
 
-func (a *Azure) ShowVM(ctx context.Context, id, _ string) ([]byte, error) {
+func (a *Azure) ShowVM(ctx context.Context, id, subID string) ([]byte, error) {
+	if raw, ok := a.vmShowSDK(ctx, id, subID); ok {
+		return raw, nil
+	}
 	return a.az.Run(ctx, "vm", "show", "--ids", id, "--output", "json")
 }
 
-func (a *Azure) StartVM(ctx context.Context, id, _ string) error {
+func (a *Azure) StartVM(ctx context.Context, id, subID string) error {
+	if a.startVMSDK(ctx, id, subID) {
+		return nil
+	}
 	_, err := a.az.Run(ctx, "vm", "start", "--ids", id)
 	return err
 }
 
-func (a *Azure) StopVM(ctx context.Context, id, _ string) error {
+func (a *Azure) StopVM(ctx context.Context, id, subID string) error {
+	if a.stopVMSDK(ctx, id, subID) {
+		return nil
+	}
 	_, err := a.az.Run(ctx, "vm", "deallocate", "--ids", id)
 	return err
 }

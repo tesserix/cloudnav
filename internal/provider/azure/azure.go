@@ -79,7 +79,17 @@ func (a *Azure) tenantForSub(ctx context.Context, subID string) string {
 	if t != "" {
 		return t
 	}
-	// Lazy lookup: ask az directly for this subscription.
+	// Lazy lookup: try the SDK first (armsubscription.Get), fall back
+	// to 'az account show' only if the credential chain can't resolve.
+	if tid := a.tenantForSubSDK(ctx, subID); tid != "" {
+		a.mu.Lock()
+		if a.subTenants == nil {
+			a.subTenants = map[string]string{}
+		}
+		a.subTenants[subID] = tid
+		a.mu.Unlock()
+		return tid
+	}
 	out, err := a.az.Run(ctx, "account", "show", "--subscription", subID, "-o", "json")
 	if err != nil {
 		return ""
@@ -117,9 +127,14 @@ func (a *Azure) putTenants(m map[string]string) {
 	a.mu.Unlock()
 }
 
-// fetchTenants is best-effort — failure is non-fatal, we just fall back to
-// showing the tenantId when rendering.
+// fetchTenants is best-effort — failure is non-fatal, we just fall back
+// to showing the tenantId when rendering. SDK first; az rest fallback
+// when the credential chain can't resolve.
 func (a *Azure) fetchTenants(ctx context.Context) {
+	if m, ok := a.fetchTenantsSDK(ctx); ok {
+		a.putTenants(m)
+		return
+	}
 	out, err := a.az.Run(ctx, "rest", "--method", "GET",
 		"--url", "https://management.azure.com/tenants?api-version=2022-09-01")
 	if err != nil {
@@ -141,7 +156,16 @@ func (a *Azure) fetchTenants(ctx context.Context) {
 	a.putTenants(m)
 }
 
+// LoggedIn reports whether the credential chain can mint an ARM token.
+// Faster and more accurate than spawning 'az account show' — the SDK
+// succeeds as soon as any of az login / managed identity / env-var
+// credentials work.
 func (a *Azure) LoggedIn(ctx context.Context) error {
+	if cred, err := defaultCredential(); err == nil {
+		if _, err := cred.GetToken(ctx, armTokenOptions()); err == nil {
+			return nil
+		}
+	}
 	_, err := a.az.Run(ctx, "account", "show", "-o", "json")
 	return err
 }
@@ -649,15 +673,38 @@ func (a *Azure) Details(ctx context.Context, n provider.Node) ([]byte, error) {
 		if subID == "" {
 			subID = subIDFromScope(n.ID)
 		}
+		// SDK first: ARM /<resourceID>?api-version=... with a per-type
+		// version we already resolve for DeleteResource. Falls back to az.
 		if subID != "" {
+			if raw, err := a.resourceShowSDK(ctx, subID, n.ID, n.Meta["type"]); err == nil {
+				return raw, nil
+			}
 			return a.az.Run(ctx, "resource", "show", "--ids", n.ID, "--subscription", subID, "-o", "json")
 		}
 		return a.az.Run(ctx, "resource", "show", "--ids", n.ID, "-o", "json")
 	case provider.KindSubscription:
+		if raw, err := a.subShowSDK(ctx, n.ID); err == nil {
+			return raw, nil
+		}
 		return a.az.Run(ctx, "account", "show", "--subscription", n.ID, "-o", "json")
 	default:
 		return nil, fmt.Errorf("azure: no detail view for kind %q", n.Kind)
 	}
+}
+
+// resourceShowSDK fetches the raw ARM JSON for a resource or resource
+// group. Reuses apiVersionFor (also used by DeleteResource) so the
+// api-version choice stays consistent across read and delete paths.
+func (a *Azure) resourceShowSDK(ctx context.Context, subID, resourceID, resourceType string) ([]byte, error) {
+	apiVer := apiVersionFor(resourceType)
+	url := "https://management.azure.com" + resourceID + "?api-version=" + apiVer
+	return a.doTenantRequest(ctx, subID, "GET", url, nil)
+}
+
+// subShowSDK fetches a subscription's metadata as raw JSON.
+func (a *Azure) subShowSDK(ctx context.Context, subID string) ([]byte, error) {
+	url := "https://management.azure.com/subscriptions/" + subID + "?api-version=2022-12-01"
+	return a.doTenantRequest(ctx, subID, "GET", url, nil)
 }
 
 // formatTags renders an Azure tags map as a stable, compact "k=v, k=v"
