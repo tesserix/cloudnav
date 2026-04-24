@@ -222,7 +222,10 @@ func (a *Azure) doTenantRequest(ctx context.Context, subID, method, url string, 
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("azure: %s %s -> %d: %s", method, url, resp.StatusCode, strings.TrimSpace(string(b)))
+		// Azure reason first, HTTP/status metadata second — matches the
+		// cli.Runner flip so the status bar never clips away the useful
+		// bit when it truncates by terminal width.
+		return nil, fmt.Errorf("%s [HTTP %d on %s %s]", trimAPIErr(b), resp.StatusCode, method, url)
 	}
 	return b, nil
 }

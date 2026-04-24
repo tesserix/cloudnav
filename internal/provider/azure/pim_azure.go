@@ -107,7 +107,9 @@ func (a *Azure) activateAzureRole(ctx context.Context, role provider.PIMRole, ju
 }
 
 // armPUT is used for activation at scopes that don't belong to a single
-// subscription (e.g. management groups).
+// subscription (e.g. management groups). Runs through doWithRetry so a
+// transient 429 / 503 from ARM doesn't fail a self-elevation the user
+// is watching live.
 func (a *Azure) armPUT(ctx context.Context, tenantID, url string, body []byte) error {
 	token, err := a.tenantToken(ctx, tenantID)
 	if err != nil {
@@ -119,16 +121,48 @@ func (a *Azure) armPUT(ctx context.Context, tenantID, url string, body []byte) e
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("PIM activate %s -> %d: %s", url, resp.StatusCode, strings.TrimSpace(string(raw)))
+		// Error message first so the status bar shows Azure's actual
+		// reason (RoleAssignmentRequestPolicyValidationFailed, scope
+		// mismatch, etc.) instead of a long ARM URL that gets clipped.
+		return fmt.Errorf("%s [HTTP %d on PIM activate]", trimAPIErr(raw), resp.StatusCode)
 	}
 	return nil
+}
+
+// trimAPIErr pulls the "message" out of an Azure JSON error envelope
+// when present, falling back to the raw body otherwise. Azure wraps
+// errors as {"error":{"code":"X","message":"Y"}} — the message is what
+// the user actually needs.
+func trimAPIErr(raw []byte) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "(no error body)"
+	}
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err == nil && env.Error.Message != "" {
+		if env.Error.Code != "" {
+			return env.Error.Code + ": " + env.Error.Message
+		}
+		return env.Error.Message
+	}
+	// Raw body wasn't a standard envelope. Shorten so the status bar
+	// stays readable — the detail overlay can render the full thing.
+	if len(s) > 240 {
+		s = s[:240] + "…"
+	}
+	return s
 }
 
 // parseAzurePIM parses the ARM roleEligibilityScheduleInstances response.
