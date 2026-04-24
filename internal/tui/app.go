@@ -277,6 +277,10 @@ type model struct {
 	// after the TUI quits and execs the freshly-installed cloudnav
 	// binary in place of the current process.
 	relaunch bool
+	// autoUpgrading distinguishes a config-driven silent upgrade from
+	// one the user initiated. On success the silent path re-execs
+	// automatically so the user never sees the pill.
+	autoUpgrading bool
 }
 
 // newPromptInput builds a textinput with the shared theme. All prompts
@@ -740,6 +744,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if plan.Method == updatecheck.UpgradeGoInstall || plan.Method == updatecheck.UpgradeHomebrew {
 				m.upgradePlan = plan
 				m.upgradeRunning = true
+				m.autoUpgrading = true
 				m.status = "auto-upgrading to " + m.latestVersion + "..."
 				return m, m.runUpgrade()
 			}
@@ -771,8 +776,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.updateAvailable = false
 			m.status = "✓ upgrade complete — restart cloudnav to use " + m.latestVersion
+			// Autonomous path: if this was a silent auto-upgrade
+			// (config.AutoUpgrade true, no user interaction), hand off
+			// to the new binary immediately. The user sees one "auto-
+			// upgrading" flash, then cloudnav reopens on the new
+			// version with the pill already gone.
+			if m.autoUpgrading {
+				m.autoUpgrading = false
+				m.relaunch = true
+				return m, tea.Quit
+			}
 		} else {
 			m.status = "upgrade failed"
+			m.autoUpgrading = false
 		}
 		return m, nil
 
