@@ -366,22 +366,39 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 		return m.overlay(strings.Join(lines, "\n"))
 	}
 
-	// Scrollable card window — ↑/↓ move advisorIdx, we render only the
-	// cards that fit from that offset. Prevents the popup from spilling
-	// off the bottom when the scope has many recommendations.
-	//
-	// Budget: popup inner height minus the chrome we've already used
-	// (title + rule + resource summary + blank + footer rule + summary
-	// + blank + hint). Each card takes ~3 or 4 lines (divider + problem
-	// + optional → solution + blank).
-	popupH := m.height - 10
+	// Section divider between resource context and advisor cards.
+	// Centered "Recommendations (N)" title in the rule so the two
+	// sections of the popup read as distinct blocks.
+	sectionHeader := fmt.Sprintf(" Recommendations (%d) ", len(filt))
+	headLeft := (ruleW - len(sectionHeader)) / 2
+	if headLeft < 3 {
+		headLeft = 3
+	}
+	headRight := ruleW - len(sectionHeader) - headLeft
+	if headRight < 3 {
+		headRight = 3
+	}
+	lines = append(lines,
+		styles.ModalHint.Render(strings.Repeat("━", headLeft))+
+			styles.ModalTitle.Render(sectionHeader)+
+			styles.ModalHint.Render(strings.Repeat("━", headRight)),
+		"",
+	)
+
+	// Scrollable card window — fixed-size rendering so the popup
+	// doesn't shrink / grow as the user scrolls through the list.
+	// Each card is normalised to exactly 4 lines (divider, problem,
+	// solution-or-blank, blank); we always render exactly `fit` card
+	// slots, padding with blank slots at the tail when the list is
+	// shorter than the window.
+	popupH := m.height - 14
 	if popupH < 12 {
 		popupH = 12
 	}
-	cardH := 4
+	const cardH = 4
 	fit := popupH / cardH
-	if fit < 1 {
-		fit = 1
+	if fit < 2 {
+		fit = 2
 	}
 	start := m.advisorIdx
 	if start < 0 {
@@ -397,10 +414,15 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 		end = len(filt)
 	}
 
+	// Top scroll indicator — single line, blank when at top so the
+	// popup height doesn't change.
 	if start > 0 {
 		lines = append(lines, styles.ModalHint.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	} else {
+		lines = append(lines, "")
 	}
 
+	slots := 0
 	for i := start; i < end; i++ {
 		rec := filt[i]
 		num := fmt.Sprintf("── %d/%d ", i+1, len(filt))
@@ -413,12 +435,26 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 		lines = append(lines, styles.ModalValue.Render(rec.Problem))
 		if rec.Solution != "" && rec.Solution != rec.Problem {
 			lines = append(lines, styles.AccentS.Render("→ ")+styles.ModalValue.Render(rec.Solution))
+		} else {
+			// Keep the 4-line block regardless, so scrolling doesn't
+			// shrink the popup when Solution collapses.
+			lines = append(lines, "")
 		}
 		lines = append(lines, "")
+		slots++
+	}
+	// Pad any remaining card slots so the scroll window is always
+	// `fit` * 4 lines tall.
+	for slots < fit {
+		lines = append(lines, "", "", "", "")
+		slots++
 	}
 
+	// Bottom scroll indicator — symmetric with the top.
 	if end < len(filt) {
 		lines = append(lines, styles.ModalHint.Render(fmt.Sprintf("  ↓ %d more below", len(filt)-end)))
+	} else {
+		lines = append(lines, "")
 	}
 
 	// Summary footer.
