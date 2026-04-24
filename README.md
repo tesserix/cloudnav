@@ -208,6 +208,8 @@ When stdout is not a terminal (pipe, CI, Docker without `-t`), `cloudnav ls` wil
 See [`docs/architecture.md`](docs/architecture.md) for the full design,
 [`docs/design-system.md`](docs/design-system.md) for the UI style rules
 and palette that every view shares,
+[`docs/resource-types-runbook.md`](docs/resource-types-runbook.md) for
+how to add a new short alias to the TYPE column,
 [`docs/config.md`](docs/config.md) for every config knob, and
 [`CHANGELOG.md`](CHANGELOG.md) for recent work — including the SDK
 migration, cross-tenant discovery, Resource Graph fast path, persistent

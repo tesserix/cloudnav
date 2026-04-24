@@ -180,6 +180,14 @@ If you catch yourself adding a new colour or a new border style,
 stop. The style package has what you need, or the system is wrong
 and should be fixed at the palette level rather than per-view.
 
+### Resource-type short labels
+
+The TYPE column uses a curated `typeAliases` map to show `vm`,
+`aks`, `pep` etc. instead of the raw provider type string. See
+[`docs/resource-types-runbook.md`](resource-types-runbook.md) for
+the 5-minute guide to adding or fixing an alias — don't roll your
+own shortening logic per view.
+
 ---
 
 ## What this system deliberately rejects
