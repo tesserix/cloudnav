@@ -13,10 +13,9 @@ import (
 )
 
 // loadUpdateCheck kicks off a background poll of the GitHub releases
-// API. The check is wrapped in its own short-lived context so a flaky
-// network can't keep the TUI from starting. Failures are silent —
-// updateCheckMsg carries an empty Latest and the header falls back to
-// the quiet state.
+// API using the cache-first Check() path: serves from disk when fresh,
+// hits GitHub when stale. Failures are silent — updateCheckMsg carries
+// an empty Latest and the header falls back to the quiet state.
 func (m *model) loadUpdateCheck() tea.Cmd {
 	parent := m.ctx
 	return func() tea.Msg {
@@ -26,15 +25,26 @@ func (m *model) loadUpdateCheck() tea.Cmd {
 	}
 }
 
+// forceUpdateCheck bypasses the poll-interval cache. Wired to the U
+// key when no update is currently known — the user is asking "look
+// right now" so we skip the cached answer and re-hit GitHub.
+func (m *model) forceUpdateCheck() tea.Cmd {
+	parent := m.ctx
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 6*time.Second)
+		defer cancel()
+		return updateCheckMsg{result: updatecheck.CheckForce(ctx, version.Version)}
+	}
+}
+
 // openUpgrade opens the upgrade confirmation overlay. When no newer
-// release has been detected the key kicks off a fresh GitHub check
-// (rather than sitting behind a potentially-stale result) and updates
-// the status line so the user knows we looked, even if the answer is
-// "already on the latest tag".
+// release is known, a press of U fires a *forced* GitHub check that
+// bypasses the 1-hour poll cache — users explicitly asking "are there
+// new builds right now?" shouldn't get a stale answer.
 func (m *model) openUpgrade() tea.Cmd {
 	if !m.updateAvailable {
 		m.status = "checking GitHub for a newer release..."
-		return m.loadUpdateCheck()
+		return m.forceUpdateCheck()
 	}
 	m.upgradePlan = updatecheck.PlanUpgrade(m.latestVersion, m.latestURL)
 	m.upgradeResult = ""

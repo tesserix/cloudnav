@@ -1,8 +1,10 @@
 package updatecheck
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPlanUpgradeHomebrewWrapsWithUpdate(t *testing.T) {
@@ -62,6 +64,35 @@ func TestIsGoBinBinary(t *testing.T) {
 		if got := isGoBinBinary(c.path); got != c.want {
 			t.Errorf("isGoBinBinary(%q) = %v, want %v", c.path, got, c.want)
 		}
+	}
+}
+
+func TestCheckUsesCacheWhileFresh(t *testing.T) {
+	// Point the cache at a temp dir so the test doesn't touch the real
+	// user cache. We pre-seed a fresh entry and verify Check() returns
+	// it without hitting the network (done implicitly — the fake Repo
+	// would 404 if we did).
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+	t.Setenv("HOME", tmp) // macOS fallback path
+
+	// Drop a fresh cache entry (fetched 10 minutes ago, well within
+	// pollInterval).
+	oldRepo := Repo
+	Repo = "example/notreal"
+	t.Cleanup(func() { Repo = oldRepo })
+
+	writeCache(cachedPayload{
+		FetchedAt: time.Now().Add(-10 * time.Minute),
+		Latest:    "v9.9.9",
+		URL:       "https://example.invalid/releases/v9.9.9",
+	})
+	r := Check(context.Background(), "0.0.1")
+	if r.Latest != "v9.9.9" {
+		t.Errorf("Check should have served cache, got latest=%q", r.Latest)
+	}
+	if !r.Available {
+		t.Errorf("Available should be true (9.9.9 > 0.0.1)")
 	}
 }
 

@@ -24,10 +24,17 @@ import (
 // time with -ldflags -X.
 var Repo = "tesserix/cloudnav"
 
-// cacheStaleAfter bounds how long a stale cache entry stays useful as a
-// *fallback* when GitHub itself is unreachable. The cache isn't used to
-// short-circuit the live call any more — every startup re-verifies with
-// GitHub — so this only has to be long enough to cover an offline day.
+// pollInterval is how often cloudnav contacts the GitHub releases API.
+// Anonymous requests are capped at 60/hour per IP — in practice a user
+// launching cloudnav a few times a day has no reason to poll on every
+// start. One hour is the sweet spot: new releases surface within an
+// hour of publishing, but a restart loop can't burn the quota.
+const pollInterval = 1 * time.Hour
+
+// cacheStaleAfter bounds how long a stale cache entry stays useful as
+// a fallback when GitHub itself is unreachable. Longer than
+// pollInterval — if the user is offline for a day we still render the
+// last-known-good check instead of going quiet.
 const cacheStaleAfter = 24 * time.Hour
 
 // Result is the outcome of a single update check. Zero-value (Latest
@@ -50,20 +57,35 @@ type cachedPayload struct {
 }
 
 // Check returns the newest published release tag compared against
-// current. Always hits GitHub first so a newly-cut release is detected
-// the next time cloudnav starts; the disk cache is only consulted as a
-// fallback when the network call fails (flight mode, 503, API rate
-// limit) so the header doesn't silently go quiet in offline situations.
+// current. Cache-first: reuses the cached result if it's within
+// pollInterval, otherwise polls GitHub and refreshes the cache. On
+// network / API failure falls back to the stale cache so the banner
+// doesn't go quiet when the user is offline.
 func Check(ctx context.Context, current string) Result {
+	return runCheck(ctx, current, false)
+}
+
+// CheckForce bypasses the poll-interval cache and always hits GitHub.
+// Used when the user presses U to explicitly re-check — they've
+// already seen the cached answer and want us to look again.
+func CheckForce(ctx context.Context, current string) Result {
+	return runCheck(ctx, current, true)
+}
+
+func runCheck(ctx context.Context, current string, force bool) Result {
 	if strings.TrimSpace(current) == "" {
 		current = "dev"
+	}
+	cached, cachedOK := readCache()
+	if !force && cachedOK && time.Since(cached.FetchedAt) < pollInterval {
+		return finalise(current, cached.Latest, cached.URL, cached.ReleaseAt, nil)
 	}
 	latest, url, publishedAt, err := fetchLatest(ctx)
 	if err == nil {
 		writeCache(cachedPayload{FetchedAt: time.Now(), Latest: latest, URL: url, ReleaseAt: publishedAt})
 		return finalise(current, latest, url, publishedAt, nil)
 	}
-	if cached, ok := readCache(); ok {
+	if cachedOK {
 		return finalise(current, cached.Latest, cached.URL, cached.ReleaseAt, nil)
 	}
 	return Result{Current: current, Err: err}
@@ -104,6 +126,10 @@ func fetchLatest(ctx context.Context) (string, string, time.Time, error) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", "", time.Time{}, errors.New("no release published yet")
+	}
+	if resp.StatusCode == http.StatusForbidden &&
+		resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return "", "", time.Time{}, errors.New("github: rate limit hit — check will retry on next poll")
 	}
 	if resp.StatusCode >= 400 {
 		return "", "", time.Time{}, fmt.Errorf("github: status %d", resp.StatusCode)
