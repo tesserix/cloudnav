@@ -2,9 +2,9 @@ package azure
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/subscription/armsubscription"
+	"net/http"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 )
@@ -36,48 +36,63 @@ func (a *Azure) subIDs(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// listSubscriptionsSDK pulls the caller's subscriptions from the ARM
-// subscriptions client. Same shape as the old `az account list` output
-// so callers can use the result interchangeably.
+// listSubscriptionsSDK pulls the caller's subscriptions via the ARM
+// REST endpoint using an SDK-minted token. We hit the REST URL directly
+// (rather than armsubscription.NewSubscriptionsClient.NewListPager)
+// because the SDK model strips tenantId from the response, which breaks
+// the TENANT column. Same shape as the old `az account list` output so
+// callers can use the result interchangeably.
 func (a *Azure) listSubscriptionsSDK(ctx context.Context) ([]provider.Node, error) {
 	cred, err := defaultCredential()
 	if err != nil {
 		return nil, err
 	}
-	client, err := armsubscription.NewSubscriptionsClient(cred, nil)
+	tok, err := cred.GetToken(ctx, armTokenOptions())
 	if err != nil {
 		return nil, err
 	}
-
-	pager := client.NewListPager(nil)
-	var subs []provider.Node
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("list subscriptions: %w", err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://management.azure.com/subscriptions?api-version=2022-12-01", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	resp, err := doWithRetry(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("list subscriptions: HTTP %d", resp.StatusCode)
+	}
+	var env struct {
+		Value []struct {
+			SubscriptionID string `json:"subscriptionId"`
+			DisplayName    string `json:"displayName"`
+			State          string `json:"state"`
+			TenantID       string `json:"tenantId"`
+		} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return nil, fmt.Errorf("parse subscriptions: %w", err)
+	}
+	subs := make([]provider.Node, 0, len(env.Value))
+	for _, s := range env.Value {
+		if s.SubscriptionID == "" {
+			continue
 		}
-		for _, s := range page.Value {
-			if s == nil || s.SubscriptionID == nil {
-				continue
-			}
-			name := ""
-			if s.DisplayName != nil {
-				name = *s.DisplayName
-			}
-			state := ""
-			if s.State != nil {
-				state = string(*s.State)
-			}
-			// TenantID isn't on the Subscription model in this SDK
-			// version — the tenants pager / fetchTenants() resolves it.
-			subs = append(subs, provider.Node{
-				ID:    *s.SubscriptionID,
-				Name:  name,
-				Kind:  provider.KindSubscription,
-				State: state,
-				Meta:  map[string]string{},
-			})
+		meta := map[string]string{}
+		if s.TenantID != "" {
+			meta["tenantId"] = s.TenantID
 		}
+		subs = append(subs, provider.Node{
+			ID:    s.SubscriptionID,
+			Name:  s.DisplayName,
+			Kind:  provider.KindSubscription,
+			State: s.State,
+			Meta:  meta,
+		})
 	}
 	return subs, nil
 }
+
