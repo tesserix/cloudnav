@@ -1383,7 +1383,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			row := table.Row{
 				selectionMark(m.selected[n.ID]),
 				n.Name,
-				n.Meta["type"],
+				friendlyType(n.Meta["type"]),
 				n.Location,
 				shortDate(n.Meta["createdTime"]),
 			}

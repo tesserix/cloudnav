@@ -123,8 +123,19 @@ func (a *Azure) putSubTenants(m map[string]string) {
 
 func (a *Azure) putTenants(m map[string]string) {
 	a.mu.Lock()
-	a.tenants = m
-	a.mu.Unlock()
+	defer a.mu.Unlock()
+	if a.tenants == nil {
+		a.tenants = make(map[string]string, len(m))
+	}
+	// Merge — never clobber an already-known display name with an
+	// empty one. Two discovery sources (fetchTenants, allTenants) can
+	// race; the one that ran last used to wipe the other's names.
+	for tid, name := range m {
+		if existing, ok := a.tenants[tid]; ok && existing != "" && name == "" {
+			continue
+		}
+		a.tenants[tid] = name
+	}
 }
 
 // fetchTenants is best-effort — failure is non-fatal, we just fall back

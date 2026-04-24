@@ -347,12 +347,45 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 		return m.overlay(strings.Join(lines, "\n"))
 	}
 
-	// Recommendation cards — numbered divider + impact bullet.
-	for i, rec := range filt {
+	// Scrollable card window — ↑/↓ move advisorIdx, we render only the
+	// cards that fit from that offset. Prevents the popup from spilling
+	// off the bottom when the scope has many recommendations.
+	//
+	// Budget: popup inner height minus the chrome we've already used
+	// (title + rule + resource summary + blank + footer rule + summary
+	// + blank + hint). Each card takes ~3 or 4 lines (divider + problem
+	// + optional → solution + blank).
+	popupH := m.height - 10
+	if popupH < 12 {
+		popupH = 12
+	}
+	cardH := 4
+	fit := popupH / cardH
+	if fit < 1 {
+		fit = 1
+	}
+	start := m.advisorIdx
+	if start < 0 {
+		start = 0
+	}
+	if start > len(filt)-fit && len(filt)-fit > 0 {
+		start = len(filt) - fit
+	} else if start > len(filt)-1 {
+		start = 0
+	}
+	end := start + fit
+	if end > len(filt) {
+		end = len(filt)
+	}
+
+	if start > 0 {
+		lines = append(lines, styles.ModalHint.Render(fmt.Sprintf("  ↑ %d more above", start)))
+	}
+
+	for i := start; i < end; i++ {
+		rec := filt[i]
 		num := fmt.Sprintf("── %d/%d ", i+1, len(filt))
 		right := "  " + impactBullet(rec.Impact) + " "
-		// Pad the middle with ─ so the divider reaches ruleW cells wide,
-		// with the impact bullet flush to the right.
 		pad := ruleW - len(num) - lipgloss.Width(right) - 2
 		if pad < 3 {
 			pad = 3
@@ -365,11 +398,15 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 		lines = append(lines, "")
 	}
 
+	if end < len(filt) {
+		lines = append(lines, styles.ModalHint.Render(fmt.Sprintf("  ↓ %d more below", len(filt)-end)))
+	}
+
 	// Summary footer.
 	lines = append(lines, styles.ModalHint.Render(strings.Repeat("─", ruleW)))
 	lines = append(lines, styles.ModalLabel.Render(advisorSummary(filt)))
 	lines = append(lines, "")
-	lines = append(lines, styles.ModalHint.Render("esc  close"))
+	lines = append(lines, styles.ModalHint.Render("↑↓ scroll  ·  esc  close"))
 	return m.overlay(strings.Join(lines, "\n"))
 }
 

@@ -59,6 +59,14 @@ func (a *Azure) allTenants(ctx context.Context) map[string]string {
 		}
 	}
 
+	// Persist discovered tenants into the in-memory cache so downstream
+	// lookups (tenant-name column on the subs view, PIM enumeration,
+	// diagnostic rows) can resolve the display name without hitting
+	// the API again.
+	if len(out) > 0 {
+		a.putTenants(out)
+	}
+
 	return out
 }
 
