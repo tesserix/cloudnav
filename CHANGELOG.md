@@ -7,6 +7,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.10] — 2026-04-24
+
+### Changed
+- **Update check is now cache-first.** `Check()` serves from the disk
+  cache when the last poll was within `pollInterval` (1 hour), and
+  only hits GitHub past that. Stale cache (> 24 h) is still used as
+  an offline fallback. Previously every cloudnav launch hit
+  `/releases/latest`, which burned the anonymous 60/hour quota during
+  active development and turned the update pill off while a new
+  release was in fact live.
+- **`U` now forces a fresh re-check.** `CheckForce()` bypasses the
+  cache and always hits GitHub, so pressing `U` right after a new
+  tag ships surfaces it immediately instead of waiting up to an hour.
+
+## [0.22.9] — 2026-04-24
+
+### Added
+- `docs/config.md` documents every field in `config.json` plus the
+  cache paths and environment-variable overrides. `auto_upgrade`
+  finally has a published spec.
+- Unit tests pin the homebrew upgrade plan shape (`sh -c "brew update
+  && brew upgrade cloudnav"`), `isHomebrewBinary` / `isGoBinBinary`
+  detection, `trimOutput` length cap, and the delete helpers
+  (`deleteNoun`, `failuresToErr`, `stateBadge`).
+- `test/e2e/upgrade_test.sh` asserts `cloudnav version` prints a
+  parseable first line — `installedVersion()` depends on that shape.
+
+## [0.22.8] — 2026-04-24
+
+### Fixed
+- **Post-upgrade version verification.** After the upgrade command
+  exits 0, cloudnav invokes the binary on `PATH` and parses its
+  version output. If the version didn't actually move to the target
+  tag (e.g. a silent brew no-op), surface a clear failure instead of
+  a misleading "upgrade complete" banner, with a remediation hint
+  pointing to `brew update && brew upgrade cloudnav`.
+
+## [0.22.7] — 2026-04-24
+
+### Fixed
+- **Silent no-op on the Homebrew upgrade path.** `brew upgrade
+  cloudnav` alone consults the local formula cache — without a prior
+  `brew update` brew reports "already installed" even when a newer
+  formula exists. The upgrade command exited 0, cloudnav marked it
+  successful, but the binary on disk was unchanged. Wrap the plan as
+  `sh -c "brew update && brew upgrade cloudnav"` so the formula cache
+  is refreshed first. The confirmation overlay unwraps `sh -c` for
+  display so users still see a clean command line.
+
+## [0.22.6] — 2026-04-24
+
+### Added
+- **Autonomous auto-upgrade path.** When `config.AutoUpgrade` is true
+  AND a newer release is detected on startup, cloudnav now: runs the
+  plan silently, and on success automatically re-execs the fresh
+  binary in place. User sees one "auto-upgrading to vX.Y.Z…" flash in
+  the footer, then cloudnav reopens on the new version — no
+  keystrokes required. Manual path (`U` → `y` → `R`) unchanged.
+
+## [0.22.5] — 2026-04-24
+
+### Added
+- **One-key self-relaunch after upgrade.** Press `R` (or `↵`) on the
+  post-success overlay and cloudnav re-execs the freshly-installed
+  binary in place of the current process. POSIX: `syscall.Exec`
+  preserves the PID / stdio / cwd. Windows: spawns a fresh child with
+  the same stdio, exits the parent.
+
+## [0.22.4] — 2026-04-24
+
+### Changed
+- **Loud top-right update pill.** When a newer release is available
+  the header renders a reversed-video pill — yellow bg, dark fg, bold
+  — instead of the old muted warning text: `[ ↑ v0.22.x available —
+  press U ]`. Impossible to miss against the breadcrumb row.
+- **`U` is always visible in the keybar.** Promoted to the front
+  ("upgrade now") when an update is detected, at the tail ("check
+  updates") otherwise. Pressing `U` when no update is known triggers
+  a fresh GitHub lookup.
+
+## [0.22.3] — 2026-04-24
+
+### Fixed
+- **Purple splash-screen below the table after a delete.** `Shell`
+  appended sections without emitting an ANSI reset, so the last row's
+  selected-cursor background leaked onto every pad line. Now emits
+  `\x1b[0m` between header / body / footer and each pad line.
+- **`…──0m` artefacts in the STATE cell.** `bubbles/table` truncates
+  via `runewidth.Truncate` which walks escape codes as runes and cuts
+  mid-sequence. Shorten `stateBadge` to plain "Deleting" (no `⟳`
+  glyph) so the 12-cell STATE column never needs to truncate.
+- **Table flash-replaced by the full-screen loading panel during the
+  post-delete reload.** Split `load()` into `loadInto(drill bool)` —
+  `reload()` now passes `drill=false` so the table stays visible and
+  only the footer spinner moves.
+
+## [0.22.2] — 2026-04-24
+
+### Added
+- **Cross-tenant subscription + PIM discovery.** The portal shows
+  every tenant a user is a member of because it mints per-tenant
+  tokens on the fly. `DefaultAzureCredential` only covers the
+  currently-selected `az` tenant, so cross-tenant guest memberships
+  were silently dropped. `allTenants()` merges three discovery
+  sources (`az account tenant list`, ARM `/tenants`, per-sub
+  tenantIds) and `Root()` fans out a tenant-scoped `/subscriptions`
+  call in parallel, dedupes by sub id, returns the union. PIM uses
+  the same discovery set so roles in cross-tenant directories are
+  enumerated or surface as diagnostic rows.
+
+## [0.22.1] — 2026-04-24
+
+### Fixed
+- **Blank TENANT column.** `armsubscription.Subscription` omits
+  `TenantID` from its typed model, so after the SDK migration every
+  `Meta["tenantId"]` came back empty and the tenant-name lookup
+  missed. Hit the raw ARM `/subscriptions?api-version=2022-12-01`
+  endpoint with an SDK-minted token instead — same URL `az account
+  list` uses underneath, returns every field including `tenantId`,
+  no process spawn. Dropped the `armsubscription` import entirely.
+
 ## [0.22.0] — 2026-04-24
 
 ### Changed
@@ -132,7 +253,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.10...HEAD
+[0.22.10]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.10
+[0.22.9]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.9
+[0.22.8]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.8
+[0.22.7]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.7
+[0.22.6]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.6
+[0.22.5]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.5
+[0.22.4]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.4
+[0.22.3]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.3
+[0.22.2]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.2
+[0.22.1]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.1
 [0.22.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.0
 [0.21.1]: https://github.com/tesserix/cloudnav/releases/tag/v0.21.1
 [0.21.0]: https://github.com/tesserix/cloudnav/releases/tag/v0.21.0

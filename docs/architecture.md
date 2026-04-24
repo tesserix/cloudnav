@@ -132,11 +132,11 @@ on `cli.Runner` — lower-traffic paths that are fine shelling out.
 
 | Layer     | Where                                   | TTL    | Purpose |
 |-----------|-----------------------------------------|--------|---------|
-| Token     | in-memory (pim_tokens.go)               | 58 min | avoid per-call az spawn |
+| Token     | in-memory (`pim_tokens.go`)             | 58 min | avoid per-call az spawn |
 | Root      | in-memory + disk                        | 90 s / session | sub list across back/forward |
 | Cost      | in-memory + disk (`cache.Store`)        | 15 min | warm the cost column on restart |
 | Resource Health | in-memory per sub                 | 60 s   | avoid per-resource lookups |
-| Update check | disk (updatecheck)                   | 24 h   | quieter startup |
+| Update check | disk (`updatecheck`)                 | 1 h poll / 24 h stale fallback | cheap startup |
 
 Disk caches live under `$XDG_CACHE_HOME/cloudnav` (or
 `~/.cache/cloudnav` / `%LOCALAPPDATA%\cloudnav`). Override with
@@ -144,14 +144,40 @@ Disk caches live under `$XDG_CACHE_HOME/cloudnav` (or
 
 ## Upgrade
 
-`internal/updatecheck` checks GitHub Releases on startup. The header
-shows an `↑ update available` badge when a newer tag exists; `U` opens
-a confirmation overlay that runs the resolved install plan (`go
-install` / `brew upgrade` / browser for manual releases).
+`internal/updatecheck` polls GitHub Releases **at most once per hour**
+(cache-first `Check()`); past that it hits the API, refreshes the
+cache, and on failure falls back to the stale entry so the UI doesn't
+go quiet when the user is offline. Anonymous quota (60/hour) is never
+touched at this cadence — no GitHub token required.
 
-Opt-in auto-upgrade: set `"auto_upgrade": true` in
-`~/.config/cloudnav/config.json` to have cloudnav silently run the
-non-interactive plans at startup when a newer release ships.
+When a newer tag is detected, the header renders a loud reversed-video
+pill (`[ ↑ vX.Y.Z available — press U ]`). Pressing `U`:
+
+- opens the confirmation overlay when a newer release is already known;
+- forces a fresh GitHub lookup (bypassing the 1-hour cache) when no
+  update is known — useful right after a release is cut.
+
+The confirmation overlay shows the exact plan that will run
+(`brew update && brew upgrade cloudnav`, `go install …@latest`, or a
+browser handoff for non-automatic installs). `y` / `↵` runs the plan;
+on success cloudnav invokes the freshly-installed binary and parses its
+version to verify the disk actually moved — if not (e.g. a silent brew
+no-op), the banner reports a failure instead of a misleading
+"complete".
+
+### Self-relaunch
+
+On the post-success overlay, `R` (or `↵`) re-execs the freshly-
+installed binary in place. On POSIX we `syscall.Exec` — same PID,
+same stdio, same working dir — so the handoff is invisible. On
+Windows we spawn a fresh child and exit the parent.
+
+### Autonomous path
+
+Set `"auto_upgrade": true` in `~/.config/cloudnav/config.json`. When
+an update is detected on startup, cloudnav runs the plan silently and
+re-execs into the new binary without asking. Browser plans (manual
+releases) are never auto-launched.
 
 ## Testing
 

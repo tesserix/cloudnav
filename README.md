@@ -140,19 +140,25 @@ Use it when you know part of a name or scope but not the exact path yet.
 
 ## Configuration
 
-`cloudnav` reads `~/.config/cloudnav/config.yml` (macOS/Linux) or `%APPDATA%\cloudnav\config.yml` (Windows). Everything is optional; sensible defaults apply.
+`cloudnav` reads `~/.config/cloudnav/config.json` (macOS/Linux) or `%APPDATA%\cloudnav\config.json` (Windows). Every field is optional; sensible defaults apply.
 
-```yaml
-default_provider: azure
-show_cost: true
-theme: dark            # dark | light | auto
-bookmarks:
-  - provider: azure
-    path: subs/<subscription-id>/rgs
-cache_ttl: 10m
+```json
+{
+  "default_provider": "azure",
+  "auto_upgrade": false,
+  "gcp": {
+    "billing_table": "my-project.billing.gcp_billing_export_v1"
+  }
+}
 ```
 
-Override per-invocation with env vars — `CLOUDNAV_THEME`, `CLOUDNAV_NO_COLOR`, `CLOUDNAV_LOG_LEVEL`.
+Highlights:
+
+- `auto_upgrade` — when `true`, cloudnav detects a newer GitHub release on startup, runs the upgrade plan silently (`brew update && brew upgrade cloudnav` on Homebrew, `go install …@latest` on Go), then re-execs into the new binary. Browser plans (manual releases) are never auto-launched.
+- `gcp.billing_table` — BigQuery billing-export table backing the GCP cost column.
+- `bookmarks` — populated by `f` inside the TUI.
+
+See [`docs/config.md`](docs/config.md) for the full reference (cache paths, env var overrides, all fields).
 
 ### cloudnav never stores your credentials
 
@@ -200,9 +206,12 @@ When stdout is not a terminal (pipe, CI, Docker without `-t`), `cloudnav ls` wil
 - `internal/iam` — provisioning of scoped SP / SA / IAM Role with least-privilege presets.
 
 See [`docs/architecture.md`](docs/architecture.md) for the full design,
-and [`CHANGELOG.md`](CHANGELOG.md) for recent performance + UX work
-(SDK migration, Resource Graph, persistent cost cache, overlay
-compositor, adaptive resource columns, PIM hardening).
+[`docs/config.md`](docs/config.md) for every config knob, and
+[`CHANGELOG.md`](CHANGELOG.md) for recent work — including the SDK
+migration, cross-tenant discovery, Resource Graph fast path, persistent
+cost cache, overlay compositor + adaptive column widths, PIM hardening,
+the rate-limit-safe update check (1-hour poll), and the one-keystroke
+self-relaunch on upgrade.
 
 ## Roadmap
 
