@@ -1814,19 +1814,20 @@ func (m *model) headerView() string {
 	return top + "\n" + m.keybar() + "\n"
 }
 
-// updateIndicator renders the top-right badge: a highlighted "↑ update
-// available" prompt when a newer release is on GitHub, or a quiet state
-// showing the current version otherwise. The highlighted state uses
-// WarnS so it visually announces itself without being loud enough to
-// pull attention away from the breadcrumb trail.
+// updateIndicator renders the top-right badge. When a newer release is
+// live on GitHub we render a loud yellow-bg pill so it's immediately
+// obvious from across the room; clicking through is one key press (U).
+// Otherwise we show the current version quietly with a trailing smile.
 func (m *model) updateIndicator() string {
 	if m.updateAvailable {
 		tag := m.latestVersion
 		if tag == "" {
 			tag = "new"
 		}
-		badge := styles.WarnS.Bold(true).Render("↑ update available")
-		return badge + " " + styles.Help.Render(tag+" · press U")
+		// Reversed-video pill (yellow bg, dark fg) so the badge pops
+		// against every theme — dark and light. Bracketed so it reads
+		// as an actionable chip, and the U binding is in the label.
+		return updatePillStyle.Render(" ↑ " + tag + " available — press U ")
 	}
 	v := version.Version
 	if v == "dev" || v == "" {
@@ -1834,6 +1835,14 @@ func (m *model) updateIndicator() string {
 	}
 	return styles.Help.Render(v + " ^_^")
 }
+
+// updatePillStyle is the loud top-right "update available" pill. Kept
+// as a package-level var so we build it once — lipgloss styles are
+// cheap but the badge is rendered on every frame.
+var updatePillStyle = lipgloss.NewStyle().
+	Background(styles.Warn).
+	Foreground(lipgloss.Color("#111827")).
+	Bold(true)
 
 func (m *model) keybar() string {
 	type pair struct{ key, action string }
@@ -1858,7 +1867,14 @@ func (m *model) keybar() string {
 		pairs = append(pairs, pair{"$", "cost chart"})
 	}
 	if m.updateAvailable {
-		pairs = append(pairs, pair{"U", "upgrade"})
+		// Bump the upgrade hint to the front of the keybar so it reads
+		// as the first suggested action — the top-right pill already
+		// announces the new release, this reinforces it.
+		pairs = append([]pair{{"U", "upgrade now"}}, pairs...)
+	} else {
+		// Still advertise U so a user who wonders "am I on latest?"
+		// has a discoverable way to trigger a fresh GitHub check.
+		pairs = append(pairs, pair{"U", "check updates"})
 	}
 	if m.atCloudLevel() {
 		pairs = append(pairs, pair{"I", "login"})
