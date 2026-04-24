@@ -80,10 +80,40 @@ func (m *model) loadCostHistory(opts provider.CostHistoryOptions) tea.Cmd {
 	if opts.Scope == "" {
 		opts.Scope, opts.ScopeLabel = m.currentCostScope()
 	}
+	// Capture the list of subs the user can cycle through with [ / ]
+	// so they can compare without closing the overlay and re-drilling.
+	m.costHistSubs, m.costHistSubIdx = m.collectCostHistSubs(opts.Scope)
 	m.loading = true
 	m.costHistLoading = true
 	m.status = fmt.Sprintf("loading %s cost history for %s...", windowLabel(opts), m.active.Name())
 	return tea.Batch(m.spinner.Tick, m.fetchCostHistory(opts))
+}
+
+// collectCostHistSubs returns the ordered sub list the [ / ] cycle
+// should walk, plus the index of currentScope inside it. Prefers the
+// currently-visible subs frame (so the user cycles through exactly
+// what they were just looking at); falls back to the entity cache
+// that the palette preloads at startup.
+func (m *model) collectCostHistSubs(currentScope string) ([]provider.Node, int) {
+	var subs []provider.Node
+	for i := len(m.stack) - 1; i >= 0; i-- {
+		f := m.stack[i]
+		if len(f.nodes) > 0 && f.nodes[0].Kind == provider.KindSubscription {
+			subs = append([]provider.Node(nil), f.nodes...)
+			break
+		}
+	}
+	if len(subs) == 0 {
+		subs = append(subs, m.entities[pimSrcAzure]...)
+	}
+	idx := -1
+	for i, s := range subs {
+		if s.ID == currentScope {
+			idx = i
+			break
+		}
+	}
+	return subs, idx
 }
 
 // currentCostScope returns the subscription ID (and human name) most
@@ -172,6 +202,17 @@ func (m *model) updateCostHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.costHistLoading = false
 			return m, m.loadPIM()
 		}
+	case "[":
+		return m, m.cycleCostHistSub(-1)
+	case "]":
+		return m, m.cycleCostHistSub(+1)
+	case "a", "A":
+		// Drop the scope filter so the provider fans out across every
+		// subscription the caller can see.
+		opts := m.costHistOpts
+		opts.Scope = ""
+		opts.ScopeLabel = ""
+		return m, m.reloadCostHistory(opts)
 	}
 	for _, p := range costHistoryPresets() {
 		if key == p.Key {
@@ -180,6 +221,26 @@ func (m *model) updateCostHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// cycleCostHistSub moves the chart to the next or previous sub in the
+// list collected at overlay-open time. Wraps at either end so the
+// user never dead-ends. No-op when only one sub is available or the
+// list is empty (e.g. fresh session with no subs frame loaded).
+func (m *model) cycleCostHistSub(delta int) tea.Cmd {
+	n := len(m.costHistSubs)
+	if n == 0 {
+		return nil
+	}
+	idx := m.costHistSubIdx + delta
+	// Wrap rather than clamp so [ / ] always do something visible.
+	idx = ((idx % n) + n) % n
+	m.costHistSubIdx = idx
+	sub := m.costHistSubs[idx]
+	opts := m.costHistOpts
+	opts.Scope = sub.ID
+	opts.ScopeLabel = sub.Name
+	return m.reloadCostHistory(opts)
 }
 
 // costHistoryView renders the full-screen overlay — a stock-ticker
@@ -211,7 +272,11 @@ func (m *model) costHistoryView() string {
 		scope = m.active.Name()
 	}
 	title := styles.Title.Render("cost history")
-	sub := styles.Help.Render(scope + " · " + windowLabel(m.costHistOpts) + " · " + currencyCode(h.Currency))
+	position := ""
+	if len(m.costHistSubs) > 1 && m.costHistSubIdx >= 0 {
+		position = fmt.Sprintf(" · %d/%d", m.costHistSubIdx+1, len(m.costHistSubs))
+	}
+	sub := styles.Help.Render(scope + position + " · " + windowLabel(m.costHistOpts) + " · " + currencyCode(h.Currency))
 	loading := ""
 	if m.costHistLoading {
 		loading = "  " + styles.WarnS.Render(m.spinner.View()+" loading "+windowLabel(m.costHistOpts)+"...")
@@ -241,7 +306,7 @@ func (m *model) costHistoryView() string {
 	}
 	if len(h.Series.Points) == 0 || total == 0 {
 		msg := "no cost data — check Cost Management Reader on your subscriptions"
-		footer := styles.Help.Render("esc/$ close · w 1W · m 1M · 3 3M · 6 6M · y 1Y")
+		footer := styles.Help.Render("esc/$ close · [ / ] prev/next sub · a all subs · w 1W · m 1M · 3 3M · 6 6M · y 1Y")
 		switch {
 		case h.AccessDenied:
 			msg = "you don't have cost-read access on " + scope
@@ -268,7 +333,7 @@ func (m *model) costHistoryView() string {
 
 	chart := renderChart(h.Series.Points, innerW, chartH, h.Currency)
 	months := renderMonthStrip(h.Months, h.Currency, innerW)
-	footerBase := "  esc/$ close  ·  w 1W · m 1M · 3 3M · 6 6M · y 1Y"
+	footerBase := "  esc/$ close  ·  [ / ] prev/next sub · a all subs · w 1W · m 1M · 3 3M · 6 6M · y 1Y"
 	if h.AccessDenied {
 		footerBase = "  " + styles.WarnS.Render("P → jump to PIM to request cost-read access") +
 			styles.Help.Render("   ·   esc/$ close")

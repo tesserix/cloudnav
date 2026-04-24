@@ -240,6 +240,12 @@ type model struct {
 	costHistData    provider.CostHistory
 	costHistOpts    provider.CostHistoryOptions // currently-selected window + bucket
 	costHistLoading bool
+	// costHistSubs is the ordered list of subs the user can cycle
+	// through while the chart overlay is open ([ / ] keys). Populated
+	// at overlay-open time from the current stack frame or the entity
+	// cache; empty means no sub cycling is available.
+	costHistSubs   []provider.Node
+	costHistSubIdx int
 	// Upgrade prompt (`U` key). Populated from a background update check
 	// on startup so the top-right "↑ update available" badge can
 	// highlight when a newer tag is published on GitHub.
