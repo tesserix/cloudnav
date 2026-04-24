@@ -148,6 +148,7 @@ const (
 	sortName sortMode = iota
 	sortState
 	sortLocation
+	sortCategory
 )
 
 func (s sortMode) String() string {
@@ -156,6 +157,8 @@ func (s sortMode) String() string {
 		return "state"
 	case sortLocation:
 		return "location"
+	case sortCategory:
+		return "category"
 	default:
 		return "name"
 	}
@@ -531,7 +534,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.saveBookmark()
 			return m, nil
 		case key.Matches(msg, m.keys.Sort):
-			m.sort = (m.sort + 1) % 3
+			m.sort = (m.sort + 1) % 4
 			m.refreshTable()
 			m.status = "sort: " + m.sort.String()
 			return m, nil
@@ -1049,6 +1052,17 @@ func (m *model) applyView(nodes []provider.Node) []provider.Node {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].State < out[j].State })
 	case sortLocation:
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Location < out[j].Location })
+	case sortCategory:
+		// Group by category (compute → container → data → network →
+		// security → other), then by name inside each bucket.
+		sort.SliceStable(out, func(i, j int) bool {
+			ci := categorySortOrder(typeColorCategory(out[i]))
+			cj := categorySortOrder(typeColorCategory(out[j]))
+			if ci != cj {
+				return ci < cj
+			}
+			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+		})
 	default:
 		sort.SliceStable(out, func(i, j int) bool {
 			return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
@@ -1071,12 +1085,16 @@ func (m *model) setCategoryFilter(cat string) {
 
 // Resource category constants used by the category filter bar on the
 // resource-list view. Kept short so the tab row stays readable.
+// The filter bar buckets container resources under 'compute' so users
+// don't juggle seven tabs; the colour bar on the TYPE cell splits
+// them out (see typeColorCategory) for quick visual scanning.
 const (
-	catCompute  = "compute"
-	catData     = "data"
-	catNetwork  = "network"
-	catSecurity = "security"
-	catOther    = "other"
+	catCompute   = "compute"
+	catContainer = "container"
+	catData      = "data"
+	catNetwork   = "network"
+	catSecurity  = "security"
+	catOther     = "other"
 )
 
 // resourceCategory sorts a Node into one of ~5 buckets based on its type
@@ -1086,29 +1104,50 @@ const (
 func resourceCategory(n provider.Node) string {
 	t := strings.ToLower(n.Meta["type"])
 	switch {
-	// Compute (VMs, serverless, containers, batch)
+	// Compute (VMs, serverless, containers, batch, HPC)
 	case strings.Contains(t, "microsoft.compute/"),
 		strings.Contains(t, "microsoft.containerservice"),
-		strings.Contains(t, "microsoft.web/"),
 		strings.Contains(t, "microsoft.containerinstance"),
 		strings.Contains(t, "microsoft.containerregistry"),
+		strings.Contains(t, "microsoft.web/"),
 		strings.Contains(t, "microsoft.batch"),
-		strings.Contains(t, "microsoft.dataproc"),
+		strings.Contains(t, "microsoft.app/"),
+		strings.Contains(t, "microsoft.desktopvirtualization"),
+		strings.Contains(t, "microsoft.hybridcompute"),
+		strings.Contains(t, "microsoft.kubernetes"),
+		strings.Contains(t, "microsoft.logic"),
+		strings.Contains(t, "microsoft.machinelearningservices"),
+		strings.Contains(t, "microsoft.hdinsight"),
+		strings.Contains(t, "microsoft.databricks"),
+		strings.Contains(t, "microsoft.servicefabric"),
 		strings.Contains(t, "compute.googleapis.com"),
 		strings.Contains(t, "container.googleapis.com"),
 		strings.Contains(t, "run.googleapis.com"),
 		strings.Contains(t, "cloudfunctions.googleapis.com"),
+		strings.Contains(t, "appengine.googleapis.com"),
 		strings.Contains(t, "workflows.googleapis.com"),
 		strings.Contains(t, "artifactregistry.googleapis.com"),
+		strings.Contains(t, "cloudbuild.googleapis.com"),
+		strings.Contains(t, "composer.googleapis.com"),
+		strings.Contains(t, "aiplatform.googleapis.com"),
+		strings.Contains(t, "notebooks.googleapis.com"),
 		strings.HasPrefix(t, "ec2:"),
 		strings.HasPrefix(t, "lambda:"),
 		strings.HasPrefix(t, "ecs:"),
 		strings.HasPrefix(t, "eks:"),
 		strings.HasPrefix(t, "batch:"),
-		strings.HasPrefix(t, "ecr:"):
+		strings.HasPrefix(t, "ecr:"),
+		strings.HasPrefix(t, "autoscaling:"),
+		strings.HasPrefix(t, "apprunner:"),
+		strings.HasPrefix(t, "elasticbeanstalk:"),
+		strings.HasPrefix(t, "codebuild:"),
+		strings.HasPrefix(t, "codedeploy:"),
+		strings.HasPrefix(t, "codepipeline:"),
+		strings.HasPrefix(t, "sagemaker:"),
+		strings.HasPrefix(t, "amplify:"):
 		return catCompute
 
-	// Data (relational, NoSQL, cache, analytics, object storage)
+	// Data (relational, NoSQL, cache, analytics, object storage, streaming)
 	case strings.Contains(t, "microsoft.sql"),
 		strings.Contains(t, "microsoft.storage"),
 		strings.Contains(t, "microsoft.documentdb"),
@@ -1118,50 +1157,175 @@ func resourceCategory(n provider.Node) string {
 		strings.Contains(t, "microsoft.dbformariadb"),
 		strings.Contains(t, "microsoft.synapse"),
 		strings.Contains(t, "microsoft.datafactory"),
+		strings.Contains(t, "microsoft.datalakestore"),
+		strings.Contains(t, "microsoft.datalakeanalytics"),
+		strings.Contains(t, "microsoft.streamanalytics"),
+		strings.Contains(t, "microsoft.eventhub"),
+		strings.Contains(t, "microsoft.servicebus"),
+		strings.Contains(t, "microsoft.eventgrid"),
+		strings.Contains(t, "microsoft.search"),
+		strings.Contains(t, "microsoft.purview"),
+		strings.Contains(t, "microsoft.insights"),
+		strings.Contains(t, "microsoft.operationalinsights"),
 		strings.Contains(t, "sqladmin.googleapis.com"),
 		strings.Contains(t, "spanner.googleapis.com"),
 		strings.Contains(t, "bigtable"),
 		strings.Contains(t, "redis.googleapis.com"),
 		strings.Contains(t, "memcache.googleapis.com"),
 		strings.Contains(t, "firestore.googleapis.com"),
+		strings.Contains(t, "datastore.googleapis.com"),
 		strings.Contains(t, "storage.googleapis.com"),
 		strings.Contains(t, "bigquery.googleapis.com"),
 		strings.Contains(t, "dataflow.googleapis.com"),
 		strings.Contains(t, "dataproc.googleapis.com"),
+		strings.Contains(t, "dataplex.googleapis.com"),
+		strings.Contains(t, "pubsub.googleapis.com"),
+		strings.Contains(t, "monitoring.googleapis.com"),
+		strings.Contains(t, "logging.googleapis.com"),
+		strings.Contains(t, "filestore.googleapis.com"),
 		strings.HasPrefix(t, "s3:"),
 		strings.HasPrefix(t, "rds:"),
 		strings.HasPrefix(t, "dynamodb:"),
+		strings.HasPrefix(t, "dax:"),
 		strings.HasPrefix(t, "elasticache:"),
 		strings.HasPrefix(t, "redshift:"),
-		strings.HasPrefix(t, "glue:"):
+		strings.HasPrefix(t, "opensearch:"),
+		strings.HasPrefix(t, "es:"),
+		strings.HasPrefix(t, "glue:"),
+		strings.HasPrefix(t, "athena:"),
+		strings.HasPrefix(t, "kinesis:"),
+		strings.HasPrefix(t, "firehose:"),
+		strings.HasPrefix(t, "timestream:"),
+		strings.HasPrefix(t, "efs:"),
+		strings.HasPrefix(t, "fsx:"),
+		strings.HasPrefix(t, "backup:"),
+		strings.HasPrefix(t, "glacier:"),
+		strings.HasPrefix(t, "sns:"),
+		strings.HasPrefix(t, "sqs:"),
+		strings.HasPrefix(t, "events:"),
+		strings.HasPrefix(t, "stepfunctions:"),
+		strings.HasPrefix(t, "msk:"),
+		strings.HasPrefix(t, "mq:"),
+		strings.HasPrefix(t, "cloudwatch:"),
+		strings.HasPrefix(t, "logs:"):
 		return catData
 
-	// Network
+	// Network (VPC, DNS, CDN, load balancers, firewalls, endpoints)
 	case strings.Contains(t, "microsoft.network"),
 		strings.Contains(t, "microsoft.cdn"),
+		strings.Contains(t, "microsoft.communication"),
+		strings.Contains(t, "microsoft.apimanagement"),
+		strings.Contains(t, "microsoft.signalrservice"),
 		strings.Contains(t, "dns.googleapis.com"),
 		strings.Contains(t, "networkconnectivity.googleapis.com"),
+		strings.Contains(t, "servicedirectory.googleapis.com"),
+		strings.Contains(t, "vpcaccess.googleapis.com"),
 		strings.HasPrefix(t, "elasticloadbalancing:"),
+		strings.HasPrefix(t, "elbv2:"),
 		strings.HasPrefix(t, "route53:"),
 		strings.HasPrefix(t, "apigateway:"),
+		strings.HasPrefix(t, "apigatewayv2:"),
 		strings.HasPrefix(t, "cloudfront:"),
-		strings.HasPrefix(t, "vpc:"):
+		strings.HasPrefix(t, "vpc:"),
+		strings.HasPrefix(t, "directconnect:"),
+		strings.HasPrefix(t, "globalaccelerator:"),
+		strings.HasPrefix(t, "appsync:"),
+		strings.HasPrefix(t, "appmesh:"),
+		strings.HasPrefix(t, "transfer:"):
 		return catNetwork
 
-	// Security (IAM, secrets, KMS)
+	// Security (IAM, secrets, KMS, policy, identity, WAF, compliance)
 	case strings.Contains(t, "microsoft.keyvault"),
 		strings.Contains(t, "microsoft.managedidentity"),
 		strings.Contains(t, "microsoft.security"),
+		strings.Contains(t, "microsoft.policyinsights"),
+		strings.Contains(t, "microsoft.authorization"),
+		strings.Contains(t, "microsoft.dataprotection"),
 		strings.Contains(t, "iam.googleapis.com"),
 		strings.Contains(t, "secretmanager.googleapis.com"),
 		strings.Contains(t, "cloudkms.googleapis.com"),
+		strings.Contains(t, "privateca.googleapis.com"),
+		strings.Contains(t, "certificatemanager.googleapis.com"),
+		strings.Contains(t, "binaryauthorization.googleapis.com"),
+		strings.Contains(t, "beyondcorp.googleapis.com"),
+		strings.Contains(t, "iap.googleapis.com"),
 		strings.HasPrefix(t, "iam:"),
 		strings.HasPrefix(t, "kms:"),
 		strings.HasPrefix(t, "secretsmanager:"),
-		strings.HasPrefix(t, "acm:"):
+		strings.HasPrefix(t, "acm:"),
+		strings.HasPrefix(t, "wafv2:"),
+		strings.HasPrefix(t, "cognito-idp:"),
+		strings.HasPrefix(t, "guardduty:"),
+		strings.HasPrefix(t, "config:"),
+		strings.HasPrefix(t, "cloudtrail:"),
+		strings.HasPrefix(t, "ssm:"):
 		return catSecurity
 	}
 	return catOther
+}
+
+// typeColorCategory returns the category we colour the TYPE cell
+// with. Finer-grained than resourceCategory (container split from
+// compute) so container resources (AKS / ACR / GKE / ECS / EKS) read
+// differently on the list than pure VMs — makes visual scanning of a
+// mixed resource group much faster.
+func typeColorCategory(n provider.Node) string {
+	t := strings.ToLower(n.Meta["type"])
+	switch {
+	case strings.Contains(t, "microsoft.containerservice"),
+		strings.Contains(t, "microsoft.containerregistry"),
+		strings.Contains(t, "microsoft.containerinstance"),
+		strings.Contains(t, "microsoft.app/"),
+		strings.Contains(t, "container.googleapis.com"),
+		strings.Contains(t, "run.googleapis.com"),
+		strings.Contains(t, "artifactregistry.googleapis.com"),
+		strings.HasPrefix(t, "ecs:"),
+		strings.HasPrefix(t, "eks:"),
+		strings.HasPrefix(t, "ecr:"),
+		strings.HasPrefix(t, "apprunner:"):
+		return catContainer
+	}
+	return resourceCategory(n)
+}
+
+// categoryStyle returns the colour used for each category on the TYPE
+// cell. Six buckets, one colour each — enough to scan a mixed list
+// quickly without overwhelming the eye.
+func categoryStyle(cat string) lipgloss.Style {
+	switch cat {
+	case catCompute:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("114")) // green — VMs, batch
+	case catContainer:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // purple — AKS, ECR, GKE
+	case catData:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("215")) // amber — storage, dbs
+	case catNetwork:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("117")) // sky — vnet, elb
+	case catSecurity:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("210")) // rose — KV, IAM, WAF
+	default:
+		return lipgloss.NewStyle().Foreground(styles.Subtle)
+	}
+}
+
+// categorySortOrder maps the category name to a stable display order
+// used by the 's' sort mode: compute → container → data → network →
+// security → other. Name sort applies within each bucket.
+func categorySortOrder(cat string) int {
+	switch cat {
+	case catCompute:
+		return 0
+	case catContainer:
+		return 1
+	case catData:
+		return 2
+	case catNetwork:
+		return 3
+	case catSecurity:
+		return 4
+	default:
+		return 5
+	}
 }
 
 // categoryCounts aggregates visibleNodes by category for the tab bar header.
@@ -1383,7 +1547,7 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 			row := table.Row{
 				selectionMark(m.selected[n.ID]),
 				n.Name,
-				friendlyType(n.Meta["type"]),
+				categoryStyle(typeColorCategory(n)).Render(friendlyType(n.Meta["type"])),
 				n.Location,
 				shortDate(n.Meta["createdTime"]),
 			}
