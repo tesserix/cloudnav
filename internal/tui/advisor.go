@@ -21,6 +21,16 @@ func (m *model) loadAdvisor() tea.Cmd {
 		m.status = "advisor needs a subscription / project scope — drill in first"
 		return nil
 	}
+	// Snapshot the cursor row for the resource-context header. Only
+	// meaningful when the advisor is scoped to a single resource;
+	// otherwise we leave it zero-valued and the popup falls back to
+	// the wider scope label.
+	m.advisorResource = provider.Node{}
+	if m.atResourceLevel() {
+		if c := m.table.Cursor(); c >= 0 && c < len(m.visibleNodes) {
+			m.advisorResource = m.visibleNodes[c]
+		}
+	}
 	m.loading = true
 	m.status = "loading " + m.active.Name() + " advisor recommendations..."
 	ctx := m.ctx
@@ -244,11 +254,89 @@ func advisorMatchesFilter(r provider.Recommendation, q string) bool {
 }
 func (m *model) advisorView() string {
 	filt := m.filteredAdvisor()
+	advisorName := advisorLabelFor(m.active)
+
+	// Single-resource path gets the compact popup with resource context.
+	// Broader scopes (sub / account / project) still use the full-screen
+	// table because they can return dozens of rows across many targets.
+	if m.advisorResource.ID != "" {
+		return m.advisorResourceCard(advisorName, filt)
+	}
+	return m.advisorFullView(advisorName, filt)
+}
+
+// advisorResourceCard renders the per-resource popup shown in the
+// reference screenshot: title, resource-context header, then each
+// recommendation as a card with impact + problem + solution.
+func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommendation) string {
+	r := m.advisorResource
+	lines := []string{}
+
+	// Title — "Azure Advisor — cost recommendations" (most Azure
+	// advisor output is cost-oriented; drop the subtitle when the
+	// categories are mixed).
+	title := styles.ModalTitle.Render(advisorName)
+	if sub := dominantCategory(filt); sub != "" {
+		title += "  " + styles.ModalLabel.Render("— "+sub+" recommendations")
+	}
+	lines = append(lines, title, "")
+
+	// Resource-context block — two columns, label in Muted, value in Fg.
+	labelW := 10
+	addMeta := func(label, value string) {
+		if value == "" {
+			return
+		}
+		lines = append(lines, "  "+styles.ModalLabel.Render(padRight(label+":", labelW))+" "+styles.ModalValue.Render(value))
+	}
+	addMeta("Resource", r.Name)
+	addMeta("Type", r.Meta["type"])
+	addMeta("Group", parentRGName(r.ID))
+	addMeta("Region", r.Location)
+	if sku := r.Meta["sku"]; sku != "" {
+		addMeta("SKU", sku)
+	}
+	if r.Cost != "" {
+		addMeta("Cost / 30d", r.Cost)
+	}
+
+	lines = append(lines, "")
+
+	// Recommendation cards.
+	if len(filt) == 0 {
+		lines = append(lines,
+			styles.ModalHint.Render("  "+advisorEmptyHint(m.active)),
+			"",
+			styles.ModalHint.Render("  esc / q / enter  close"),
+		)
+		return m.overlay(strings.Join(lines, "\n"))
+	}
+
+	lines = append(lines, styles.ModalTitle.Render(fmt.Sprintf("%s (%d)", advisorName, len(filt))))
+	for i, rec := range filt {
+		lines = append(lines, "")
+		lines = append(lines, "  "+styles.ModalLabel.Render("[advisor]")+" "+impactBadge(rec.Impact))
+		lines = append(lines, "  "+styles.ModalLabel.Render("Problem: ")+styles.ModalValue.Render(rec.Problem))
+		lines = append(lines, "  "+styles.ModalLabel.Render("Solution:")+" "+styles.ModalValue.Render(rec.Solution))
+		// Rule between cards (skip after last).
+		if i < len(filt)-1 {
+			lines = append(lines, "", styles.ModalHint.Render("  "+strings.Repeat("─", 40)))
+		}
+	}
+
+	lines = append(lines, "", styles.ModalHint.Render("  esc / q / enter  close"))
+	return m.overlay(strings.Join(lines, "\n"))
+}
+
+// advisorFullView keeps the original wide-scope table layout for sub /
+// account / project scopes where there can be many recommendations
+// spanning many resources.
+func (m *model) advisorFullView(advisorName string, filt []provider.Recommendation) string {
 	count := fmt.Sprintf("%d recommendation(s) for %s", len(m.advisorRecs), m.advisorName)
 	if m.advisorFilter != "" {
 		count = fmt.Sprintf("%d/%d for %s", len(filt), len(m.advisorRecs), m.advisorName)
 	}
-	header := styles.Title.Render("Azure Advisor") + "  " + styles.Help.Render(count)
+	header := styles.ModalTitle.Render(advisorName) + "  " + styles.Help.Render(count)
 	box := fullScreenBox(m.width, m.height)
 	if len(m.advisorRecs) == 0 {
 		return box.Render(strings.Join([]string{
@@ -256,10 +344,10 @@ func (m *model) advisorView() string {
 			"",
 			"No recommendations at this scope.",
 			"",
-			styles.Help.Render("Advisor generates cost / security / reliability / performance tips."),
-			styles.Help.Render("Drill further and press A again, or check the full Advisor in the portal."),
+			styles.Help.Render(advisorEmptyHint(m.active)),
+			styles.Help.Render("Drill further and press A again, or check the full report in the portal."),
 			"",
-			styles.Help.Render("esc close   o open Advisor in portal"),
+			styles.Help.Render("esc close   o open in portal"),
 		}, "\n"))
 	}
 
@@ -279,7 +367,6 @@ func (m *model) advisorView() string {
 		return box.Render(strings.Join(lines, "\n"))
 	}
 
-	// Render the list on top, full detail for the cursor row below.
 	max := len(filt)
 	if max > 14 {
 		max = 14
@@ -324,6 +411,61 @@ func (m *model) advisorView() string {
 	lines = append(lines, "", styles.Help.Render("↑↓/jk move   / filter   o portal   esc/A close"))
 	return box.Render(strings.Join(lines, "\n"))
 }
+
+// dominantCategory returns the subtitle shown after the advisor name
+// (e.g. "cost recommendations") when every row shares the same
+// category. Returns "" for mixed categories so we don't mislead.
+func dominantCategory(recs []provider.Recommendation) string {
+	if len(recs) == 0 {
+		return ""
+	}
+	first := strings.ToLower(recs[0].Category)
+	for _, r := range recs {
+		if strings.ToLower(r.Category) != first {
+			return ""
+		}
+	}
+	return first
+}
+// advisorLabelFor returns the human name of the cloud's native
+// recommender service. Drives the popup title so the user sees the
+// proper product name ("Azure Advisor" / "Google Cloud Recommender" /
+// "AWS Compute Optimizer") rather than a generic "Advisor".
+func advisorLabelFor(p provider.Provider) string {
+	if p == nil {
+		return "Advisor"
+	}
+	switch p.Name() {
+	case pimSrcAzure:
+		return "Azure Advisor"
+	case providerGCP:
+		return "Google Cloud Recommender"
+	case "aws":
+		return "AWS Compute Optimizer"
+	default:
+		return p.Name() + " advisor"
+	}
+}
+
+// advisorEmptyHint is the short explainer shown when the scope has
+// zero recommendations. Tailored per cloud so the user knows what
+// kind of suggestions would appear if there were any.
+func advisorEmptyHint(p provider.Provider) string {
+	if p == nil {
+		return "Advisor generates cost / security / reliability / performance tips."
+	}
+	switch p.Name() {
+	case pimSrcAzure:
+		return "Azure Advisor surfaces cost, security, reliability, performance, and operational tips."
+	case providerGCP:
+		return "Google Cloud Recommender surfaces cost, performance, security, and reliability suggestions."
+	case "aws":
+		return "AWS Compute Optimizer + Trusted Advisor rightsizing and cost-efficiency suggestions."
+	default:
+		return "Advisor generates cost / security / reliability / performance tips."
+	}
+}
+
 func categoryBadge(c string) string {
 	switch strings.ToLower(c) {
 	case "cost":

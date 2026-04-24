@@ -215,6 +215,11 @@ type model struct {
 	advisorRecs     []provider.Recommendation
 	advisorScope    string
 	advisorName     string
+	// advisorResource carries the row that was under the cursor when
+	// advisor loaded. Populated only when we loaded for a specific
+	// resource (not a whole subscription / account / project). Used
+	// by the popup to render the resource-context header block.
+	advisorResource provider.Node
 	advisorIdx      int
 	advisorFilter   string            // lowercased substring applied across category/impact/problem/target
 	advisorFilterOn bool              // true while the user is typing in the filter input
