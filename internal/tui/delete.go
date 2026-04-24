@@ -264,11 +264,12 @@ func (m *model) deleteConfirmView() string {
 		}
 	}
 
-	lines := []string{
+	lines := make([]string, 0, 3+len(m.deleteTargets)+1+len(disclaimer)+4)
+	lines = append(lines,
 		styles.Bad.Render(heading),
 		"",
 		styles.Header.Render("This will permanently delete:"),
-	}
+	)
 	for i, t := range m.deleteTargets {
 		right := t.Location
 		if m.deleteScope == deleteScopeResource && t.Meta["type"] != "" {

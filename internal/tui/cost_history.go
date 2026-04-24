@@ -446,7 +446,6 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 	return joined
 }
 
-
 // renderChart draws the cost time-series using ntcharts' Braille line
 // chart. Much simpler and more robust than hand-rolled axis /
 // slope-glyph rendering: ntcharts handles scaling, axis drawing,

@@ -20,6 +20,9 @@ const (
 	// Management omits the Currency column — which it does for rows with
 	// zero cost. Consistent across every cost_* file in this package.
 	defaultCurrency = "USD"
+	// currencyGBP appears in tests + the currency symbol switch; goconst
+	// flags 3+ occurrences, so we centralise the literal here.
+	currencyGBP = "GBP"
 )
 
 type costCell struct {
@@ -195,7 +198,7 @@ func currencySymbol(code string) string {
 	switch strings.ToUpper(code) {
 	case defaultCurrency:
 		return "$"
-	case "GBP":
+	case currencyGBP:
 		return "£"
 	case "EUR":
 		return "€"

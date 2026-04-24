@@ -30,6 +30,7 @@ func (m *model) loadHealth() tea.Cmd {
 		},
 	)
 }
+
 func (m *model) updateHealth(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc, "q", "H":

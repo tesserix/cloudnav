@@ -77,7 +77,8 @@ func TwoCol(width int, left, right string) string {
 // Breadcrumb joins the app title and trail segments with the themed
 // separator.
 func Breadcrumb(app string, trail []string) string {
-	parts := []string{styles.Title.Render(app)}
+	parts := make([]string, 0, 1+len(trail))
+	parts = append(parts, styles.Title.Render(app))
 	for _, t := range trail {
 		parts = append(parts, styles.Crumb.Render(t))
 	}

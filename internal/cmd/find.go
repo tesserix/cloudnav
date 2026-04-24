@@ -153,7 +153,7 @@ func findScopeMatches(ctx context.Context, query string, opts findOptions) ([]se
 		}
 		rows, err := collectScopeMatches(ctx, p, query, opts.Limit-len(matches))
 		if err != nil {
-			if opts.Cloud == "" || opts.Cloud == "all" {
+			if opts.Cloud == "" || opts.Cloud == cloudAll {
 				warns = append(warns, fmt.Errorf("%s: %w", p.Name(), err))
 				continue
 			}
@@ -181,7 +181,7 @@ func findResourceMatches(ctx context.Context, query string, opts findOptions) ([
 		}
 		rows, err := collectResourceMatches(ctx, p, query, opts, opts.Limit-len(matches))
 		if err != nil {
-			if opts.Cloud == "" || opts.Cloud == "all" {
+			if opts.Cloud == "" || opts.Cloud == cloudAll {
 				warns = append(warns, fmt.Errorf("%s: %w", p.Name(), err))
 				continue
 			}
@@ -209,7 +209,7 @@ func findPIMMatches(ctx context.Context, query string, opts findOptions) ([]sear
 		}
 		rows, err := collectPIMMatches(ctx, p, query, opts.Limit-len(matches))
 		if err != nil {
-			if opts.Cloud == "" || opts.Cloud == "all" {
+			if opts.Cloud == "" || opts.Cloud == cloudAll {
 				warns = append(warns, fmt.Errorf("%s: %w", p.Name(), err))
 				continue
 			}
@@ -223,7 +223,7 @@ func findPIMMatches(ctx context.Context, query string, opts findOptions) ([]sear
 
 func pickFindProviders(cloud string) ([]provider.Provider, error) {
 	switch cloud {
-	case "", "all":
+	case "", cloudAll:
 		return []provider.Provider{
 			mustProvider(cloudAzure),
 			mustProvider(cloudGCP),
@@ -658,7 +658,7 @@ func kindLabel(kind provider.Kind) string {
 
 func defaultPIMSource(source string) string {
 	if strings.TrimSpace(source) == "" {
-		return "azure"
+		return cloudAzure
 	}
 	return source
 }
@@ -703,7 +703,7 @@ func printWarnings(warns []error) {
 }
 
 func init() {
-	findCmd.PersistentFlags().String("cloud", "all", "cloud to search: azure | gcp | aws | all")
+	findCmd.PersistentFlags().String("cloud", cloudAll, "cloud to search: azure | gcp | aws | all")
 	findCmd.PersistentFlags().Bool("json", false, "Emit JSON")
 	findCmd.PersistentFlags().Bool("details", false, "If exactly one scope/resource matches, print its provider detail JSON")
 	findCmd.PersistentFlags().Int("limit", 50, "Maximum number of matches to return")

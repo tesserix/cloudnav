@@ -244,6 +244,7 @@ func currencyChar(code string) string {
 		return code + " "
 	}
 }
+
 func (m *model) costScope() (provider.Node, bool) {
 	top := &m.stack[len(m.stack)-1]
 	switch kindOf(top) {
@@ -271,7 +272,7 @@ func (m *model) costHint() string {
 	switch m.active.Name() {
 	case pimSrcAzure:
 		return "cost column on — drill into a subscription's resource groups"
-	case "aws":
+	case providerAWS:
 		return "cost column on — drill into the account's regions"
 	case providerGCP:
 		return "cost column on — press c on the projects list"
@@ -279,6 +280,7 @@ func (m *model) costHint() string {
 		return "cost column on — not supported at this view"
 	}
 }
+
 func (m *model) mergeCosts(f *frame) {
 	if !m.showCost {
 		return
@@ -313,7 +315,7 @@ func (m *model) mergeCosts(f *frame) {
 			costs = m.costs[f.parent.ID]
 		}
 	case provider.KindProject:
-		costs = m.costs["gcp"]
+		costs = m.costs[providerGCP]
 	}
 	if costs == nil {
 		return
@@ -330,6 +332,7 @@ func (m *model) mergeCosts(f *frame) {
 		}
 	}
 }
+
 func (m *model) maybeAutoLoadCost() tea.Cmd {
 	if !m.showCost {
 		return nil

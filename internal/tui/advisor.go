@@ -77,7 +77,7 @@ func (m *model) advisorScopeForActive() (string, string, string) {
 			}
 		}
 		return projID, "projects/" + projID, name
-	case "aws":
+	case providerAWS:
 		// Compute Optimizer / Trusted Advisor return recommendations
 		// spanning the whole account; there is no per-scope API. We
 		// still pass a non-empty scope so the load fires, and filter
@@ -185,6 +185,7 @@ func parentRGName(id string) string {
 	}
 	return rest
 }
+
 func (m *model) updateAdvisor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// When the filter input is active, keys feed it — mirrors the PIM
 	// filter behaviour so the two overlays feel identical to the user.
@@ -283,6 +284,7 @@ func advisorMatchesFilter(r provider.Recommendation, q string) bool {
 	}
 	return false
 }
+
 func (m *model) advisorView() string {
 	filt := m.filteredAdvisor()
 	advisorName := advisorLabelFor(m.active)
@@ -298,27 +300,27 @@ func (m *model) advisorView() string {
 
 // advisorResourceCard renders the per-resource popup. Layout:
 //
-//   Azure Advisor  ·  cost
-//   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//   cito-civica-dev-uks-aks
-//   microsoft.containerservice/managedclusters · uksouth · Base · GBP 5.60/30d
+//	Azure Advisor  ·  cost
+//	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//	cito-civica-dev-uks-aks
+//	microsoft.containerservice/managedclusters · uksouth · Base · GBP 5.60/30d
 //
-//   ── 1/2 ──────────────────────────  ● MEDIUM ──
-//   Enable Vertical Pod Autoscaler recommendation mode to
-//   rightsize resource requests and limits.
-//   → Enable Vertical Pod Autoscaler recommendation mode to
-//     rightsize resource requests and limits.
+//	── 1/2 ──────────────────────────  ● MEDIUM ──
+//	Enable Vertical Pod Autoscaler recommendation mode to
+//	rightsize resource requests and limits.
+//	→ Enable Vertical Pod Autoscaler recommendation mode to
+//	  rightsize resource requests and limits.
 //
-//   ── 2/2 ──────────────────────────  ● MEDIUM ──
-//   Consider Spot nodes for workloads that can handle
-//   interruptions.
-//   → Enable Spot nodes on nodepools where the workload is
-//     interruption-tolerant.
+//	── 2/2 ──────────────────────────  ● MEDIUM ──
+//	Consider Spot nodes for workloads that can handle
+//	interruptions.
+//	→ Enable Spot nodes on nodepools where the workload is
+//	  interruption-tolerant.
 //
-//   ────────────────────────────────────────────
-//   2 recommendations · 2 medium · 0 high
+//	────────────────────────────────────────────
+//	2 recommendations · 2 medium · 0 high
 //
-//   esc  close
+//	esc  close
 func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommendation) string {
 	r := m.advisorResource
 	ruleW := 46 // consistent divider width — popup content is ~50 cells
@@ -488,45 +490,22 @@ func costWindowLine(cost string) string {
 		cost, from.Format("2006-01-02"), to.Format("2006-01-02"))
 }
 
-// resourceSummaryLine renders a single-line summary of a resource for
-// the popup header — type, region, sku, cost, separated by · dots.
-// Omits missing fields so AWS / GCP resources without sku still
-// render cleanly.
-func resourceSummaryLine(r provider.Node) string {
-	parts := []string{}
-	if t := r.Meta["type"]; t != "" {
-		parts = append(parts, t)
-	}
-	switch {
-	case parentRGName(r.ID) != "":
-		parts = append(parts, parentRGName(r.ID))
-	case r.Meta["project"] != "":
-		parts = append(parts, r.Meta["project"])
-	case r.Meta["accountId"] != "":
-		parts = append(parts, r.Meta["accountId"])
-	}
-	if r.Location != "" {
-		parts = append(parts, r.Location)
-	}
-	if sku := r.Meta["sku"]; sku != "" {
-		parts = append(parts, sku)
-	}
-	if r.Cost != "" {
-		parts = append(parts, r.Cost+"/30d")
-	}
-	return strings.Join(parts, " · ")
-}
+const (
+	impactHigh   = "high"
+	impactMedium = "medium"
+	impactLow    = "low"
+)
 
 // impactBullet renders a coloured bullet for each impact level —
 // visually encodes severity without taking a whole word of width in
 // the card divider.
 func impactBullet(impact string) string {
 	switch strings.ToLower(impact) {
-	case "high":
+	case impactHigh:
 		return styles.Bad.Render("● HIGH")
-	case "medium":
+	case impactMedium:
 		return styles.WarnS.Render("● MEDIUM")
-	case "low":
+	case impactLow:
 		return styles.Help.Render("● low")
 	default:
 		if impact == "" {
@@ -542,11 +521,11 @@ func advisorSummary(recs []provider.Recommendation) string {
 	var high, med, low int
 	for _, r := range recs {
 		switch strings.ToLower(r.Impact) {
-		case "high":
+		case impactHigh:
 			high++
-		case "medium":
+		case impactMedium:
 			med++
-		case "low":
+		case impactLow:
 			low++
 		}
 	}
@@ -662,6 +641,7 @@ func dominantCategory(recs []provider.Recommendation) string {
 	}
 	return first
 }
+
 // advisorLabelFor returns the human name of the cloud's native
 // recommender service. Drives the popup title so the user sees the
 // proper product name ("Azure Advisor" / "Google Cloud Recommender" /
@@ -675,7 +655,7 @@ func advisorLabelFor(p provider.Provider) string {
 		return "Azure Advisor"
 	case providerGCP:
 		return "Google Cloud Recommender"
-	case "aws":
+	case providerAWS:
 		return "AWS Compute Optimizer"
 	default:
 		return p.Name() + " advisor"
@@ -694,7 +674,7 @@ func advisorEmptyHint(p provider.Provider) string {
 		return "Azure Advisor surfaces cost, security, reliability, performance, and operational tips."
 	case providerGCP:
 		return "Google Cloud Recommender surfaces cost, performance, security, and reliability suggestions."
-	case "aws":
+	case providerAWS:
 		return "AWS Compute Optimizer + Trusted Advisor rightsizing and cost-efficiency suggestions."
 	default:
 		return "Advisor generates cost / security / reliability / performance tips."

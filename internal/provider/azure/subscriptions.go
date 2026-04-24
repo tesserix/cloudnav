@@ -95,4 +95,3 @@ func (a *Azure) listSubscriptionsSDK(ctx context.Context) ([]provider.Node, erro
 	}
 	return subs, nil
 }
-

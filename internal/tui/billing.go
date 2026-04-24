@@ -65,6 +65,7 @@ func scopeSummaryFrom(ctx context.Context, s provider.BillingSummarer) provider.
 	}
 	return out
 }
+
 func (m *model) updateBilling(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case keyEsc, "q", "B":

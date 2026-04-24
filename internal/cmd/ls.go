@@ -18,6 +18,7 @@ const (
 	cloudAzure = "azure"
 	cloudGCP   = "gcp"
 	cloudAWS   = "aws"
+	cloudAll   = "all"
 )
 
 var lsCmd = &cobra.Command{

@@ -54,6 +54,7 @@ func loginStateFor(ctx context.Context, p provider.Provider) string {
 	}
 	return "logged in"
 }
+
 func (m *model) loginCurrentCloud() tea.Cmd {
 	prov := m.loginTargetProvider()
 	if prov == nil {

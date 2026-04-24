@@ -136,6 +136,12 @@ func (a *Azure) armPUT(ctx context.Context, tenantID, url string, body []byte) e
 	return nil
 }
 
+// noErrorBody is the placeholder trimAPIErr returns when the raw
+// response body is empty — the caller wraps this in a Go error so
+// users still see something non-blank when Azure replies with 4xx
+// and no payload.
+const noErrorBody = "(no error body)"
+
 // trimAPIErr pulls the "message" out of an Azure JSON error envelope
 // when present, falling back to the raw body otherwise. Azure wraps
 // errors as {"error":{"code":"X","message":"Y"}} — the message is what
@@ -143,7 +149,7 @@ func (a *Azure) armPUT(ctx context.Context, tenantID, url string, body []byte) e
 func trimAPIErr(raw []byte) string {
 	s := strings.TrimSpace(string(raw))
 	if s == "" {
-		return "(no error body)"
+		return noErrorBody
 	}
 	var env struct {
 		Error struct {

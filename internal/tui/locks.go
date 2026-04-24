@@ -10,7 +10,6 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider/azure"
 )
 
-
 const (
 	lockCanNotDelete = "CanNotDelete"
 	lockReadOnly     = "ReadOnly"
@@ -26,6 +25,7 @@ func lockBadgePlain(level string) string {
 		return emDash
 	}
 }
+
 func (m *model) maybeLoadLocks(f frame) tea.Cmd {
 	if len(f.nodes) == 0 || f.nodes[0].Kind != provider.KindResourceGroup || f.parent == nil {
 		return nil

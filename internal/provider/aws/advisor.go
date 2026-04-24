@@ -39,7 +39,7 @@ func (a *AWS) Recommendations(ctx context.Context, scopeID string) ([]provider.R
 		}}, nil
 	}
 
-	out := []provider.Recommendation{}
+	out := make([]provider.Recommendation, 0, 32)
 	out = append(out, a.ec2Recommendations(ctx)...)
 	out = append(out, a.ebsRecommendations(ctx)...)
 	out = append(out, a.costAnomalies(ctx)...)

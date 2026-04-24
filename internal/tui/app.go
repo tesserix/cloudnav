@@ -173,51 +173,51 @@ type paletteItem struct {
 }
 
 type model struct {
-	ctx             context.Context
-	providers       []provider.Provider
-	active          provider.Provider
-	stack           []frame
-	visibleNodes    []provider.Node
-	table           table.Model
-	spinner         spinner.Model
-	search          textinput.Model
-	detail          viewport.Model
-	detailTitle     string
-	detailMode      bool
-	searchMode      bool
-	filter          string
-	sort            sortMode
-	loading         bool
-	err             error
-	status          string
-	showHelp        bool
-	paletteMode     bool
-	paletteInput    textinput.Model
-	paletteItems    []paletteItem
-	paletteIdx      int
-	cfg             *config.Config
-	showCost        bool
-	costs           map[string]map[string]string       // subID → lowercased rg name → cost
-	tenantFilter    string                             // only show subs whose Meta[tenantName] == this (empty = all)
-	locks           map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
-	selected        map[string]bool                    // node ID → selected
-	restorePath     []config.Crumb                     // remaining crumbs to drill into during bookmark restore
-	restoreLabel    string                             // label shown while restoring (for status)
-	entities        map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
-	pimMode         bool
-	pimRoles        []provider.PIMRole
-	pimCursor       int
-	pimActivate     bool
-	pimInput        textinput.Model
-	pimFilter       string
-	pimFilterOn     bool
-	pimFilterIn     textinput.Model
-	pimDuration     int
-	pimSourceFilt   string // "" = all, pimSrc{Azure,Entra,Group}
-	advisorMode     bool
-	advisorRecs     []provider.Recommendation
-	advisorScope    string
-	advisorName     string
+	ctx           context.Context
+	providers     []provider.Provider
+	active        provider.Provider
+	stack         []frame
+	visibleNodes  []provider.Node
+	table         table.Model
+	spinner       spinner.Model
+	search        textinput.Model
+	detail        viewport.Model
+	detailTitle   string
+	detailMode    bool
+	searchMode    bool
+	filter        string
+	sort          sortMode
+	loading       bool
+	err           error
+	status        string
+	showHelp      bool
+	paletteMode   bool
+	paletteInput  textinput.Model
+	paletteItems  []paletteItem
+	paletteIdx    int
+	cfg           *config.Config
+	showCost      bool
+	costs         map[string]map[string]string       // subID → lowercased rg name → cost
+	tenantFilter  string                             // only show subs whose Meta[tenantName] == this (empty = all)
+	locks         map[string]map[string][]azure.Lock // subID → rgName(lower) → locks
+	selected      map[string]bool                    // node ID → selected
+	restorePath   []config.Crumb                     // remaining crumbs to drill into during bookmark restore
+	restoreLabel  string                             // label shown while restoring (for status)
+	entities      map[string][]provider.Node         // provider name → top-level entities (subs/projects/accounts)
+	pimMode       bool
+	pimRoles      []provider.PIMRole
+	pimCursor     int
+	pimActivate   bool
+	pimInput      textinput.Model
+	pimFilter     string
+	pimFilterOn   bool
+	pimFilterIn   textinput.Model
+	pimDuration   int
+	pimSourceFilt string // "" = all, pimSrc{Azure,Entra,Group}
+	advisorMode   bool
+	advisorRecs   []provider.Recommendation
+	advisorScope  string
+	advisorName   string
 	// advisorResource carries the row that was under the cursor when
 	// advisor loaded. Populated only when we loaded for a specific
 	// resource (not a whole subscription / account / project). Used
@@ -279,10 +279,10 @@ type model struct {
 	// doesn't hang around forever — Azure usually finishes RG deletes
 	// within a few minutes.
 	pendingDeleteUntil time.Time
-	deleteInput     textinput.Model
-	width           int
-	height          int
-	keys            keys.Map
+	deleteInput        textinput.Model
+	width              int
+	height             int
+	keys               keys.Map
 	// costCache persists cost results between runs so a second `c` press
 	// after a restart serves from disk instead of repeating the 1–2s
 	// Cost Management query.
@@ -853,8 +853,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-
-
 func (m *model) saveBookmark() {
 	if len(m.stack) <= 1 || m.active == nil {
 		m.status = "nothing to bookmark at this level"
@@ -892,9 +890,6 @@ func (m *model) saveBookmark() {
 	m.status = "★ bookmarked " + bm.Label
 }
 
-
-
-
 // loadBilling fires the active provider's Billing() call and opens the
 // billing overlay. Implements the `B` key. Falls through with a status hint
 // when the active provider doesn't implement provider.Billing. For GCP we
@@ -913,7 +908,6 @@ func (m *model) saveBookmark() {
 // under the cursor and opens the advisor overlay. Azure goes to ARM Advisor,
 // GCP goes to Cloud Recommender. The provider.Advisor interface lets future
 // clouds drop in without touching the TUI.
-
 
 // loginCurrentCloud runs the active cloud's CLI login interactively. Suspends
 // the TUI via tea.ExecProcess so the browser redirect / device-code prompt
@@ -1569,7 +1563,6 @@ func (m *model) rowsFromNodes(_ string, nodes []provider.Node) []table.Row {
 	return rows
 }
 
-
 func shortID(s string) string {
 	if len(s) > 8 {
 		return s[:8]
@@ -1585,7 +1578,9 @@ const (
 	pimSrcGCP       = "gcp-pam"
 	pimSrcAWSSSO    = "aws-sso"
 	cliNotInstalled = "✗ CLI not installed"
+	providerAzure   = "azure"
 	providerGCP     = "gcp"
+	providerAWS     = "aws"
 	// tagsColWidth bounds the TAGS column on the RG and resource views.
 	// Wide enough to read the first key=value pair; longer strings get a
 	// trailing "…" so the row stays single-line.
@@ -1711,7 +1706,6 @@ func selectionMark(selected bool) string {
 	}
 	return "[ ]"
 }
-
 
 func shorten(s string, n int) string {
 	if len(s) <= n {
@@ -1897,12 +1891,9 @@ func (m *model) drillLoadingBody() string {
 	return strings.Join(lines, "\n")
 }
 
-
-
 // updateHealth handles keys while the Service Health overlay is visible.
 // Kept small because the overlay is read-only — the only actions are
 // navigation and dismiss.
-
 
 // cloudRowStatus returns (status, hint) for the cloud-list view. status says
 // what the background LoggedIn probe found; hint tells a brand-new user what
@@ -1950,7 +1941,6 @@ func (m *model) providerByName(name string) provider.Provider {
 
 // pimSourceBadge renders a short, color-tagged label for the PIM surface.
 
-
 // padRight pads s with spaces so the *visible* width equals n. Uses
 // lipgloss.Width so ANSI-styled strings measure correctly.
 func padRight(s string, n int) string {
@@ -1969,8 +1959,6 @@ func shortTail(s string, n int) string {
 	}
 	return "…" + s[len(s)-n+1:]
 }
-
-
 
 func (m *model) emptyBody() string {
 	msg := "  no items here"
@@ -2219,8 +2207,6 @@ func (m *model) currentSubID() string {
 	return top.parent.ID
 }
 
-
-
 func (m *model) toggleSelection() {
 	if len(m.visibleNodes) == 0 {
 		return
@@ -2388,4 +2374,3 @@ func (m *model) filterFooter() string {
 	}
 	return ""
 }
-

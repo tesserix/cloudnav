@@ -327,6 +327,7 @@ func scopeDisplay(r provider.PIMRole) string {
 	}
 	return r.Scope
 }
+
 func pimSourceBadge(src string) string {
 	switch src {
 	case pimSrcEntra:
@@ -363,6 +364,7 @@ func pimSourceLabel(src string) string {
 		return src
 	}
 }
+
 func (m *model) pimView() string {
 	filt := m.filteredPIM()
 	headerCount := fmt.Sprintf("%d role(s)", len(m.pimRoles))
