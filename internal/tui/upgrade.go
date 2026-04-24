@@ -45,13 +45,29 @@ func (m *model) openUpgrade() tea.Cmd {
 }
 
 // updateUpgrade handles keys inside the upgrade confirmation overlay.
-// y / enter runs the detected plan; esc / n dismisses.
+// y / enter runs the detected plan; esc / n dismisses; r relaunches
+// the freshly-installed binary in place so the user's session moves to
+// the new version without them retyping the command.
 func (m *model) updateUpgrade(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.upgradeRunning {
 		// Block keystrokes while the subprocess is running — otherwise a
 		// stray Enter could fire a second `go install` on top of the
 		// first. Esc is intentionally ignored too so the user doesn't
 		// dismiss the overlay before the command returns.
+		return m, nil
+	}
+	// After a successful upgrade the 'R' key is the primary path: flip
+	// relaunch, then quit. Run() execs the new binary after bubbletea
+	// tears down.
+	if m.upgradeResult != "" && m.upgradeErr == nil {
+		switch msg.String() {
+		case "r", "R", keyEnter:
+			m.relaunch = true
+			return m, tea.Quit
+		case keyEsc, "q", "n", "N":
+			m.upgradeMode = false
+			return m, nil
+		}
 		return m, nil
 	}
 	switch msg.String() {
@@ -106,7 +122,8 @@ func (m *model) upgradeView() string {
 			footer += "\n" + styles.Help.Render("  "+m.upgradeResult)
 		}
 	case m.upgradeResult != "":
-		footer = styles.Good.Render("  ✓ upgrade complete — restart cloudnav to pick up "+m.latestVersion) +
+		footer = styles.Good.Bold(true).Render("  ✓ upgrade complete — running v"+strings.TrimPrefix(m.latestVersion, "v")) +
+			"\n\n" + styles.Key.Render("  press R or ↵ to relaunch now   ·   esc to stay on the current version") +
 			"\n" + styles.Help.Render("  "+m.upgradeResult)
 	default:
 		footer = styles.Help.Render("  y / ↵ run   ·   n / esc cancel")

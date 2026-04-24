@@ -52,8 +52,19 @@ func Run() error {
 	m := newModel()
 	m.ctx = ctx
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	final, err := p.Run()
+	if err != nil {
+		return err
+	}
+	// If the user hit R on the post-upgrade overlay we set m.relaunch
+	// so that once bubbletea has torn down the alt-screen we can exec
+	// the new binary cleanly, replacing this process with the upgraded
+	// one. Otherwise the running image stays on the old version until
+	// the user quits and re-runs manually.
+	if fm, ok := final.(*model); ok && fm.relaunch {
+		return execReplacement()
+	}
+	return nil
 }
 
 type frame struct {
@@ -262,6 +273,10 @@ type model struct {
 	// after a restart serves from disk instead of repeating the 1–2s
 	// Cost Management query.
 	costCache *cache.Store[map[string]string]
+	// relaunch is set by the post-upgrade 'R' key. Run() inspects it
+	// after the TUI quits and execs the freshly-installed cloudnav
+	// binary in place of the current process.
+	relaunch bool
 }
 
 // newPromptInput builds a textinput with the shared theme. All prompts
