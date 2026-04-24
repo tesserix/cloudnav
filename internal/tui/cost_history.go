@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NimbleMarkets/ntcharts/canvas"
+	"github.com/NimbleMarkets/ntcharts/linechart"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -264,7 +266,7 @@ func (m *model) costHistoryView() string {
 		return fullScreenBox(w, H).Render(empty)
 	}
 
-	chart := renderBrailleChart(h.Series.Points, h.Months, h.Bucket, innerW, chartH, h.Currency)
+	chart := renderChart(h.Series.Points, innerW, chartH, h.Currency)
 	months := renderMonthStrip(h.Months, h.Currency, innerW)
 	footerBase := "  esc/$ close  ·  w 1W · m 1M · 3 3M · 6 6M · y 1Y"
 	if h.AccessDenied {
@@ -379,259 +381,66 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 	return joined
 }
 
-// renderBrailleChart draws the cost chart as an area series: each
-// column gets one character — ╱ rising, ╲ falling, ─ flat — in the
-// month's trend colour, with ░ shaded fill beneath the line. This
-// reads the same way a stock-ticker area chart does: the line shows
-// *direction*, the fill shows *magnitude*, and the colour shows
-// *month-over-month* movement. Kept under the "braille" name to avoid
-// churn in call sites; the visual is simply better than pure dots.
-func renderBrailleChart(points []provider.CostHistoryPoint, months []provider.CostMonth, bucket provider.CostBucket, width, height int, currency string) string {
-	if len(points) == 0 || width < 20 || height < 6 {
+
+// renderChart draws the cost time-series using ntcharts' Braille line
+// chart — the same library azpirin uses. Far simpler and more robust
+// than hand-rolled axis / slope-glyph rendering: ntcharts handles
+// scaling, axis drawing, label placement, and Braille compositing in
+// ~40 lines of caller code. Today's point is dropped because it is
+// still accumulating and always drags the line down unrealistically.
+func renderChart(points []provider.CostHistoryPoint, width, height int, currency string) string {
+	if len(points) < 2 || width < 40 || height < 8 {
 		return ""
 	}
-	const gutterW = 8
-	plotW := width - gutterW - 1
-	if plotW < 20 {
-		plotW = 20
-	}
-	plotH := height - 2
-	if plotH < 4 {
-		plotH = 4
+	// Drop the partial last point (today is still accumulating).
+	data := points
+	if len(data) > 1 {
+		data = data[:len(data)-1]
 	}
 
-	// Resample the series into plotW columns. Averaging across the
-	// bucketed range gives a smoother line than nearest-neighbour and
-	// keeps spikes visible on long windows without the chart looking
-	// noisy on short ones.
-	n := len(points)
-	cols := make([]float64, plotW)
-	colDate := make([]time.Time, plotW)
-	for x := 0; x < plotW; x++ {
-		start := x * n / plotW
-		end := (x + 1) * n / plotW
-		if start == end && start < n {
-			end = start + 1
+	maxY := 0.0
+	for _, p := range data {
+		if p.Amount > maxY {
+			maxY = p.Amount
 		}
-		var sum float64
-		var cnt int
-		for i := start; i < end && i < n; i++ {
-			sum += points[i].Amount
-			cnt++
-		}
-		if cnt > 0 {
-			cols[x] = sum / float64(cnt)
-			colDate[x] = points[start].Date
-		} else if x > 0 {
-			cols[x] = cols[x-1]
-			colDate[x] = colDate[x-1]
-		}
+	}
+	// Floor at 1 so an all-zero series doesn't divide-by-zero in the
+	// axis scaler and the chart still lays out sensibly.
+	if maxY == 0 {
+		maxY = 1
 	}
 
-	// Y scaling with 5% headroom so peaks don't touch the top row.
-	// Floor at 0 so the fill always anchors to the baseline — negative
-	// cost values aren't a thing for our use case and the chart reads
-	// backwards if they were.
-	mn, mx := cols[0], cols[0]
-	for _, v := range cols {
-		if v < mn {
-			mn = v
-		}
-		if v > mx {
-			mx = v
-		}
-	}
-	if mn > 0 {
-		mn = 0
-	}
-	if mx == mn {
-		mx = mn + 1
-	} else {
-		mx += (mx - mn) * 0.05
-	}
+	axisStyle := lipgloss.NewStyle().Foreground(styles.Muted)
+	labelStyle := lipgloss.NewStyle().Foreground(styles.Muted)
+	lineStyle := lipgloss.NewStyle().Foreground(styles.Accent)
 
-	rowFor := make([]int, plotW)
-	colStyle := make([]lipgloss.Style, plotW)
-	for x, v := range cols {
-		frac := (v - mn) / (mx - mn)
-		if frac < 0 {
-			frac = 0
-		}
-		if frac > 1 {
-			frac = 1
-		}
-		rowFor[x] = int(math.Round(float64(plotH-1) * (1 - frac)))
-		colStyle[x] = colourForPoint(colDate[x], months)
-	}
-
-	// Pre-compute the line character for each column based on the
-	// slope between the prior column and this one.
-	lineChar := make([]string, plotW)
-	for x := 0; x < plotW; x++ {
-		switch {
-		case x == 0:
-			lineChar[x] = "─"
-		case rowFor[x-1] == rowFor[x]:
-			lineChar[x] = "─"
-		case rowFor[x-1] > rowFor[x]:
-			// Previous point was lower on screen → line rises.
-			lineChar[x] = "╱"
-		default:
-			lineChar[x] = "╲"
-		}
-	}
-
-	// Compose the rows. For each terminal (row, col):
-	//   - above the line: empty space
-	//   - on the line: the slope character in the column's trend colour
-	//   - below the line: ░ fill in a muted tint of the same colour so
-	//     the chart body reads like a filled area
-	fillStyle := styles.Help
-	var lines []string
-	for r := 0; r < plotH; r++ {
-		var body strings.Builder
-		for x := 0; x < plotW; x++ {
-			switch {
-			case r < rowFor[x]:
-				body.WriteByte(' ')
-			case r == rowFor[x]:
-				body.WriteString(colStyle[x].Bold(true).Render(lineChar[x]))
-			default:
-				body.WriteString(fillStyle.Render("░"))
+	sym := currencySym(currency)
+	chart := linechart.New(
+		width, height,
+		1, float64(len(data)),
+		0, maxY*1.15,
+		linechart.WithStyles(axisStyle, labelStyle, lineStyle),
+		linechart.WithXYSteps(5, 4),
+		linechart.WithXLabelFormatter(func(_ int, v float64) string {
+			idx := int(v) - 1
+			if idx < 0 || idx >= len(data) {
+				return ""
 			}
-		}
-
-		// Y-axis label + │ + plotted row. Five labels spaced over the
-		// chart height give enough context without crowding the gutter.
-		showLabel := r == 0 || r == plotH-1 || r == plotH/2 || r == plotH/4 || r == 3*plotH/4
-		gutter := strings.Repeat(" ", gutterW)
-		if showLabel {
-			sym := currencySym(currency)
-			frac := 1 - float64(r)/float64(plotH-1)
-			val := mn + frac*(mx-mn)
-			lbl := fmt.Sprintf("%s%s", sym, compactAmount(val))
-			if len(lbl) > gutterW-1 {
-				lbl = lbl[:gutterW-1]
-			}
-			gutter = styles.Help.Render(fmt.Sprintf("%*s ", gutterW-1, lbl))
-		}
-		axis := styles.Help.Render("│")
-		lines = append(lines, gutter+axis+body.String())
+			return data[idx].Date.Format("Jan 2")
+		}),
+		linechart.WithYLabelFormatter(func(_ int, v float64) string {
+			return sym + compactAmount(v)
+		}),
+	)
+	chart.DrawXYAxisAndLabel()
+	for i := 0; i < len(data)-1; i++ {
+		chart.DrawBrailleLineWithStyle(
+			canvas.Float64Point{X: float64(i + 1), Y: data[i].Amount},
+			canvas.Float64Point{X: float64(i + 2), Y: data[i+1].Amount},
+			lineStyle,
+		)
 	}
-
-	// X-axis baseline + tick labels.
-	anchorX := make([]int, n)
-	for i := range points {
-		if n == 1 {
-			anchorX[i] = plotW / 2
-		} else {
-			anchorX[i] = i * (plotW - 1) / (n - 1)
-		}
-	}
-	gutter := strings.Repeat(" ", gutterW)
-	baseline := gutter + styles.Help.Render("└"+strings.Repeat("─", plotW))
-	lines = append(lines, baseline)
-	lines = append(lines, gutter+" "+renderXAxis(points, anchorX, bucket, plotW))
-
-	return strings.Join(lines, "\n")
-}
-
-// colourForPoint returns the style a point should render in based on
-// its month's total compared to the prior month — red for a steep rise,
-// warn for a modest one, green for a fall, accent otherwise.
-func colourForPoint(date time.Time, months []provider.CostMonth) lipgloss.Style {
-	mi := matchMonth(date, months)
-	if mi <= 0 || mi >= len(months) {
-		return styles.AccentS
-	}
-	prev := months[mi-1].Total
-	cur := months[mi].Total
-	switch {
-	case prev <= 0:
-		return styles.AccentS
-	case cur > prev*1.10:
-		return styles.Bad
-	case cur > prev*1.02:
-		return styles.WarnS
-	case cur < prev*0.98:
-		return styles.Good
-	default:
-		return styles.AccentS
-	}
-}
-
-// renderXAxis places labels along the X axis. Strategy depends on the
-// series bucket; in every case we advance by a "next-legal-position"
-// cursor so two labels never overlap.
-func renderXAxis(points []provider.CostHistoryPoint, anchorX []int, bucket provider.CostBucket, width int) string {
-	row := make([]rune, width)
-	for i := range row {
-		row[i] = ' '
-	}
-	place := func(x int, label string) int {
-		if x < 0 || x+len(label) >= width {
-			return -1
-		}
-		for k, r := range label {
-			row[x+k] = r
-		}
-		return x + len(label) + 1
-	}
-
-	nextOK := 0
-	switch bucket {
-	case provider.BucketMonth:
-		// One label per data point is achievable on 1Y (~12 points).
-		for i, p := range points {
-			x := anchorX[i]
-			if x < nextOK {
-				continue
-			}
-			lbl := fmt.Sprintf("%s %d", shortMonth(p.Date.Month()), p.Date.Year()%100)
-			n := place(x, lbl)
-			if n > 0 {
-				nextOK = n
-			}
-		}
-	default:
-		// Daily: label every Nth point with Mon DD, stride chosen so
-		// labels never collide.
-		sampleLabel := "Mon 31" // widest label shape; 6 chars
-		stride := len(sampleLabel) + 2
-		for i, p := range points {
-			x := anchorX[i]
-			if x < nextOK {
-				continue
-			}
-			lbl := fmt.Sprintf("%s %d", p.Date.Format("Jan"), p.Date.Day())
-			if i == 0 || isMonthBoundary(points, i) || anchorX[i] >= nextOK {
-				n := place(x, lbl)
-				if n > 0 {
-					nextOK = n + stride - len(lbl) - 1
-				}
-			}
-		}
-	}
-	return styles.Help.Render(string(row))
-}
-
-func isMonthBoundary(points []provider.CostHistoryPoint, i int) bool {
-	if i == 0 {
-		return true
-	}
-	return points[i].Date.Month() != points[i-1].Date.Month()
-}
-
-func matchMonth(d time.Time, months []provider.CostMonth) int {
-	if d.IsZero() {
-		return -1
-	}
-	for i, m := range months {
-		if m.Year == d.Year() && m.Month == d.Month() {
-			return i
-		}
-	}
-	return -1
+	return chart.View()
 }
 
 func shortMonth(m time.Month) string {
