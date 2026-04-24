@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
@@ -294,73 +295,157 @@ func (m *model) advisorView() string {
 	return m.advisorFullView(advisorName, filt)
 }
 
-// advisorResourceCard renders the per-resource popup shown in the
-// reference screenshot: title, resource-context header, then each
-// recommendation as a card with impact + problem + solution.
+// advisorResourceCard renders the per-resource popup. Layout:
+//
+//   Azure Advisor  ·  cost
+//   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//   cito-civica-dev-uks-aks
+//   microsoft.containerservice/managedclusters · uksouth · Base · GBP 5.60/30d
+//
+//   ── 1/2 ──────────────────────────  ● MEDIUM ──
+//   Enable Vertical Pod Autoscaler recommendation mode to
+//   rightsize resource requests and limits.
+//   → Enable Vertical Pod Autoscaler recommendation mode to
+//     rightsize resource requests and limits.
+//
+//   ── 2/2 ──────────────────────────  ● MEDIUM ──
+//   Consider Spot nodes for workloads that can handle
+//   interruptions.
+//   → Enable Spot nodes on nodepools where the workload is
+//     interruption-tolerant.
+//
+//   ────────────────────────────────────────────
+//   2 recommendations · 2 medium · 0 high
+//
+//   esc  close
 func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommendation) string {
 	r := m.advisorResource
+	ruleW := 46 // consistent divider width — popup content is ~50 cells
 	lines := []string{}
 
-	// Title — "Azure Advisor — cost recommendations" (most Azure
-	// advisor output is cost-oriented; drop the subtitle when the
-	// categories are mixed).
+	// Title + category subtitle.
 	title := styles.ModalTitle.Render(advisorName)
 	if sub := dominantCategory(filt); sub != "" {
-		title += "  " + styles.ModalLabel.Render("— "+sub+" recommendations")
+		title += "  " + styles.ModalLabel.Render("·  "+sub)
 	}
-	lines = append(lines, title, "")
+	lines = append(lines, title)
+	lines = append(lines, styles.ModalHint.Render(strings.Repeat("━", ruleW)))
 
-	// Resource-context block — two columns, label in Muted, value in Fg.
-	labelW := 10
-	addMeta := func(label, value string) {
-		if value == "" {
-			return
-		}
-		lines = append(lines, "  "+styles.ModalLabel.Render(padRight(label+":", labelW))+" "+styles.ModalValue.Render(value))
-	}
-	addMeta("Resource", r.Name)
-	addMeta("Type", r.Meta["type"])
-	// Parent container label differs per cloud: resource group on
-	// Azure, project on GCP, account on AWS. Prefer what Meta carries
-	// rather than re-parsing the ID string.
-	switch {
-	case parentRGName(r.ID) != "":
-		addMeta("Group", parentRGName(r.ID))
-	case r.Meta["project"] != "":
-		addMeta("Project", r.Meta["project"])
-	case r.Meta["accountId"] != "":
-		addMeta("Account", r.Meta["accountId"])
-	}
-	addMeta("Region", r.Location)
-	addMeta("SKU", r.Meta["sku"])
-	addMeta("Cost / 30d", r.Cost)
-
+	// Resource-context — name as a bold header, details as a single
+	// pipe-separated line so the popup doesn't need four label rows.
+	lines = append(lines, styles.ModalValue.Render(r.Name))
+	lines = append(lines, styles.ModalLabel.Render(resourceSummaryLine(r)))
 	lines = append(lines, "")
 
-	// Recommendation cards.
+	// Empty-state fallback.
 	if len(filt) == 0 {
 		lines = append(lines,
-			styles.ModalHint.Render("  "+advisorEmptyHint(m.active)),
+			styles.ModalHint.Render(advisorEmptyHint(m.active)),
 			"",
-			styles.ModalHint.Render("  esc / q / enter  close"),
+			styles.ModalHint.Render("esc  close"),
 		)
 		return m.overlay(strings.Join(lines, "\n"))
 	}
 
-	lines = append(lines, styles.ModalTitle.Render(fmt.Sprintf("%s (%d)", advisorName, len(filt))))
+	// Recommendation cards — numbered divider + impact bullet.
 	for i, rec := range filt {
-		lines = append(lines, "")
-		lines = append(lines, "  "+styles.ModalLabel.Render("[advisor]")+" "+impactBadge(rec.Impact))
-		lines = append(lines, "  "+styles.ModalLabel.Render("Problem: ")+styles.ModalValue.Render(rec.Problem))
-		lines = append(lines, "  "+styles.ModalLabel.Render("Solution:")+" "+styles.ModalValue.Render(rec.Solution))
-		// Rule between cards (skip after last).
-		if i < len(filt)-1 {
-			lines = append(lines, "", styles.ModalHint.Render("  "+strings.Repeat("─", 40)))
+		num := fmt.Sprintf("── %d/%d ", i+1, len(filt))
+		right := "  " + impactBullet(rec.Impact) + " "
+		// Pad the middle with ─ so the divider reaches ruleW cells wide,
+		// with the impact bullet flush to the right.
+		pad := ruleW - len(num) - lipgloss.Width(right) - 2
+		if pad < 3 {
+			pad = 3
 		}
+		lines = append(lines, styles.ModalHint.Render(num+strings.Repeat("─", pad))+right+styles.ModalHint.Render("──"))
+		lines = append(lines, styles.ModalValue.Render(rec.Problem))
+		if rec.Solution != "" && rec.Solution != rec.Problem {
+			lines = append(lines, styles.AccentS.Render("→ ")+styles.ModalValue.Render(rec.Solution))
+		}
+		lines = append(lines, "")
 	}
 
-	lines = append(lines, "", styles.ModalHint.Render("  esc / q / enter  close"))
+	// Summary footer.
+	lines = append(lines, styles.ModalHint.Render(strings.Repeat("─", ruleW)))
+	lines = append(lines, styles.ModalLabel.Render(advisorSummary(filt)))
+	lines = append(lines, "")
+	lines = append(lines, styles.ModalHint.Render("esc  close"))
 	return m.overlay(strings.Join(lines, "\n"))
+}
+
+// resourceSummaryLine renders a single-line summary of a resource for
+// the popup header — type, region, sku, cost, separated by · dots.
+// Omits missing fields so AWS / GCP resources without sku still
+// render cleanly.
+func resourceSummaryLine(r provider.Node) string {
+	parts := []string{}
+	if t := r.Meta["type"]; t != "" {
+		parts = append(parts, t)
+	}
+	switch {
+	case parentRGName(r.ID) != "":
+		parts = append(parts, parentRGName(r.ID))
+	case r.Meta["project"] != "":
+		parts = append(parts, r.Meta["project"])
+	case r.Meta["accountId"] != "":
+		parts = append(parts, r.Meta["accountId"])
+	}
+	if r.Location != "" {
+		parts = append(parts, r.Location)
+	}
+	if sku := r.Meta["sku"]; sku != "" {
+		parts = append(parts, sku)
+	}
+	if r.Cost != "" {
+		parts = append(parts, r.Cost+"/30d")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// impactBullet renders a coloured bullet for each impact level —
+// visually encodes severity without taking a whole word of width in
+// the card divider.
+func impactBullet(impact string) string {
+	switch strings.ToLower(impact) {
+	case "high":
+		return styles.Bad.Render("● HIGH")
+	case "medium":
+		return styles.WarnS.Render("● MEDIUM")
+	case "low":
+		return styles.Help.Render("● low")
+	default:
+		if impact == "" {
+			return ""
+		}
+		return styles.Help.Render("● " + impact)
+	}
+}
+
+// advisorSummary returns the "N recommendations · 2 medium · 1 high"
+// footer line. Counts per impact so the user sees severity at a glance.
+func advisorSummary(recs []provider.Recommendation) string {
+	var high, med, low int
+	for _, r := range recs {
+		switch strings.ToLower(r.Impact) {
+		case "high":
+			high++
+		case "medium":
+			med++
+		case "low":
+			low++
+		}
+	}
+	parts := []string{fmt.Sprintf("%d recommendations", len(recs))}
+	if high > 0 {
+		parts = append(parts, fmt.Sprintf("%d high", high))
+	}
+	if med > 0 {
+		parts = append(parts, fmt.Sprintf("%d medium", med))
+	}
+	if low > 0 {
+		parts = append(parts, fmt.Sprintf("%d low", low))
+	}
+	return strings.Join(parts, "  ·  ")
 }
 
 // advisorFullView keeps the original wide-scope table layout for sub /
