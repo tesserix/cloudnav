@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
@@ -365,7 +366,7 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 			"",
 			styles.ModalHint.Render("esc  close"),
 		)
-		return m.overlay(strings.Join(lines, "\n"))
+		return m.overlay(stableAdvisorBody(lines, m.width, m.height))
 	}
 
 	// Section divider between resource context and advisor cards.
@@ -464,7 +465,70 @@ func (m *model) advisorResourceCard(advisorName string, filt []provider.Recommen
 	lines = append(lines, styles.ModalLabel.Render(advisorSummary(filt)))
 	lines = append(lines, "")
 	lines = append(lines, styles.ModalHint.Render("↑↓ scroll  ·  esc  close"))
-	return m.overlay(strings.Join(lines, "\n"))
+	return m.overlay(stableAdvisorBody(lines, m.width, m.height))
+}
+
+// stableAdvisorBody pins the advisor popup to a fixed inner width and
+// height so the outer Modal border doesn't auto-shrink to the longest
+// line or tallest card. Each content line is truncated / right-padded
+// to innerW cells (ANSI-aware) and the block is padded to exactly
+// innerH rows — produces the same frame whether Solution is empty,
+// the card list is short, or the user is scrolling through a mix of
+// one-line and multi-line recommendations.
+func stableAdvisorBody(lines []string, termW, termH int) string {
+	innerW := advisorInnerWidth(termW)
+	innerH := advisorInnerHeight(termH)
+	out := make([]string, 0, innerH)
+	for _, line := range lines {
+		if len(out) >= innerH {
+			break
+		}
+		w := ansi.StringWidth(line)
+		switch {
+		case w > innerW:
+			out = append(out, ansi.Truncate(line, innerW, ""))
+		case w < innerW:
+			out = append(out, line+strings.Repeat(" ", innerW-w))
+		default:
+			out = append(out, line)
+		}
+	}
+	pad := strings.Repeat(" ", innerW)
+	for len(out) < innerH {
+		out = append(out, pad)
+	}
+	return strings.Join(out, "\n")
+}
+
+// advisorInnerWidth picks a stable inner width for the popup body.
+// Wide enough to fit a typical Azure Advisor problem string on one
+// line, capped so it doesn't fill a 200-col terminal edge-to-edge.
+// Subtracts the Modal chrome (border 2 + padding 4 = 6) plus a small
+// side margin so the table stays visible behind.
+func advisorInnerWidth(termW int) int {
+	const maxInner = 114
+	const minInner = 48
+	inner := termW - 14
+	if inner > maxInner {
+		inner = maxInner
+	}
+	if inner < minInner {
+		inner = minInner
+	}
+	return inner
+}
+
+// advisorInnerHeight picks a stable inner height for the popup body.
+// Subtracts the Modal chrome (border 2 + padding 2 = 4) plus the
+// header band height so the popup doesn't cover the breadcrumb /
+// keybar.
+func advisorInnerHeight(termH int) int {
+	const minInner = 14
+	inner := termH - 8
+	if inner < minInner {
+		inner = minInner
+	}
+	return inner
 }
 
 // costWindowLine takes the plain MTD cost string stored on the node

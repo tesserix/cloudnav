@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.26] — 2026-04-24
+
+### Fixed
+- **Advisor popup frame is now pinned to a stable inner size**
+  regardless of the current scroll position or the length of any
+  individual card's problem / solution text. Previously the popup
+  still visually shrank and grew because `styles.Modal` auto-sized
+  to the longest rendered line and the tallest card — scrolling
+  through a mix of short and long recommendations redrew the frame
+  on every arrow key. The advisor body is now padded / truncated
+  to a fixed `(innerW × innerH)` before it reaches the modal
+  border, so the user sees a single constant frame.
+
+### Added
+- `internal/tui/advisor_test.go` covers the new `stableAdvisorBody`
+  helper and `advisorInnerWidth` / `advisorInnerHeight` clamps, plus
+  a regression test that scrolls through an 11-card advisor popup
+  and asserts the outer frame dimensions stay constant at every
+  scroll offset.
+- E2E script now pins the `--category` / `--impact` flag help and
+  the `--json` output contract.
+
 ## [0.22.25] — 2026-04-24
 
 ### Fixed
@@ -269,7 +291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.25...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.26...HEAD
+[0.22.26]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.26
 [0.22.25]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.25
 [0.22.10]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.10
 [0.22.9]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.9
