@@ -230,12 +230,27 @@ func (m *model) costHistoryView() string {
 		chartH = 8
 	}
 
-	if len(h.Series.Points) == 0 {
+	// Empty or all-zero series renders the same empty state — a chart
+	// of straight-zero lines isn't information, it's noise. Distinguish
+	// "no access" vs "access but zero spend" so the footer hints match.
+	total := 0.0
+	for _, p := range h.Series.Points {
+		total += p.Amount
+	}
+	if len(h.Series.Points) == 0 || total == 0 {
 		msg := "no cost data — check Cost Management Reader on your subscriptions"
 		footer := styles.Help.Render("esc/$ close · w 1W · m 1M · 3 3M · 6 6M · y 1Y")
-		if h.AccessDenied {
+		switch {
+		case h.AccessDenied:
 			msg = "you don't have cost-read access on " + scope
 			footer = styles.WarnS.Render("P → jump to PIM to request access") + styles.Help.Render("   ·   esc/$ close")
+		case len(h.Series.Points) > 0 && total == 0:
+			// Genuine zero spend over the window — happens on fresh
+			// sandbox subs or scopes where costs haven't rolled up yet.
+			msg = "no spend recorded on " + scope + " over the selected window"
+			if h.Note != "" {
+				msg += "\n" + h.Note
+			}
 		}
 		empty := strings.Join([]string{
 			header,
@@ -314,10 +329,15 @@ func renderMonthStrip(months []provider.CostMonth, currency string, maxW int) st
 			style = styles.Help
 		} else {
 			prev := months[i-1].Total
-			if prev <= 0 {
+			switch {
+			case prev <= 0 && mo.Total <= 0:
+				// Both months empty — don't pretend there's a change.
+				delta = "—"
+				style = styles.Help
+			case prev <= 0 && mo.Total > 0:
 				delta = "new"
 				style = styles.AccentS
-			} else {
+			default:
 				pct := (mo.Total - prev) / prev * 100
 				var arrow string
 				switch {

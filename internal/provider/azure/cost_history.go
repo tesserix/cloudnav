@@ -228,19 +228,27 @@ func parseDailyCost(data []byte) (map[string]float64, string, error) {
 	if err := json.Unmarshal(data, &env); err != nil {
 		return nil, "", fmt.Errorf("parse daily cost: %w", err)
 	}
+	// Cost Management returns column names in the casing Azure
+	// chooses — usually the names we requested, but be tolerant about
+	// casing drift. Match lowercased so a future API tweak doesn't
+	// silently nuke the entire chart.
 	costCol, dateCol, currencyCol := -1, -1, -1
 	for i, c := range env.Properties.Columns {
-		switch c.Name {
-		case colPreTaxCost, colCost:
+		switch strings.ToLower(c.Name) {
+		case strings.ToLower(colPreTaxCost), strings.ToLower(colCost), "costusd", "actualcost":
 			costCol = i
-		case "UsageDate", "BillingMonth", "Date":
+		case "usagedate", "billingmonth", "date":
 			dateCol = i
-		case colCurrency:
+		case strings.ToLower(colCurrency), "currencycode":
 			currencyCol = i
 		}
 	}
 	if costCol < 0 || dateCol < 0 {
-		return nil, "", nil
+		cols := make([]string, 0, len(env.Properties.Columns))
+		for _, c := range env.Properties.Columns {
+			cols = append(cols, c.Name)
+		}
+		return nil, "", fmt.Errorf("cost response missing cost/date column (got %s)", strings.Join(cols, ", "))
 	}
 	out := make(map[string]float64, len(env.Properties.Rows))
 	currency := defaultCurrency
