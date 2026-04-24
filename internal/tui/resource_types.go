@@ -121,6 +121,48 @@ var typeAliases = map[string]string{
 	"microsoft.policyinsights/policystates":            "policy",
 	"microsoft.authorization/locks":                    "lock",
 
+	// Azure — AI / ML / Analytics
+	"microsoft.cognitiveservices/accounts":              "cog",
+	"microsoft.machinelearningservices/workspaces":      "aml",
+	"microsoft.search/searchservices":                   "search",
+	"microsoft.purview/accounts":                        "purview",
+	"microsoft.batch/batchaccounts":                     "batch",
+	"microsoft.hdinsight/clusters":                      "hdi",
+	"microsoft.streamanalytics/streamingjobs":           "streamjob",
+	"microsoft.datalakeanalytics/accounts":              "dla",
+	"microsoft.eventgrid/systemtopics":                  "egsys",
+	"microsoft.communication/communicationservices":     "acs",
+
+	// Azure — Extended compute / Arc / Hybrid
+	"microsoft.compute/galleries":                 "gallery",
+	"microsoft.compute/galleries/images":          "galimg",
+	"microsoft.compute/virtualmachines/extensions": "vmext",
+	"microsoft.containerservice/managedclusters/agentpools": "nodepool",
+	"microsoft.hybridcompute/machines":            "arcvm",
+	"microsoft.kubernetes/connectedclusters":      "arck8s",
+	"microsoft.extendedlocation/customlocations":  "arcloc",
+	"microsoft.azurestackhci/clusters":            "stackhci",
+	"microsoft.avs/privateclouds":                 "avs",
+	"microsoft.desktopvirtualization/hostpools":   "avdhost",
+	"microsoft.desktopvirtualization/workspaces":  "avdws",
+	"microsoft.desktopvirtualization/applicationgroups": "avdapp",
+
+	// Azure — Extended network
+	"microsoft.network/trafficmanagerprofiles":    "tm",
+	"microsoft.network/ddosprotectionplans":       "ddos",
+	"microsoft.network/privatelinkservices":       "pls",
+	"microsoft.network/virtualwans":               "vwan",
+	"microsoft.network/virtualhubs":               "vhub",
+	"microsoft.network/expressroutecircuits":      "er",
+	"microsoft.network/applicationsecuritygroups": "asg",
+	"microsoft.network/firewallpolicies":          "fwpol",
+
+	// Azure — Data protection / orchestration
+	"microsoft.dataprotection/backupvaults": "dpv",
+	"microsoft.resources/deployments":       "depl",
+	"microsoft.resources/templatespecs":     "tplspec",
+	"microsoft.operationsmanagement/solutions": "solution",
+
 	// GCP — Compute Engine
 	"compute.googleapis.com/instance":           "vm",
 	"compute.googleapis.com/instancegroup":      "mig",
@@ -196,6 +238,33 @@ var typeAliases = map[string]string{
 	"monitoring.googleapis.com/uptimecheckconfig": "uptime",
 	"logging.googleapis.com/logmetric":          "logmetric",
 	"logging.googleapis.com/sink":               "logsink",
+	// GCP — CI/CD / Artifact Registry / Build
+	"artifactregistry.googleapis.com/repository": "ar",
+	"artifactregistry.googleapis.com/dockerimage": "image",
+	"cloudbuild.googleapis.com/build":             "build",
+	"cloudbuild.googleapis.com/trigger":           "trigger",
+	"sourcerepo.googleapis.com/repository":        "gitrepo",
+	"containeranalysis.googleapis.com/occurrence": "vuln",
+	"binaryauthorization.googleapis.com/policy":   "binauthz",
+	// GCP — Service Directory / VPC Access / Private
+	"vpcaccess.googleapis.com/connector":     "vpcconn",
+	"servicedirectory.googleapis.com/namespace": "sd",
+	"servicedirectory.googleapis.com/service":   "sdsvc",
+	"privateca.googleapis.com/certificateauthority": "pca",
+	"certificatemanager.googleapis.com/certificate": "cmgr",
+	"beyondcorp.googleapis.com/appconnector":        "bc",
+	"iap.googleapis.com/identityawareproxyclient":   "iap",
+	// GCP — AI / ML / Big data
+	"aiplatform.googleapis.com/endpoint":   "vertex",
+	"aiplatform.googleapis.com/model":      "model",
+	"aiplatform.googleapis.com/batchprediction": "pred",
+	"notebooks.googleapis.com/instance":    "notebook",
+	"dataplex.googleapis.com/lake":         "lake",
+	"dataplex.googleapis.com/zone":         "zone",
+	// GCP — Billing / Admin
+	"billingbudgets.googleapis.com/budget":         "budget",
+	"cloudasset.googleapis.com/feed":               "asset",
+	"osconfig.googleapis.com/patchdeployment":      "osconfig",
 
 	// AWS — Compute (Meta["type"] is "service:resourceType")
 	"ec2:instance":                "ec2",
@@ -295,4 +364,52 @@ var typeAliases = map[string]string{
 	"config:configrule":           "configrule",
 	"ssm:automation-execution":    "ssmauto",
 	"ssm:document":                "ssmdoc",
+	"xray:trace":                  "xray",
+
+	// AWS — DevOps / CI-CD
+	"codebuild:project":       "build",
+	"codecommit:repository":   "gitrepo",
+	"codedeploy:application":  "deploy",
+	"codepipeline:pipeline":   "pipeline",
+	"codestar:project":        "codestar",
+
+	// AWS — ML / Analytics
+	"sagemaker:notebook-instance": "smnote",
+	"sagemaker:endpoint":          "smep",
+	"sagemaker:model":              "smmodel",
+	"sagemaker:training-job":       "smjob",
+	"glue:job":                     "glue",
+	"glue:crawler":                 "crawler",
+	"athena:workgroup":             "athena",
+	"quicksight:analysis":          "qs",
+	"quicksight:dashboard":         "qsdash",
+	"rekognition:collection":       "rek",
+	"comprehend:document-classifier": "comprehend",
+	"translate:terminology":        "translate",
+
+	// AWS — Integration / Streaming
+	"msk:cluster":                "kafka",
+	"mq:broker":                  "mq",
+	"appsync:graphqlapi":         "appsync",
+	"appmesh:mesh":               "mesh",
+	"appflow:flow":               "appflow",
+	"globalaccelerator:accelerator": "ga",
+	"directconnect:connection":   "dx",
+	"amplify:app":                "amplify",
+
+	// AWS — Transfer / File / Edge
+	"transfer:server":   "sftp",
+	"datasync:task":     "datasync",
+	"mediaconvert:job":  "mconvert",
+	"medialive:channel": "mlive",
+
+	// AWS — IoT / Connect / WorkSpaces / Org
+	"iot:thing":                "iot",
+	"iot:policy":               "iotpol",
+	"iotanalytics:pipeline":    "iotpipe",
+	"connect:instance":         "connect",
+	"workspaces:workspace":     "ws",
+	"organizations:account":    "orgacct",
+	"organizations:ou":         "orgou",
+	"servicecatalog:product":   "catalog",
 }
