@@ -20,10 +20,24 @@ func (m *model) loadPIM() tea.Cmd {
 		m.status = m.active.Name() + ": JIT elevation not supported yet (planned — use Azure for now)"
 		return nil
 	}
+	// Disk cache hit: serve instantly. PIM list is expensive — for a
+	// user with N tenants it's N × 2 token acquisitions (each spawning
+	// az under the hood via AzureCLICredential) plus N × ~3 HTTP calls.
+	// A 5-min TTL means re-opening PIM within a work block is instant
+	// while still catching newly-granted eligibilities reasonably fast.
+	if roles, ok := m.warmPIMCache(); ok {
+		m.pimRoles = roles
+		m.pimCursor = 0
+		m.pimMode = true
+		m.status = fmt.Sprintf("%d eligible role(s) (cached)", len(roles))
+		return nil
+	}
 	m.loading = true
 	m.status = "loading PIM eligible roles..."
 	prov := m.active.(provider.PIMer)
 	ctx := m.ctx
+	cache := m.pimCache
+	cacheKey := m.active.Name() + ":roles"
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
@@ -31,9 +45,21 @@ func (m *model) loadPIM() tea.Cmd {
 			if err != nil {
 				return errMsg{err}
 			}
+			if cache != nil && len(roles) > 0 {
+				_ = cache.Set(cacheKey, roles)
+			}
 			return pimLoadedMsg{roles: roles}
 		},
 	)
+}
+
+// warmPIMCache reads from the disk cache. Returns the cached roles
+// when still fresh, (nil, false) otherwise.
+func (m *model) warmPIMCache() ([]provider.PIMRole, bool) {
+	if m.pimCache == nil || m.active == nil {
+		return nil, false
+	}
+	return m.pimCache.Get(m.active.Name() + ":roles")
 }
 
 func (m *model) updatePIM(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

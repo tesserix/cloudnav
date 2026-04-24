@@ -273,6 +273,11 @@ type model struct {
 	// after a restart serves from disk instead of repeating the 1–2s
 	// Cost Management query.
 	costCache *cache.Store[map[string]string]
+	// pimCache persists PIM eligibilities across runs. The live fetch
+	// across N tenants can take 5–15 s on cold cache (token
+	// acquisition spawns az under the hood); a 5-min TTL makes repeat
+	// opens in the same work block instant.
+	pimCache *cache.Store[[]provider.PIMRole]
 	// relaunch is set by the post-upgrade 'R' key. Run() inspects it
 	// after the TUI quits and execs the freshly-installed cloudnav
 	// binary in place of the current process.
@@ -347,6 +352,7 @@ func newModel() *model {
 		// purchase / new resource shows up after a refresh without the
 		// user having to press X (clear cache).
 		costCache: cache.NewStore[map[string]string](cache.Path(), "costs", 15*time.Minute),
+		pimCache:  cache.NewStore[[]provider.PIMRole](cache.Path(), "pim", 5*time.Minute),
 	}
 	m.pushHome()
 	return m
@@ -806,6 +812,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pimRoles[i].ActiveUntil = msg.expiresAt
 				break
 			}
+		}
+		// Refresh the disk cache with the new Active flag so a restart
+		// doesn't re-show the role as pending activation.
+		if m.pimCache != nil && m.active != nil && len(m.pimRoles) > 0 {
+			_ = m.pimCache.Set(m.active.Name()+":roles", m.pimRoles)
 		}
 		m.status = "✓ activation requested for " + msg.role + " — may take ~1 min to become effective"
 		return m, nil
