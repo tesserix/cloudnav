@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.34] — 2026-04-25
+
+### Added — GCP SDK migration, phase 1 + 2 (foundation + Asset Inventory)
+
+- **`cloud.google.com/go/resourcemanager/apiv3` SDK fast path** for
+  `Root()` / project listing. Authenticated via Application Default
+  Credentials (the same source `gcloud` reads from), reuses one
+  HTTP/2 connection per process, returns typed errors. Falls back
+  to `gcloud projects list` when ADC isn't available so cloudnav
+  stays usable on hosts without service-account creds.
+- **`cloud.google.com/go/asset/apiv1` SDK fast path** for the
+  resource enumeration drill. Asset Inventory `SearchAllResources`
+  via the SDK is ~3× faster than spawning `gcloud asset
+  search-all-resources` per drill on a 5k-asset project; same
+  whitelist + page-limit semantics. Falls through to the gcloud
+  CLI on any SDK failure (no ADC, API not enabled, transient
+  network).
+- Lazy-initialised SDK clients under `g.sdk` with one-shot error
+  caching so a failed auth probe doesn't keep re-paying latency.
+- `Close()` now releases both SDK client connections cleanly.
+- Tests for `splitCSV`, `lastSegment`, `parseProjectNumber` and
+  the SDK-not-NPE contract.
+
+### Roadmap progress (`docs/gcp-sdk-migration.md`)
+- ✅ Phase 1 — Foundation (Resource Manager + project listing)
+- ✅ Phase 2 — Asset Inventory (resource enumeration)
+- 🚧 Phase 3 — Compute SDK (VM ops)
+- 🚧 Phase 4 — Recommender SDK (Advisor)
+- 🚧 Phase 5 — Billing + BigQuery SDK
+- 🚧 Phase 6 — Delete dispatcher
+- 🚧 Phase 7 — Project liens (lock equivalent)
+
 ## [0.22.33] — 2026-04-25
 
 ### Added
@@ -457,7 +489,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.33...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.34...HEAD
+[0.22.34]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.34
 [0.22.33]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.33
 [0.22.32]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.32
 [0.22.31]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.31

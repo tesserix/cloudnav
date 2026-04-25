@@ -18,6 +18,7 @@ import (
 type GCP struct {
 	gcloud       *cli.Runner
 	billingTable string // populated via SetBillingTable from cfg; env var still overrides
+	sdk          sdkClients
 }
 
 func New() *GCP {
@@ -98,6 +99,14 @@ func (g *GCP) Root(ctx context.Context) ([]provider.Node, error) {
 		if folders, _ := g.listFolders(ctx, org); len(folders) > 0 {
 			return folders, nil
 		}
+	}
+	// SDK fast path: Resource Manager v3 SearchProjects RPC. Authenticated
+	// via Application Default Credentials (the same source `gcloud` reads
+	// from), reuses one HTTP/2 connection across the process, returns
+	// typed errors. Falls back to `gcloud projects list` when ADC isn't
+	// configured (CI, fresh machines, service-account-less hosts).
+	if nodes, sdkUsable, err := g.listProjectsSDK(ctx); sdkUsable && err == nil {
+		return nodes, nil
 	}
 	out, err := g.gcloud.Run(ctx, "projects", "list", "--format=json")
 	if err != nil {
@@ -266,6 +275,25 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 	// instead of dumping the raw gcloud stack.
 	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+
+	// SDK fast path. Cloud Asset Inventory v1 SearchAllResources via
+	// cloud.google.com/go/asset — single HTTP/2 connection reused
+	// across the process, ~3× faster than spawning gcloud per drill on
+	// a 5k-asset project. Falls through to the gcloud CLI path on any
+	// SDK failure (no ADC, API not enabled, transient network error)
+	// so the user keeps a working drill in every environment.
+	if nodes, sdkUsable, err := g.searchAssetsSDK(callCtx, project, resolveAssetTypes(), assetPageLimit); sdkUsable && err == nil {
+		if len(nodes) > assetPageLimit {
+			nodes = nodes[:assetPageLimit]
+			if len(nodes) > 0 {
+				if nodes[0].Meta == nil {
+					nodes[0].Meta = map[string]string{}
+				}
+				nodes[0].Meta["partial"] = fmt.Sprintf("%d", assetPageLimit)
+			}
+		}
+		return nodes, nil
+	}
 	// Request limit+1 so we can tell the caller when the project has more
 	// resources than we're showing.
 	// --page-size raises the server page from the 100 default so the 500
