@@ -1,0 +1,29 @@
+// cloudnav Zellij layout — single full-width pane running the
+// cloudnav TUI, with the standard tab bar / status bar so users
+// keep Zellij's keyboard discoverability without a custom UI.
+//
+// Embedded into the cloudnav binary; written to
+//     <UserConfigDir>/cloudnav/zellij/cloudnav.kdl
+// at first run of `cloudnav workspace`.
+//
+// Splitting the pane (Alt-n / Alt-+ in default mode) is left to the
+// user — we don't bake a pre-canned shell pane in because it
+// invariably collides with someone's preferred multiplexer style.
+
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+
+    tab name="cloudnav" focus=true {
+        pane {
+            command "cloudnav"
+        }
+    }
+}

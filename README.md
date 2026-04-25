@@ -118,6 +118,21 @@ cloudnav ls azure resources --subscription <id> --resource-group my-rg --json
 Use it when you know part of a name or scope but not the exact path yet.
 `cloudnav ls` is still there as the lower-level, script-friendly primitive.
 
+### Zellij workspace (optional)
+
+If you live in [Zellij](https://zellij.dev/), `cloudnav workspace` launches
+the TUI inside an isolated Zellij session whose theme matches cloudnav's
+own palette:
+
+```bash
+cloudnav workspace
+```
+
+Layout + theme are written to `~/.config/cloudnav/zellij/` and selected
+via `zellij --config-dir`, so your existing `~/.config/zellij` stays
+untouched. Standalone `cloudnav` is unaffected — nothing about the
+default launch path changed. Not available on Windows.
+
 ## Keybindings
 
 | Key | Action |

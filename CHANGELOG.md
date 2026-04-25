@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.30] — 2026-04-25
+
+### Added
+- **`cloudnav workspace` — opt-in Zellij integration.** Launches the
+  TUI inside an isolated Zellij session whose theme mirrors the
+  cloudnav palette (purple modal accent, sky network category, cyan
+  app title, etc.). Layout + theme + Zellij config are written to
+  `<UserConfigDir>/cloudnav/zellij/` and selected via
+  `zellij --config-dir`, so the user's own `~/.config/zellij` stays
+  completely untouched. Standalone `cloudnav` is unchanged — the
+  workspace command is purely additive.
+- Detects when invoked from inside an existing Zellij session
+  (`$ZELLIJ`) and refuses to nest, pointing the user at plain
+  `cloudnav` instead.
+- Refuses on Windows with a clear error (Zellij isn't supported
+  there); macOS / Linux print install hints (`brew install zellij`
+  / `cargo install --locked zellij`) when the binary is missing.
+- `internal/cmd/workspace_test.go` covers the config-dir override,
+  default-path suffix safety (so we never write into the user's
+  ~/.config/zellij), idempotent file write, and asserts the
+  embedded layout + theme stay in sync with the cloudnav palette.
+
 ## [0.22.29] — 2026-04-25
 
 ### Added
@@ -344,7 +366,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.29...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.30...HEAD
+[0.22.30]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.30
 [0.22.29]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.29
 [0.22.28]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.28
 [0.22.27]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.27

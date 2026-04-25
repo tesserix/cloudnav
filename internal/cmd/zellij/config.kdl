@@ -1,0 +1,31 @@
+// Isolated Zellij config for `cloudnav workspace`. Shipped under
+//     <UserConfigDir>/cloudnav/zellij/config.kdl
+// and selected at exec time via `zellij --config-dir`, so the user's
+// own ~/.config/zellij stays untouched.
+//
+// The "cloudnav" theme below mirrors the TUI palette in
+// internal/tui/styles/styles.go (ANSI-256 codes converted to hex).
+// Keep them in sync — the goal is for the Zellij chrome to be
+// indistinguishable from the standalone TUI's modal frame.
+
+theme "cloudnav"
+default_layout "cloudnav"
+mouse_mode true
+copy_on_select true
+pane_frames false
+
+themes {
+    cloudnav {
+        fg          "#eeeeee" // Fg / default body text
+        bg          "#121212" // HintBg / footer band
+        black       "#262626" // HeaderBg / header band
+        red         "#ff5f5f" // Err
+        green       "#87d787" // Green / falling cost
+        yellow      "#ffaf5f" // Warn (soft)
+        blue        "#5fafff" // Sky / network category
+        magenta     "#5f5fff" // Purple / modal border
+        cyan        "#5fffd7" // Accent / app title
+        white       "#ffffaf" // SelFg / selected-row text
+        orange      "#ffaf00" // Warn / rising cost
+    }
+}

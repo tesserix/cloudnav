@@ -1,0 +1,85 @@
+package cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestWorkspaceConfigDirHonoursOverride(t *testing.T) {
+	t.Setenv("CLOUDNAV_ZELLIJ_DIR", "/tmp/cloudnav-zellij-test")
+	got, err := workspaceConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/tmp/cloudnav-zellij-test" {
+		t.Errorf("workspaceConfigDir = %q, want override", got)
+	}
+}
+
+func TestWorkspaceConfigDirDefaultPath(t *testing.T) {
+	t.Setenv("CLOUDNAV_ZELLIJ_DIR", "")
+	got, err := workspaceConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// We don't assert the absolute path (varies by OS), only that it
+	// terminates with cloudnav/zellij so we don't accidentally write
+	// into the user's ~/.config/zellij.
+	want := filepath.Join("cloudnav", "zellij")
+	if !strings.HasSuffix(got, want) {
+		t.Errorf("workspaceConfigDir = %q, want suffix %q (so we never clobber the user's own zellij config)", got, want)
+	}
+}
+
+func TestWriteWorkspaceFilesMaterialisesLayoutAndConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeWorkspaceFiles(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"cloudnav.kdl", "config.kdl"} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("missing %s: %v", name, err)
+			continue
+		}
+		if info.Size() == 0 {
+			t.Errorf("%s is empty", name)
+		}
+	}
+}
+
+func TestWriteWorkspaceFilesIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeWorkspaceFiles(dir); err != nil {
+		t.Fatal(err)
+	}
+	// Running again must not error and must overwrite to refresh
+	// after a cloudnav upgrade.
+	if err := writeWorkspaceFiles(dir); err != nil {
+		t.Errorf("second write should succeed: %v", err)
+	}
+}
+
+func TestEmbeddedLayoutPointsAtCloudnav(t *testing.T) {
+	if !strings.Contains(zellijLayoutKDL, `command "cloudnav"`) {
+		t.Error("layout KDL should run the cloudnav binary in the main pane")
+	}
+	if !strings.Contains(zellijLayoutKDL, "tab name=\"cloudnav\"") {
+		t.Error("layout KDL should name the tab 'cloudnav'")
+	}
+}
+
+func TestEmbeddedConfigDeclaresCloudnavTheme(t *testing.T) {
+	if !strings.Contains(zellijConfigKDL, `theme "cloudnav"`) {
+		t.Error("config KDL should select the 'cloudnav' theme")
+	}
+	// The cloudnav palette in styles.go uses purple as the modal
+	// border accent; that hex must appear in the theme block so the
+	// Zellij chrome visually matches.
+	if !strings.Contains(zellijConfigKDL, "#5f5fff") {
+		t.Error("config KDL should map magenta to cloudnav's purple accent (#5f5fff)")
+	}
+}
