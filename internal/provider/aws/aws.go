@@ -29,6 +29,13 @@ func (a *AWS) Name() string { return "aws" }
 const consoleHome = "https://console.aws.amazon.com/"
 
 func (a *AWS) LoggedIn(ctx context.Context) error {
+	// SDK fast path — sts:GetCallerIdentity via the v2 SDK. Resolves
+	// creds via the standard SDK chain (env / ~/.aws / SSO / IMDS),
+	// no subprocess. Falls back to the aws CLI when the chain can't
+	// produce a token.
+	if err := a.loggedInSDK(ctx); err == nil {
+		return nil
+	}
 	_, err := a.aws.Run(ctx, "sts", "get-caller-identity", "--output", "json")
 	return err
 }
@@ -89,14 +96,38 @@ type callerJSON struct {
 // fallback is silent because most standalone accounts don't have the
 // organization role and a noisy error there would hide the real data.
 func (a *AWS) Root(ctx context.Context) ([]provider.Node, error) {
-	if accounts, ok := a.listOrgAccounts(ctx); ok && len(accounts) > 0 {
+	// SQLite cache fast path: skip Organizations / STS entirely
+	// when a fresh row exists for this aws-cred fingerprint.
+	if cached, ok := readRootCacheAWS(); ok && len(cached) > 0 {
+		return cached, nil
+	}
+	// SDK fast path — organizations:ListAccounts via the v2 SDK
+	// when it's available; falls through to the SDK
+	// GetCallerIdentity single-account path when org access isn't
+	// permitted; CLI fallback handles environments where the SDK
+	// chain can't auth.
+	if accounts, sdkUsable, err := a.listOrgAccountsSDK(ctx); sdkUsable && err == nil && len(accounts) > 0 {
+		writeRootCacheAWS(accounts)
 		return accounts, nil
+	}
+	if accounts, ok := a.listOrgAccounts(ctx); ok && len(accounts) > 0 {
+		writeRootCacheAWS(accounts)
+		return accounts, nil
+	}
+	if node, sdkUsable, err := a.callerIdentitySDK(ctx); sdkUsable && err == nil {
+		nodes := []provider.Node{node}
+		writeRootCacheAWS(nodes)
+		return nodes, nil
 	}
 	out, err := a.aws.Run(ctx, "sts", "get-caller-identity", "--output", "json")
 	if err != nil {
 		return nil, err
 	}
-	return parseCaller(out)
+	nodes, err := parseCaller(out)
+	if err == nil {
+		writeRootCacheAWS(nodes)
+	}
+	return nodes, err
 }
 
 // listOrgAccounts returns every active member account in the caller's
@@ -206,6 +237,10 @@ type regionsJSON struct {
 }
 
 func (a *AWS) regions(ctx context.Context, account provider.Node) ([]provider.Node, error) {
+	// SDK fast path — ec2:DescribeRegions via the v2 SDK.
+	if nodes, sdkUsable, err := a.regionsSDK(ctx, account); sdkUsable && err == nil {
+		return nodes, nil
+	}
 	out, err := a.aws.Run(ctx, "ec2", "describe-regions", "--output", "json")
 	if err != nil {
 		return nil, err
@@ -285,6 +320,17 @@ func formatAWSTags(tags []struct {
 }
 
 func (a *AWS) resources(ctx context.Context, region provider.Node) ([]provider.Node, error) {
+	// SQLite cache fast path: re-drilling into the same region
+	// inside the TTL window short-circuits the tagging API call.
+	if cached, ok := readResourcesCacheAWS(region.ID); ok {
+		return cached, nil
+	}
+	// SDK fast path — resourcegroupstaggingapi:GetResources via
+	// the v2 SDK with paginated iteration.
+	if nodes, sdkUsable, err := a.resourcesSDK(ctx, region); sdkUsable && err == nil {
+		writeResourcesCacheAWS(region.ID, nodes)
+		return nodes, nil
+	}
 	out, err := a.aws.Run(ctx,
 		"resourcegroupstaggingapi", "get-resources",
 		"--region", region.ID,
@@ -293,7 +339,11 @@ func (a *AWS) resources(ctx context.Context, region provider.Node) ([]provider.N
 	if err != nil {
 		return nil, err
 	}
-	return parseResources(out, region)
+	nodes, err := parseResources(out, region)
+	if err == nil {
+		writeResourcesCacheAWS(region.ID, nodes)
+	}
+	return nodes, err
 }
 
 func parseResources(data []byte, region provider.Node) ([]provider.Node, error) {

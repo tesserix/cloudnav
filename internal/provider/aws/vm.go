@@ -31,6 +31,11 @@ func (a *AWS) ListVMs(ctx context.Context, scope provider.Node) ([]provider.VM, 
 	if scope.Kind != provider.KindRegion {
 		return nil, fmt.Errorf("aws: vm list expects region scope, got %q", scope.Kind)
 	}
+	// SDK fast path — ec2:DescribeInstances via the v2 SDK with
+	// pagination.
+	if vms, sdkUsable, err := a.listVMsSDK(ctx, scope.ID); sdkUsable && err == nil {
+		return vms, nil
+	}
 	out, err := a.aws.Run(ctx,
 		"ec2", "describe-instances",
 		"--region", scope.ID,
@@ -73,6 +78,9 @@ func (a *AWS) ShowVM(ctx context.Context, id, region string) ([]byte, error) {
 	if region == "" {
 		return nil, fmt.Errorf("aws: vm show needs --region")
 	}
+	if data, sdkUsable, err := a.showVMSDK(ctx, id, region); sdkUsable && err == nil {
+		return data, nil
+	}
 	return a.aws.Run(ctx, "ec2", "describe-instances",
 		"--instance-ids", id, "--region", region, "--output", "json")
 }
@@ -80,6 +88,9 @@ func (a *AWS) ShowVM(ctx context.Context, id, region string) ([]byte, error) {
 func (a *AWS) StartVM(ctx context.Context, id, region string) error {
 	if region == "" {
 		return fmt.Errorf("aws: vm start needs --region")
+	}
+	if sdkUsable, err := a.startVMSDK(ctx, id, region); sdkUsable {
+		return err
 	}
 	_, err := a.aws.Run(ctx, "ec2", "start-instances",
 		"--instance-ids", id, "--region", region, "--output", "json")
@@ -89,6 +100,9 @@ func (a *AWS) StartVM(ctx context.Context, id, region string) error {
 func (a *AWS) StopVM(ctx context.Context, id, region string) error {
 	if region == "" {
 		return fmt.Errorf("aws: vm stop needs --region")
+	}
+	if sdkUsable, err := a.stopVMSDK(ctx, id, region); sdkUsable {
+		return err
 	}
 	_, err := a.aws.Run(ctx, "ec2", "stop-instances",
 		"--instance-ids", id, "--region", region, "--output", "json")

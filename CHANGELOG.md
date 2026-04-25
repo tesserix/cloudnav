@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.39] — 2026-04-25
+
+### Added — GCP cost chart + AWS SDK migration begins
+
+- **GCP `CostHistory` / `$` overlay parity.** Implements
+  `provider.CostHistoryer` for GCP via BigQuery daily-grouped
+  query against the billing-export table. Brings the `$` cost
+  chart to GCP at parity with Azure. Day / week / month buckets;
+  scope filter for single-project drilling; gap-fills missing
+  days with zero so the line reads continuously.
+- **AWS SDK migration phases 1, 2, 6.**
+  - **Phase 1 — Foundation.** `aws-sdk-go-v2/config` + `sts` +
+    `organizations` + `ec2` + `resourcegroupstaggingapi`. `Root()`,
+    `LoggedIn()`, `regions()`, and `resources()` all routed
+    through the typed SDK with CLI fallback on auth failure.
+  - **Phase 2 — EC2 VM ops.** `ListVMs` / `ShowVM` / `StartVM` /
+    `StopVM` via `ec2.Client`. Pagination handled natively.
+  - **Phase 6 — AWS SQLite cache layer.** Two new buckets:
+    `aws-root` (account list, 10-min TTL) and `aws-resources`
+    (per-region drill, 5-min TTL). Mirrors `azure-root` and
+    `gcp-root`. Cache key includes a fingerprint of
+    `~/.aws/config` + `~/.aws/credentials` + `AWS_PROFILE` /
+    `AWS_REGION` env vars so `aws sso login` /
+    `export AWS_PROFILE=other` auto-invalidate the cache.
+  - `InvalidateRootCache()` method on `*AWS` mirrors the Azure
+    and GCP same-named methods.
+
+### Roadmap (`docs/aws-sdk-migration.md` to come; tracked in tasks)
+
+- ✅ Phase 1 — Foundation
+- ✅ Phase 2 — EC2 VM ops
+- ✅ Phase 6 — Cache layer
+- 🚧 Phase 3 — Cost Explorer + Budgets SDK
+- 🚧 Phase 4 — CloudWatch SDK
+- 🚧 Phase 5 — Advisor SDK (compute-optimizer + support)
+- 🚧 Phase 7 — `CostHistoryer` for AWS
+- 🚧 Phase 8 — `HealthEventer` (AWS Health) + `Deleter` (best-effort EC2 / S3)
+
 ## [0.22.38] — 2026-04-25
 
 ### Added — GCP cache parity with Azure (everything in SQLite)
@@ -660,7 +698,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.38...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.39...HEAD
+[0.22.39]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.39
 [0.22.38]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.38
 [0.22.37]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.37
 [0.22.36]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.36
