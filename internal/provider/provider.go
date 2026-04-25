@@ -63,6 +63,26 @@ type Loginer interface {
 	InstallHint() string
 }
 
+// Identity is what an Identifier returns: who is authenticated, and via
+// which credential source. Method is a short human-readable label
+// ("Azure CLI cached token", "Service Principal env vars", "ADC service
+// account JSON", "IAM role from EC2 instance metadata", …) — drives the
+// `cloudnav doctor` output so users can see which path resolved without
+// reading source.
+type Identity struct {
+	Who    string // human-readable principal — email, SP id, IAM ARN
+	Method string // how we authenticated; see auth-method docs
+}
+
+// Identifier is implemented by providers that can describe their active
+// authentication beyond a simple "logged in / not". Lets `doctor` show
+// the exact source so users running cloudnav under a Service Principal
+// or federated workload identity can confirm at a glance that the right
+// credential is in play.
+type Identifier interface {
+	Identity(ctx context.Context) (Identity, error)
+}
+
 // InstallStep describes one step in installing a cloud CLI. Multi-step
 // installs (download + unzip + install) are expressed as a slice.
 type InstallStep struct {

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.43] — 2026-04-25
+
+### Added — `Identifier` interface + `cloudnav doctor` shows active auth method
+
+- `provider.Identifier` interface with an `Identity(ctx)` method
+  that returns `(who, method)`. Implemented by all three clouds.
+- **Azure** sniffs the `azidentity.NewDefaultAzureCredential` chain:
+  workload-identity federation, Service Principal (secret /
+  certificate), Managed Identity, Azure CLI cached token.
+- **GCP** inspects the ADC chain: Service Account JSON, Workload
+  Identity Federation (`external_account`), Impersonated SA,
+  metadata server, gcloud-cached user creds. Detects the JSON
+  `type` field to distinguish SA / WIF / impersonation.
+- **AWS** sniffs the v2 SDK chain: Web Identity / OIDC (IRSA,
+  GitHub Actions), temporary creds, static IAM keys, ECS task
+  role, named profile, default profile / SSO.
+- **`cloudnav doctor` now prints both the principal and the
+  resolved method per cloud:**
+  ```
+  ✓ azure  alice@example.com           · Azure CLI cached token
+  ✓ gcp    sa@my-project.iam.gserviceaccount.com  · Service Account JSON (GOOGLE_APPLICATION_CREDENTIALS)
+  ✓ aws    arn:aws:iam::123:user/alice · Default profile / SSO (~/.aws/credentials)
+  ```
+  SDK probe runs first (so SP / federated / OIDC users see a
+  green check even without a CLI installed); CLI fallback covers
+  hosts where only cached CLI tokens exist.
+- `docs/auth.md` documents every supported method per cloud
+  with the env vars users need to set, in the order each chain
+  consults them.
+
 ## [0.22.42] — 2026-04-25
 
 ### Fixed
@@ -814,7 +844,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.42...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.43...HEAD
+[0.22.43]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.43
 [0.22.42]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.42
 [0.22.41]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.41
 [0.22.40]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.40
