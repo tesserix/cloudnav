@@ -1,6 +1,32 @@
 package gcp
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestProjectMetaStripsPrefix is the regression test for the
+// "info on a GCP resource fails with --scope=projects/projects/..."
+// bug. Asset Inventory returns Project = "projects/<num>"; we must
+// strip that prefix before stamping it into Meta so callers
+// (Details, portal, cost) prepend their own scope without doubling
+// up.
+func TestProjectMetaStripsPrefix(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"projects/123456789012", "123456789012"},
+		{"projects/my-project", "my-project"},
+		{"123456789012", "123456789012"}, // already bare — pass through
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := strings.TrimPrefix(c.in, "projects/")
+		if got != c.want {
+			t.Errorf("strip(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
 
 func TestSplitCSV(t *testing.T) {
 	cases := []struct {

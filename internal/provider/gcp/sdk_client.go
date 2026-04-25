@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,10 +190,16 @@ func (g *GCP) searchAssetsSDK(ctx context.Context, project provider.Node, assetT
 		if err != nil {
 			return nil, true, fmt.Errorf("gcp asset SDK: %w", err)
 		}
+		// Asset Inventory returns the project as the qualified
+		// resource name "projects/<number>". cloudnav stores the
+		// bare project ID / number in Meta so callers (Details,
+		// portal URL, cost lookup) can prepend their own scope
+		// prefix without doubling up.
+		projectBare := strings.TrimPrefix(r.Project, "projects/")
 		meta := map[string]string{
 			"type":          r.AssetType,
-			"project":       r.Project,
-			"projectNumber": r.Project,
+			"project":       projectBare,
+			"projectNumber": projectBare,
 			"source":        "sdk",
 		}
 		if r.CreateTime != nil {
@@ -253,6 +260,63 @@ func lastSegment(name string) string {
 		}
 	}
 	return name
+}
+
+// detailProjectSDK fetches a single project's full descriptor via
+// resourcemanager v3 GetProject. Returns the typed proto marshalled
+// to JSON so the TUI's info-overlay viewer (which expects JSON
+// bytes) doesn't need to know which path produced it.
+func (g *GCP) detailProjectSDK(ctx context.Context, projectID string) ([]byte, bool, error) {
+	client, err := g.projectsClient(ctx)
+	if err != nil || client == nil {
+		return nil, false, err
+	}
+	out, err := client.GetProject(ctx, &resourcemanagerpb.GetProjectRequest{
+		Name: "projects/" + projectID,
+	})
+	if err != nil {
+		return nil, true, err
+	}
+	data, mErr := jsonMarshalProto(out)
+	if mErr != nil {
+		return nil, true, mErr
+	}
+	return data, true, nil
+}
+
+// detailAssetSDK fetches a single resource's full descriptor via
+// Asset Inventory SearchAllResources scoped to its project, with a
+// tight name= query. The Asset Inventory v1 SDK has no GetAsset
+// RPC — searching by exact name is the supported pattern.
+//
+// projectID must be the BARE project ID / number (no "projects/"
+// prefix). assetName is the full asset name from the row's ID.
+func (g *GCP) detailAssetSDK(ctx context.Context, projectID, assetName string) ([]byte, bool, error) {
+	client, err := g.assetClient(ctx)
+	if err != nil || client == nil {
+		return nil, false, err
+	}
+	if projectID == "" {
+		return nil, true, fmt.Errorf("gcp asset detail: missing project context")
+	}
+	req := &assetpb.SearchAllResourcesRequest{
+		Scope:    "projects/" + projectID,
+		Query:    "name:" + assetName,
+		PageSize: 1,
+	}
+	it := client.SearchAllResources(ctx, req)
+	r, err := it.Next()
+	if err == iterator.Done {
+		return nil, true, fmt.Errorf("gcp asset detail: %s not found", assetName)
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	data, mErr := jsonMarshalProto(r)
+	if mErr != nil {
+		return nil, true, mErr
+	}
+	return data, true, nil
 }
 
 // parseProjectNumber pulls the numeric project number out of the

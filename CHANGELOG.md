@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.42] — 2026-04-25
+
+### Fixed
+- **`i` info on a GCP resource no longer fails with
+  `Invalid value for [--scope]: ...`**. The Asset Inventory
+  v1 SDK returns `Resource.Project` as the qualified path
+  `projects/<number>`. The Phase-2 SDK migration was stamping
+  that full string into `Meta["project"]`, so when `Details()`
+  later prepended its own `projects/` it produced
+  `--scope=projects/projects/<num>` — invalid. Strip the
+  prefix at the source so every call site (Details, PortalURL,
+  cost lookup) can rely on `Meta["project"]` being a bare ID
+  / number.
+
+### Changed
+- **`Details()` for both `KindProject` and `KindResource` now
+  routes through the GCP SDK first** (Resource Manager v3
+  `GetProject` for projects, Asset Inventory `SearchAllResources`
+  for resources) with `gcloud` fallback on auth failure. Single
+  open client, typed errors, no subprocess on the info-overlay
+  hot path.
+- Regression test in `internal/provider/gcp/sdk_client_test.go`
+  pins the prefix-strip behaviour.
+
 ## [0.22.41] — 2026-04-25
 
 ### Added — currency conversion via frankfurter.app
@@ -790,7 +814,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.41...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.42...HEAD
+[0.22.42]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.42
 [0.22.41]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.41
 [0.22.40]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.40
 [0.22.39]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.39

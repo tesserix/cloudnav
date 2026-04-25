@@ -453,10 +453,31 @@ func (g *GCP) PortalURL(n provider.Node) string {
 func (g *GCP) Details(ctx context.Context, n provider.Node) ([]byte, error) {
 	switch n.Kind {
 	case provider.KindProject:
+		// SDK fast path — Resource Manager v3 GetProject. Same
+		// JSON shape as `gcloud projects describe` from the TUI's
+		// info-overlay perspective (it just renders the bytes).
+		if data, sdkUsable, err := g.detailProjectSDK(ctx, n.ID); sdkUsable && err == nil {
+			return data, nil
+		}
 		return g.gcloud.Run(ctx, "projects", "describe", n.ID, "--format=json")
 	case provider.KindResource:
+		// SDK fast path — Asset Inventory SearchAllResources with
+		// a tight name= query. Replaces the gcloud asset call that
+		// was hitting "Invalid value for [--scope]" when meta
+		// project carried the full "projects/<num>" path (since
+		// fixed at the source: meta["project"] is now bare).
+		project := n.Meta["project"]
+		if project == "" && n.Parent != nil {
+			project = n.Parent.ID
+		}
+		if project == "" {
+			return nil, fmt.Errorf("gcp: resource detail needs project context (resource %s)", n.Name)
+		}
+		if data, sdkUsable, err := g.detailAssetSDK(ctx, project, n.ID); sdkUsable && err == nil {
+			return data, nil
+		}
 		return g.gcloud.Run(ctx, "asset", "search-all-resources",
-			"--scope=projects/"+n.Meta["project"],
+			"--scope=projects/"+project,
 			"--query=name:"+n.ID,
 			"--format=json",
 		)
