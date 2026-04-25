@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.29] — 2026-04-25
+
+### Added
+- **Persistent Resource Graph snapshot cache.** Drilling into a
+  multi-RG selection used to fire a fresh KQL query against Azure
+  Resource Graph every time — 2–5 seconds for 100+ RGs in a busy
+  subscription. Snapshots now land in a new `rgraph` cache bucket
+  keyed by `(subID, sorted RG names)` so the same selection in any
+  order is one cache hit. Repeat drills inside the 10-min TTL load
+  in <10 ms; the table flips back instead of showing the spinner.
+- The `r` refresh key now clears the rgraph bucket so users still
+  have a one-keystroke way to force a re-fetch when resources have
+  changed.
+- `internal/tui/nav_test.go` covers the cache key (order-invariant,
+  varies by sub, varies by RG set), round-trip through the SQLite
+  backend, and the clear-on-refresh contract.
+
 ## [0.22.28] — 2026-04-25
 
 ### Changed
@@ -327,7 +344,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.28...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.29...HEAD
+[0.22.29]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.29
 [0.22.28]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.28
 [0.22.27]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.27
 [0.22.26]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.26

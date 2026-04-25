@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -70,6 +72,21 @@ func (m *model) drillAggregated() tea.Cmd {
 			for _, n := range selected {
 				rgNames = append(rgNames, n.Name)
 			}
+			cacheKey := rgraphCacheKey(subID, rgNames)
+			// Cache hit short-circuits the KQL round-trip — the table
+			// flips back to the aggregated view in <10ms instead of the
+			// 2–5 s a fresh Resource Graph query takes.
+			if cached, ok := m.rgraphCache.Get(cacheKey); ok {
+				m.status = fmt.Sprintf("loaded %d resource group(s) from cache", len(selected))
+				return func() tea.Msg {
+					return nodesLoadedMsg{frame: frame{
+						title:      fmt.Sprintf("%d resource group(s)", len(selected)),
+						nodes:      cached,
+						aggregated: true,
+					}}
+				}
+			}
+			rgraphCache := m.rgraphCache
 			return tea.Batch(
 				m.spinner.Tick,
 				func() tea.Msg {
@@ -83,6 +100,7 @@ func (m *model) drillAggregated() tea.Cmd {
 					// Stamp originRG so the cost merge can bucket rows
 					// back by their source RG.
 					nodes = tagOriginRG(nodes)
+					_ = rgraphCache.Set(cacheKey, nodes)
 					return nodesLoadedMsg{frame: frame{
 						title:      fmt.Sprintf("%d resource group(s)", len(selected)),
 						nodes:      nodes,
@@ -125,6 +143,18 @@ func aggregateFromChildren(ctx context.Context, prov provider.Provider, selected
 		nodes:      combined,
 		aggregated: true,
 	}
+}
+
+// rgraphCacheKey returns a deterministic cache key for a (subID,
+// rgNames) Resource Graph drill. RG names are sorted so the user
+// selecting the same RGs in a different order still hits the same
+// cache entry. subID comes last so the human-readable RG list is
+// the prefix when scanning the SQLite table.
+func rgraphCacheKey(subID string, rgNames []string) string {
+	sorted := make([]string, len(rgNames))
+	copy(sorted, rgNames)
+	sort.Strings(sorted)
+	return strings.Join(sorted, ",") + "@" + subID
 }
 
 // tagOriginRG derives each resource's origin RG from its ID and stamps
@@ -174,6 +204,13 @@ func (m *model) reload() tea.Cmd {
 	// for fresh data — bypass the provider's short-lived Root() cache.
 	if az, ok := m.active.(*azure.Azure); ok {
 		az.InvalidateRootCache()
+	}
+	// Refresh also drops the Resource Graph snapshot cache for the
+	// current scope. The whole bucket is small (kilobytes), and a
+	// targeted clear would have to walk every selection permutation;
+	// drop them all and let the next drill repopulate.
+	if m.rgraphCache != nil {
+		_ = m.rgraphCache.Clear()
 	}
 	top := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]

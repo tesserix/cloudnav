@@ -292,6 +292,12 @@ type model struct {
 	// acquisition spawns az under the hood); a 5-min TTL makes repeat
 	// opens in the same work block instant.
 	pimCache *cache.Store[[]provider.PIMRole]
+	// rgraphCache persists Azure Resource Graph snapshots — the
+	// "drill into N RGs" KQL fan-out. A drill across 100+ RGs in a
+	// large sub takes 2–5 s on cold cache; 10-min TTL makes repeat
+	// drills in the same session instant. Keyed by (subID, sorted
+	// RG names) so the cache survives changes in selection order.
+	rgraphCache *cache.Store[[]provider.Node]
 	// relaunch is set by the post-upgrade 'R' key. Run() inspects it
 	// after the TUI quits and execs the freshly-installed cloudnav
 	// binary in place of the current process.
@@ -372,6 +378,7 @@ func newModel() *model {
 	// user having to press X (clear cache).
 	m.costCache = cache.NewStoreWithBackend[map[string]string](backend, "costs", 15*time.Minute)
 	m.pimCache = cache.NewStoreWithBackend[[]provider.PIMRole](backend, "pim", 5*time.Minute)
+	m.rgraphCache = cache.NewStoreWithBackend[[]provider.Node](backend, "rgraph", 10*time.Minute)
 	m.pushHome()
 	return m
 }
