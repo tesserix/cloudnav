@@ -10,6 +10,8 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
+
+	"github.com/tesserix/cloudnav/internal/tools"
 )
 
 //go:embed zellij/cloudnav.kdl
@@ -54,10 +56,19 @@ func runWorkspace(_ *cobra.Command, _ []string) error {
 	}
 	zellijBin, err := exec.LookPath("zellij")
 	if err != nil {
-		return fmt.Errorf("zellij not in PATH — install it first:\n"+
-			"    macOS:  brew install zellij\n"+
-			"    Linux:  cargo install --locked zellij  (or your distro's package)\n\n"+
-			"then rerun: cloudnav workspace\n\nlookup error: %w", err)
+		// Auto-install when missing — matches the user's preference
+		// for "if not found install it" rather than print hints and
+		// bail. Falls back to a clear error when no package manager
+		// is available (raw Linux without brew or cargo).
+		fmt.Fprintln(os.Stderr, "→ zellij not found on PATH — installing automatically")
+		if err := tools.Ensure(tools.Zellij, runtime.GOOS, os.Stderr); err != nil {
+			return fmt.Errorf("zellij auto-install failed: %w", err)
+		}
+		zellijBin, err = exec.LookPath("zellij")
+		if err != nil {
+			return fmt.Errorf("zellij installed but not on PATH (you may need to "+
+				"restart your shell so the new bin dir is picked up): %w", err)
+		}
 	}
 
 	cfgDir, err := workspaceConfigDir()

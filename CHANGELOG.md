@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.31] — 2026-04-25
+
+### Added
+- **Auto-install Zellij when missing.** `cloudnav workspace` no
+  longer just prints an install hint when the `zellij` binary
+  isn't on PATH — it runs the right install command for the host
+  (Homebrew → `brew install zellij`, falling back to
+  `cargo install --locked zellij` on Linux without brew). The
+  workspace launches as soon as the install completes.
+- New explicit subcommands for the same paths:
+  - `cloudnav install zellij` — first-time install via the host's
+    package manager.
+  - `cloudnav upgrade zellij` — wraps `brew update && brew upgrade`
+    or `cargo install --locked --force` so a stale formula cache
+    can't no-op the upgrade (same fix shape as the cloudnav self-
+    upgrade in 0.22.5).
+- `internal/tools/` package factors the install / upgrade plan
+  shape into a small `Tool` struct with per-OS `PlanFn` /
+  `Upgrade` callbacks, so the next dependency (atuin / gum / etc.)
+  is one `var` away.
+- 11 new tests across `internal/tools` and `internal/cmd` cover
+  the brew-vs-cargo preference order, the Windows refusal, idempotent
+  `Ensure`, action routing, and the install dispatch's separation
+  between cloud names (provider path) and tool names (tools path).
+
+### Changed
+- `cloudnav install` now accepts `zellij` alongside `azure` /
+  `aws` / `gcp`. Cloud names still flow through
+  `provider.Installer`; tool names dispatch through the new
+  `internal/tools` package.
+
 ## [0.22.30] — 2026-04-25
 
 ### Added
@@ -366,7 +397,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.30...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.31...HEAD
+[0.22.31]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.31
 [0.22.30]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.30
 [0.22.29]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.29
 [0.22.28]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.28
