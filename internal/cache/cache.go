@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -83,6 +84,27 @@ func Path() string {
 		return filepath.Join(dir, "cloudnav")
 	}
 	return filepath.Join(os.Getenv("HOME"), ".cache", "cloudnav")
+}
+
+var (
+	sharedOnce    sync.Once
+	sharedBackend Backend
+)
+
+// Shared returns the process-wide cache backend. The first call
+// resolves it via BackendFromEnv (default: SQLite, opt-out: JSON);
+// subsequent calls return the same instance so every cache.Store —
+// the TUI's cost / pim / rgraph caches, the Azure root cache, the
+// update-check cache — shares one open SQLite handle and one set
+// of WAL files. Without this singleton each subsystem would
+// `sql.Open` independently, which still works under WAL but wastes
+// connections and confuses the user with stale `cloudnav.db-shm`
+// pools.
+func Shared() Backend {
+	sharedOnce.Do(func() {
+		sharedBackend = BackendFromEnv()
+	})
+	return sharedBackend
 }
 
 // BackendFromEnv picks a backend based on the CLOUDNAV_CACHE_BACKEND

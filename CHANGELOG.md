@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.32] — 2026-04-25
+
+### Changed
+- **Every cache now flows through SQLite.** Two stragglers were
+  still writing raw JSON next to `cloudnav.db`:
+    * `~/Library/Caches/cloudnav/azure-root.json` — the cross-tenant
+      subscription enumeration cache (~200 KB on a 671-sub user).
+    * `~/Library/Caches/cloudnav/update-check.json` — the GitHub
+      release-poll cache.
+  Both packages now use `cache.Store[T]` against the new
+  `cache.Shared()` singleton, so the cross-tenant Root snapshot and
+  the update-check payload land in the same `cloudnav.db` as the
+  cost / pim / rgraph rows. One open SQLite handle, one set of WAL
+  files, one place to look when debugging.
+- New `cache.Shared()` returns the process-wide backend so all
+  subsystems agree on the same `*sql.DB` pool. Lazy-initialised on
+  first call.
+
+### Removed
+- The bespoke read/write/atomic-rename code in
+  `internal/provider/azure/root_cache.go` and
+  `internal/updatecheck/updatecheck.go`. Both files lost ~80 lines
+  apiece and gained nothing in behaviour — the SQLite-backed
+  `Store[T]` already handles atomicity, TTL, and corrupted-payload
+  misses.
+
+### Migration
+- Existing `azure-root.json` and `update-check.json` files become
+  orphans; safe to `rm` after upgrade. cloudnav repopulates the
+  SQLite rows on first use.
+
 ## [0.22.31] — 2026-04-25
 
 ### Added
@@ -397,7 +428,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.31...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.32...HEAD
+[0.22.32]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.32
 [0.22.31]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.31
 [0.22.30]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.30
 [0.22.29]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.29

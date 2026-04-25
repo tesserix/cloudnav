@@ -1,7 +1,6 @@
 package azure
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,18 +75,24 @@ func TestRootDiskCacheMissingFile(t *testing.T) {
 
 func TestRootDiskCacheCorrupted(t *testing.T) {
 	dir := isolatedCache(t)
-	p := filepath.Join(dir, "azure-root.json")
-	if err := os.WriteFile(p, []byte("not valid json"), 0o600); err != nil {
+	// Plant a corrupted JSON entry under the new bucket layout —
+	// cache.JSONBackend writes <dir>/<bucket>/<key>.json.
+	bucket := filepath.Join(dir, "azure-root")
+	if err := os.MkdirAll(bucket, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bucket, "current.json"), []byte("not valid json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readRootDiskCache(); ok {
 		t.Error("corrupted payload should miss, not panic")
 	}
-	// The reader should have cleaned up the bad file so subsequent runs
-	// don't keep paying the decode cost.
-	if _, err := os.Stat(p); !os.IsNotExist(err) {
-		t.Errorf("corrupted cache file should be removed, stat err = %v", err)
-	}
+	// We no longer auto-remove corrupted files — the cache.Store
+	// layer treats unmarshal errors as misses, and the next
+	// successful Set overwrites the bad row. That's fine for the
+	// SQLite backend (no on-disk JSON to clean) and acceptable
+	// for the JSON backend (one stale file at most until the
+	// next live fetch).
 }
 
 func TestRootDiskCacheTTLExpiry(t *testing.T) {
@@ -109,18 +114,15 @@ func TestRootDiskCacheTTLExpiry(t *testing.T) {
 }
 
 func TestRootDiskCacheVersionMismatch(t *testing.T) {
-	dir := isolatedCache(t)
-	// Write a payload with a clearly-wrong version.
+	isolatedCache(t)
+	// Use the cache.Store API directly to plant a row with a
+	// clearly-wrong version.
 	stale := rootCacheFile{
 		Version:   rootDiskCacheVersion + 99,
 		CreatedAt: time.Now(),
 		Nodes:     sampleNodes(),
 	}
-	data, err := json.Marshal(stale)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "azure-root.json"), data, 0o600); err != nil {
+	if err := rootCacheStore().Set(rootCacheKey, stale); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readRootDiskCache(); ok {

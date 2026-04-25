@@ -368,10 +368,11 @@ func newModel() *model {
 		table:           t,
 		showCost:        true,
 	}
-	// Cache backend is JSON-per-key by default; CLOUDNAV_CACHE_BACKEND=sqlite
-	// switches both stores to a single ~/Library/Caches/cloudnav/cloudnav.db
-	// file. Both stores share one backend so we open exactly one DB.
-	backend := cache.BackendFromEnv()
+	// All caches — cost / pim / rgraph here, plus the Azure root and
+	// update-check stores in their respective packages — share the
+	// process-wide backend resolved by cache.Shared(). One open
+	// SQLite handle, one set of WAL files.
+	backend := cache.Shared()
 	// 15-minute TTL is a balance: long enough that flipping between
 	// views within a session stays instant, short enough that a new
 	// purchase / new resource shows up after a refresh without the

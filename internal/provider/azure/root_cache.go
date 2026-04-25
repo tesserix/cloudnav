@@ -3,15 +3,13 @@ package azure
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/tesserix/cloudnav/internal/cache"
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
@@ -73,19 +71,31 @@ func cacheTTL() time.Duration {
 	return d
 }
 
-// rootCachePath returns the file path for the Azure Root() cache. Falls back
-// to os.TempDir when UserCacheDir is unavailable so the cache still works in
-// minimal environments (CI runners, scratch containers).
-func rootCachePath() string {
+// rootCacheStore returns the cache.Store handle for Azure Root()
+// snapshots. Backed by the process-wide cache.Shared() backend so it
+// lives in the same SQLite file as the cost / pim / rgraph caches —
+// no more separate azure-root.json lying around.
+//
+// CLOUDNAV_CACHE_DIR keeps working as a test override: if set, we
+// route this store through a JSON backend rooted at that dir so
+// existing test scaffolding doesn't need to grow a SQLite
+// dependency.
+func rootCacheStore() *cache.Store[rootCacheFile] {
 	if v := os.Getenv(envCacheDir); v != "" {
-		return filepath.Join(v, "azure-root.json")
+		return cache.NewStoreWithBackend[rootCacheFile](
+			cache.NewJSONBackend(v), "azure-root", cacheTTL(),
+		)
 	}
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		dir = os.TempDir()
-	}
-	return filepath.Join(dir, "cloudnav", "azure-root.json")
+	return cache.NewStoreWithBackend[rootCacheFile](
+		cache.Shared(), "azure-root", cacheTTL(),
+	)
 }
+
+// rootCacheKey is the single key under which we store the Root()
+// payload. The bucket already segregates this from cost/pim/rgraph
+// rows; one row per process is enough because Root() is global to
+// the active az login.
+const rootCacheKey = "current"
 
 // azProfileFingerprint returns a stable short string derived from the Azure
 // CLI's profile file. Login changes bump its mtime and size, which changes
@@ -113,29 +123,23 @@ func azProfileFingerprint() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// readRootDiskCache returns a cached Root() payload if one exists, is fresh,
-// and matches the current az profile fingerprint. All failure modes
-// (missing, corrupted, stale, wrong fingerprint) return (nil, false) so the
-// caller falls through to a live fetch.
+// readRootDiskCache returns a cached Root() payload if one exists, is
+// fresh, and matches the current az profile fingerprint. All failure
+// modes (missing, stale, wrong fingerprint) return (nil, false) so
+// the caller falls through to a live fetch.
+//
+// TTL is enforced inside cache.Store; we still fingerprint-check
+// after reading because the user may have run `az login` more
+// recently than the TTL window.
 func readRootDiskCache() (*rootCacheFile, bool) {
 	if cacheDisabled() {
 		return nil, false
 	}
-	p := rootCachePath()
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return nil, false
-	}
-	var c rootCacheFile
-	if err := json.Unmarshal(data, &c); err != nil {
-		// Corrupted payload — best-effort cleanup so we don't keep re-reading it.
-		_ = os.Remove(p)
+	c, ok := rootCacheStore().Get(rootCacheKey)
+	if !ok {
 		return nil, false
 	}
 	if c.Version != rootDiskCacheVersion {
-		return nil, false
-	}
-	if time.Since(c.CreatedAt) > cacheTTL() {
 		return nil, false
 	}
 	if c.Fingerprint != "" && c.Fingerprint != azProfileFingerprint() {
@@ -144,15 +148,12 @@ func readRootDiskCache() (*rootCacheFile, bool) {
 	return &c, true
 }
 
-// writeRootDiskCache persists a Root() result for future cold starts. Best
-// effort: write failures are swallowed because caching is strictly an
-// optimisation — we must never break the foreground fetch.
+// writeRootDiskCache persists a Root() result for future cold starts.
+// Best effort: write failures are swallowed because caching is
+// strictly an optimisation — we must never break the foreground
+// fetch.
 func writeRootDiskCache(nodes []provider.Node, tenants, subTenants map[string]string) {
 	if cacheDisabled() {
-		return
-	}
-	p := rootCachePath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return
 	}
 	payload := rootCacheFile{
@@ -163,28 +164,11 @@ func writeRootDiskCache(nodes []provider.Node, tenants, subTenants map[string]st
 		Tenants:     tenants,
 		SubTenants:  subTenants,
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	// Atomic-ish write so a crash mid-write doesn't leave a truncated file
-	// that readRootDiskCache would treat as corrupted. Rename is atomic on the
-	// same filesystem; errors here are non-fatal.
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return
-	}
-	if err := os.Rename(tmp, p); err != nil {
-		_ = os.Remove(tmp)
-	}
+	_ = rootCacheStore().Set(rootCacheKey, payload)
 }
 
-// removeRootDiskCache wipes the cache file. Called by the explicit refresh
-// path so the next Root() goes to the wire.
+// removeRootDiskCache drops the cached row. Called by the explicit
+// refresh path so the next Root() goes to the wire.
 func removeRootDiskCache() {
-	p := rootCachePath()
-	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		// Still best-effort, but don't leak errno through.
-		return
-	}
+	_ = rootCacheStore().Delete(rootCacheKey)
 }

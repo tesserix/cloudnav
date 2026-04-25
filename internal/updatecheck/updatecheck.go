@@ -12,12 +12,30 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tesserix/cloudnav/internal/cache"
 )
+
+// updateCheckBucket is the cache.Store bucket the update-check
+// payload lives under. One row per process is enough — we only ever
+// look up "the latest known release", keyed by `updateCheckKey`.
+const (
+	updateCheckBucket = "update-check"
+	updateCheckKey    = "latest"
+)
+
+// store returns the cache.Store handle for the update-check payload.
+// Backed by the process-wide cache.Shared() backend (default SQLite
+// since 0.22.28) so the cached release lives in the same cloudnav.db
+// as cost / pim / rgraph / azure-root.
+func store() *cache.Store[cachedPayload] {
+	return cache.NewStoreWithBackend[cachedPayload](
+		cache.Shared(), updateCheckBucket, cacheStaleAfter,
+	)
+}
 
 // Repo is the GitHub slug cloudnav releases are published under. Kept
 // as a var rather than a const so forks / mirrors can patch it at build
@@ -205,75 +223,24 @@ func parseSemver(v string) []int {
 	return out
 }
 
-func cachePath() string {
-	dir, err := os.UserCacheDir()
-	if err != nil || dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, "cloudnav", "update-check.json")
-}
-
 func readCache() (cachedPayload, bool) {
-	p := cachePath()
-	if p == "" {
+	out, ok := store().Get(updateCheckKey)
+	if !ok {
 		return cachedPayload{}, false
 	}
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return cachedPayload{}, false
-	}
-	var out cachedPayload
-	if err := json.Unmarshal(data, &out); err != nil {
-		return cachedPayload{}, false
-	}
-	if time.Since(out.FetchedAt) > cacheStaleAfter {
-		return cachedPayload{}, false
-	}
+	// cache.Store enforces TTL via cacheStaleAfter, but the
+	// pollInterval check (FetchedAt) lives in Check() — that's the
+	// short freshness window for "should we hit the network at all".
 	return out, true
 }
 
 func writeCache(p cachedPayload) {
-	path := cachePath()
-	if path == "" {
-		return
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return
-	}
-	// Atomic write: write to a temp file in the same directory, then rename.
-	// Protects against torn writes when two goroutines race (and against
-	// half-written JSON when the process is killed mid-write).
-	tmp, err := os.CreateTemp(dir, ".updatecheck-*.tmp")
-	if err != nil {
-		return
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
-	}
+	_ = store().Set(updateCheckKey, p)
 }
 
 // ClearCache drops the local update-check cache so the next Check() is
 // guaranteed to hit GitHub. Used by the upgrade flow after a successful
 // install so the "update available" banner goes away immediately.
 func ClearCache() {
-	p := cachePath()
-	if p == "" {
-		return
-	}
-	_ = os.Remove(p)
+	_ = store().Delete(updateCheckKey)
 }
