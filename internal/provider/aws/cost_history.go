@@ -89,7 +89,7 @@ func (a *AWS) CostHistory(ctx context.Context, opts provider.CostHistoryOptions)
 		}, nil
 	}
 
-	currency := "USD"
+	currency := defaultCurrency
 	points := make([]provider.CostHistoryPoint, 0, len(out.ResultsByTime))
 	for _, p := range out.ResultsByTime {
 		if p.TimePeriod == nil {
