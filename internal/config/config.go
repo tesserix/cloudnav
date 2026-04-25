@@ -34,6 +34,14 @@ type Config struct {
 	// opt in explicitly so a background TUI never surprises them with a
 	// binary swap mid-session.
 	AutoUpgrade bool `json:"auto_upgrade,omitempty"`
+
+	// DisplayCurrency renders cost amounts in this currency regardless of
+	// the cloud's native currency. Empty (default) means each cloud
+	// renders in its own native currency. ISO 4217 code, e.g. "GBP".
+	// Rates come from frankfurter.app (free, ECB-backed, daily) and are
+	// cached in SQLite for 24 hours. The value is upper-cased on use, so
+	// "gbp" / "GBP" / " gbp " all resolve the same.
+	DisplayCurrency string `json:"display_currency,omitempty"`
 }
 
 // GCPConfig holds GCP-specific preferences. Optional; environment variables

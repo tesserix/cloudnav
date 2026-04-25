@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/tesserix/cloudnav/internal/config"
+	"github.com/tesserix/cloudnav/internal/currency"
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
@@ -26,6 +28,21 @@ var costCmd = &cobra.Command{
 	Aliases: []string{"costs"},
 	Short:   "Read-only cost reports across subs / RGs / regions / services",
 	Long:    "cloudnav never creates or modifies cloud resources. `cost` runs read-only CostManagement / Cost Explorer / BigQuery queries and prints them as a table.",
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		// --currency installs the FX converter for every cost
+		// subcommand. Empty value (the default) leaves the
+		// converter at nil and every formatter renders in the
+		// cloud's native currency.
+		code, _ := cmd.Flags().GetString("currency")
+		if code == "" {
+			cfg, _ := config.Load()
+			if cfg != nil {
+				code = cfg.DisplayCurrency
+			}
+		}
+		currency.SetDefault(currency.New(code))
+		return nil
+	},
 }
 
 var costSubsCmd = &cobra.Command{
@@ -395,5 +412,10 @@ func init() {
 	costProjectsCmd.Flags().Bool("json", false, "Emit JSON")
 	costProjectsCmd.Flags().String("match", "", "Substring filter on project ID")
 	costProjectsCmd.Flags().Int("limit", 0, "Maximum projects to include (0 = all)")
+	// --currency on the parent command propagates to every cost
+	// subcommand. ISO 4217 code (USD, GBP, EUR, INR, …); falls
+	// back to each cloud's native currency when empty / unknown.
+	// Rates come from frankfurter.app and are cached in SQLite.
+	costCmd.PersistentFlags().String("currency", "", "Display all costs in this ISO currency (USD, GBP, EUR, …); empty = native")
 	rootCmd.AddCommand(costCmd)
 }

@@ -23,6 +23,7 @@ import (
 
 	"github.com/tesserix/cloudnav/internal/cache"
 	"github.com/tesserix/cloudnav/internal/config"
+	"github.com/tesserix/cloudnav/internal/currency"
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
@@ -345,6 +346,11 @@ func newModel() *model {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
+	// Install the FX converter once at bootstrap. nil-safe — when
+	// the user hasn't set display_currency the converter is still
+	// constructed but every Convert call passes the amount through
+	// unchanged. That keeps the formatters branchless.
+	currency.SetDefault(currency.New(cfg.DisplayCurrency))
 
 	m := &model{
 		ctx:             context.Background(),

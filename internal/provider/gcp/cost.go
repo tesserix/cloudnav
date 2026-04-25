@@ -189,6 +189,9 @@ func parseBQCost(data []byte) (map[string]string, error) {
 }
 
 func formatCostGCP(amount float64, currency string) string {
+	if conv, target, ok := fxConvert(amount, currency); ok {
+		amount, currency = conv, target
+	}
 	var symbol string
 	switch strings.ToUpper(currency) {
 	case "USD", "":

@@ -14,17 +14,23 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 )
 
+// providerName is the canonical short name for the AWS cloud,
+// used by Provider.Name(), the gcloud CLI binary lookup, and the
+// SSO login argv. Hoisted to a const so goconst stops counting
+// the literal occurrences across the file.
+const providerName = "aws"
+
 type AWS struct {
 	aws *cli.Runner
 }
 
 func New() *AWS {
-	r := cli.New("aws")
+	r := cli.New(providerName)
 	r.Timeout = 2 * time.Minute
 	return &AWS{aws: r}
 }
 
-func (a *AWS) Name() string { return "aws" }
+func (a *AWS) Name() string { return providerName }
 
 const consoleHome = "https://console.aws.amazon.com/"
 
@@ -43,7 +49,7 @@ func (a *AWS) LoggedIn(ctx context.Context) error {
 // LoginCommand returns the argv that runs AWS SSO login. Falls back to the
 // classic credentials prompt (`aws configure`) when the user isn't using SSO.
 func (a *AWS) LoginCommand() (string, []string) {
-	return "aws", []string{"sso", "login"}
+	return providerName, []string{"sso", "login"}
 }
 
 // InstallHint points first-time users at the AWS CLI installer.

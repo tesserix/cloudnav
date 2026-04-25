@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/tesserix/cloudnav/internal/currency"
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
 	"github.com/tesserix/cloudnav/internal/tui/styles"
@@ -219,8 +221,15 @@ func formatSubCost(current, last float64, currency string) string {
 	}
 }
 
-func formatAmount(amount float64, currency string) string {
-	symbol := currencyChar(currency)
+func formatAmount(amount float64, code string) string {
+	// Optional currency conversion via the process-wide
+	// currency.Default(). When the user has set display_currency
+	// (config or runtime hotkey), every cost is re-denominated;
+	// when they haven't, this is a no-op.
+	if conv, target, ok := currency.ConvertDefault(context.Background(), amount, code); ok {
+		amount, code = conv, target
+	}
+	symbol := currencyChar(code)
 	return fmt.Sprintf("%s%.2f", symbol, amount)
 }
 

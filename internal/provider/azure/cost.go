@@ -156,8 +156,11 @@ func parseCosts(data []byte) (map[string]string, error) {
 	return out, nil
 }
 
-func formatCost(amount float64, currency string) string {
-	return fmt.Sprintf("%s%.2f", currencySymbol(currency), amount)
+func formatCost(amount float64, code string) string {
+	if conv, target, ok := fxConvert(amount, code); ok {
+		amount, code = conv, target
+	}
+	return fmt.Sprintf("%s%.2f", currencySymbol(code), amount)
 }
 
 func formatCostWithDelta(current, last costCell) string {

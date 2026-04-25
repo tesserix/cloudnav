@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.41] — 2026-04-25
+
+### Added — currency conversion via frankfurter.app
+
+- **Display every cost in the currency of your choice.** New
+  `internal/currency` package wraps the public frankfurter.app
+  feed (free, ECB-backed, no API key) and re-denominates cost
+  amounts at format time. ISO 4217 currency codes; falls back to
+  the cloud's native currency on FX failures so cost rendering
+  never blocks on the network.
+- **Three ways to set the display currency:**
+  - `display_currency` field in `~/.config/cloudnav/config.json`
+    (e.g. `"display_currency": "GBP"`).
+  - `--currency` flag on `cloudnav cost` (and every subcommand).
+  - Process-wide override via `currency.SetDefault` (used by the
+    TUI bootstrap; future runtime hotkey hooks here).
+- **SQLite-cached rate tables.** New `fx-rates` bucket in
+  `cloudnav.db`; 24-hour TTL because ECB updates daily. The same
+  rate table is reused across providers in one process, and the
+  same rates persist across cloudnav launches inside the TTL
+  window.
+- **Coalesced concurrent fetches.** Two cost overlays opening at
+  the same time don't fire two HTTP requests — the second waits
+  on the first via a per-base inflight channel.
+- **Compile-time-safe wiring.** Each provider has a `fx.go`
+  wrapper that calls `currency.ConvertDefault`, so the
+  formatters' dependency surface is one short call. No global
+  type assertions or import cycles.
+- 8 new tests in `internal/currency/converter_test.go` cover
+  same-currency no-op, empty-display passthrough, nil-converter
+  safety, round-trip via stub server, unknown-target fallback,
+  runtime `SetDisplay`, cache hit count (5 calls → 1 fetch), and
+  the `LatestRates` base-as-1.0 normalisation.
+
 ## [0.22.40] — 2026-04-25
 
 ### Added — AWS SDK migration phases 3, 4, 5, 7, 8 (final batch)
@@ -756,7 +790,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.40...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.41...HEAD
+[0.22.41]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.41
 [0.22.40]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.40
 [0.22.39]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.39
 [0.22.38]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.38
