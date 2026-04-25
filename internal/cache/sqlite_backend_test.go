@@ -203,8 +203,8 @@ func TestBackendFromEnvDefault(t *testing.T) {
 	t.Setenv("CLOUDNAV_CACHE", t.TempDir())
 	b := BackendFromEnv()
 	defer func() { _ = b.Close() }()
-	if _, ok := b.(*JSONBackend); !ok {
-		t.Errorf("default backend = %T, want *JSONBackend", b)
+	if _, ok := b.(*SQLiteBackend); !ok {
+		t.Errorf("default backend = %T, want *SQLiteBackend", b)
 	}
 }
 
@@ -215,5 +215,19 @@ func TestBackendFromEnvSelectsSQLite(t *testing.T) {
 	defer func() { _ = b.Close() }()
 	if _, ok := b.(*SQLiteBackend); !ok {
 		t.Errorf("CLOUDNAV_CACHE_BACKEND=sqlite resolved to %T, want *SQLiteBackend", b)
+	}
+}
+
+func TestBackendFromEnvSelectsJSON(t *testing.T) {
+	for _, v := range []string{"json", "files", "file", "off"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("CLOUDNAV_CACHE_BACKEND", v)
+			t.Setenv("CLOUDNAV_CACHE", t.TempDir())
+			b := BackendFromEnv()
+			defer func() { _ = b.Close() }()
+			if _, ok := b.(*JSONBackend); !ok {
+				t.Errorf("CLOUDNAV_CACHE_BACKEND=%q resolved to %T, want *JSONBackend", v, b)
+			}
+		})
 	}
 }

@@ -82,22 +82,23 @@ will repopulate on next use.
 
 ### Cache backend
 
-By default cloudnav stores each cache entry as a JSON file under
-`<CLOUDNAV_CACHE>/<bucket>/<key>.json` — boring, dependency-free,
-visible with `ls`, and ideal while the cache stays in the kilobytes
-range.
+By default cloudnav stores its cache in a single SQLite file at
+`<CLOUDNAV_CACHE>/cloudnav.db` — WAL journaling, indexed lookups by
+`(bucket, key)`, atomic upserts. Driver: `modernc.org/sqlite`
+(pure Go, no CGO, no extra install step).
 
-For larger workloads (cost history, multi-tenant inventory snapshots,
-cross-sub aggregation) you can opt in to the SQLite backend:
+If you'd rather have one JSON file per cache entry (easier to inspect
+with `cat` / `ls`, or required on a read-only filesystem where SQLite
+can't open WAL), opt out:
 
 ```bash
-export CLOUDNAV_CACHE_BACKEND=sqlite
+export CLOUDNAV_CACHE_BACKEND=json
 ```
 
-That switches both the cost cache and the PIM cache to a single
-`<CLOUDNAV_CACHE>/cloudnav.db` file (WAL journaling, indexed lookups
-by bucket+key). Both backends pass the same parity test matrix, so
-swapping is observation-free for everyday navigation.
+That switches both the cost cache and the PIM cache back to
+`<CLOUDNAV_CACHE>/<bucket>/<key>.json`. Both backends pass the same
+parity test matrix, so swapping is observation-free — you'll just
+re-fetch from the cloud once because the two stores don't share data.
 
 ## Environment variables
 
@@ -105,7 +106,7 @@ swapping is observation-free for everyday navigation.
 |---|---|
 | `CLOUDNAV_CONFIG` | path to config.json |
 | `CLOUDNAV_CACHE` | base directory for on-disk caches |
-| `CLOUDNAV_CACHE_BACKEND` | `sqlite` to switch from JSON files to a single SQLite DB; default JSON |
+| `CLOUDNAV_CACHE_BACKEND` | `json` to switch back to per-key JSON files; default is the SQLite single-file DB |
 | `CLOUDNAV_GCP_BILLING_TABLE` | GCP cost source override |
 | `CLOUDNAV_THEME` | reserved |
 | `CLOUDNAV_NO_COLOR` | disable styling |

@@ -7,20 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.28] — 2026-04-25
+
+### Changed
+- **SQLite is now the default cache backend.** Cost lookups, PIM
+  role snapshots, update-check polls, and any other persisted
+  payloads land in a single `<CLOUDNAV_CACHE>/cloudnav.db` (WAL
+  journaling, `(bucket, key) WITHOUT ROWID`, indexed by bucket).
+  The previous JSON-per-key cache directory remains on disk and is
+  safe to delete; cloudnav will repopulate the SQLite store on next
+  use.
+- Opt out with `CLOUDNAV_CACHE_BACKEND=json` (or `files` / `off`)
+  if you need a `cat`-able cache or you're on a read-only filesystem
+  where SQLite can't open WAL.
+
 ## [0.22.27] — 2026-04-24
 
 ### Added
-- **Pluggable cache backend with optional SQLite store.** The cache
-  layer was refactored around a `Backend` interface; the existing
-  JSON-per-key file store is now `*JSONBackend` and a new
-  `*SQLiteBackend` ships alongside it. SQLite uses WAL journaling,
-  a single `<CLOUDNAV_CACHE>/cloudnav.db` file, and a
+- **Pluggable cache backend with optional SQLite store** (now the
+  default in 0.22.28). Refactored the cache layer around a
+  `Backend` interface; the existing JSON-per-key file store is now
+  `*JSONBackend` and a new `*SQLiteBackend` ships alongside it.
+  SQLite uses WAL journaling, a single
+  `<CLOUDNAV_CACHE>/cloudnav.db` file, and a
   `(bucket, key) WITHOUT ROWID` schema with `idx_cache_bucket` for
   per-bucket clears. Driver: `modernc.org/sqlite` — pure Go, no CGO.
-- `CLOUDNAV_CACHE_BACKEND=sqlite` opts in. JSON remains the default
-  so existing installs see no change. Falls back to JSON with a
-  one-line stderr notice if the SQLite open fails (read-only fs,
-  locked file, missing dir).
 - Parity test matrix (`TestBackendParity`) asserts both backends
   agree on `Get` / `Set` / `Delete` / `Clear`. SQLite-specific
   tests cover upsert behaviour, TTL, bucket-isolated `Clear`,
@@ -316,7 +327,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.27...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.28...HEAD
+[0.22.28]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.28
 [0.22.27]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.27
 [0.22.26]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.26
 [0.22.25]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.25

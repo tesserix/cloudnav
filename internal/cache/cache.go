@@ -4,11 +4,12 @@
 //
 // Two backends ship with cloudnav and share the same Store[T] facade:
 //
-//   - JSON-per-key files (default) — boring, dependency-free, ideal
-//     while the cache stays in the kilobytes range.
-//   - SQLite single-file DB — opt-in via CLOUDNAV_CACHE_BACKEND=sqlite,
-//     adds indexed lookups and atomic multi-row writes for upcoming
-//     cost-history / cross-sub-aggregation features.
+//   - SQLite single-file DB (default) — one cloudnav.db per cache
+//     dir, WAL journaling, indexed (bucket, key) lookups. Built on
+//     modernc.org/sqlite (pure Go, no CGO).
+//   - JSON-per-key files — opt in via CLOUDNAV_CACHE_BACKEND=json.
+//     Useful for debugging (`cat`/`ls` the cache) or for read-only
+//     filesystems where SQLite can't open WAL.
 //
 // The interface stays narrow on purpose: Get / Set / Delete / Clear.
 // If an entry's payload cannot be marshalled or read, the call returns
@@ -58,8 +59,10 @@ type Store[T any] struct {
 }
 
 // NewStore returns a store backed by the JSON-per-key file backend
-// rooted at baseDir. Kept for compatibility with existing callers.
-// Use NewStoreWithBackend when you need to pick the SQLite backend.
+// rooted at baseDir. Kept for tests and the rare caller that wants
+// the visible-on-disk format. Production code should use
+// NewStoreWithBackend(BackendFromEnv(), …) so the user's env-var
+// choice (SQLite default, JSON opt-in) is honoured.
 func NewStore[T any](baseDir, bucket string, ttl time.Duration) *Store[T] {
 	return NewStoreWithBackend[T](NewJSONBackend(baseDir), bucket, ttl)
 }
@@ -83,24 +86,27 @@ func Path() string {
 }
 
 // BackendFromEnv picks a backend based on the CLOUDNAV_CACHE_BACKEND
-// env var. Default is the JSON file backend (no behaviour change for
-// existing users). "sqlite" / "sql" / "db" select the SQLite backend
-// rooted at <Path()>/cloudnav.db.
+// env var. SQLite is the default — single <Path()>/cloudnav.db file,
+// WAL journaling, indexed (bucket, key) lookups. Set the var to
+// "json" / "files" / "off" to opt back into the per-key JSON file
+// store (useful for debugging by `cat` / `ls` or for read-only
+// filesystems where SQLite can't open WAL).
+//
+// If the SQLite open fails for any reason (read-only fs, locked file,
+// missing dir) we fall back to JSON with a one-line stderr notice so
+// cloudnav still launches.
 func BackendFromEnv() Backend {
 	choice := strings.ToLower(strings.TrimSpace(os.Getenv("CLOUDNAV_CACHE_BACKEND")))
 	switch choice {
-	case "sqlite", "sql", "db":
+	case "json", "files", "file", "off":
+		return NewJSONBackend(Path())
+	default:
 		b, err := NewSQLiteBackend(filepath.Join(Path(), "cloudnav.db"))
 		if err != nil {
-			// SQLite open failed (read-only fs, locked, missing dir).
-			// Falling back to JSON keeps cloudnav usable instead of
-			// erroring out at startup.
 			fmt.Fprintf(os.Stderr, "cloudnav: sqlite cache unavailable (%v) — using JSON cache\n", err)
 			return NewJSONBackend(Path())
 		}
 		return b
-	default:
-		return NewJSONBackend(Path())
 	}
 }
 
