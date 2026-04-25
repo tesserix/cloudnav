@@ -80,12 +80,32 @@ cloudnav stores small caches (costs, GitHub release check) under:
 Override with `CLOUDNAV_CACHE`. Safe to delete at any time — cloudnav
 will repopulate on next use.
 
+### Cache backend
+
+By default cloudnav stores each cache entry as a JSON file under
+`<CLOUDNAV_CACHE>/<bucket>/<key>.json` — boring, dependency-free,
+visible with `ls`, and ideal while the cache stays in the kilobytes
+range.
+
+For larger workloads (cost history, multi-tenant inventory snapshots,
+cross-sub aggregation) you can opt in to the SQLite backend:
+
+```bash
+export CLOUDNAV_CACHE_BACKEND=sqlite
+```
+
+That switches both the cost cache and the PIM cache to a single
+`<CLOUDNAV_CACHE>/cloudnav.db` file (WAL journaling, indexed lookups
+by bucket+key). Both backends pass the same parity test matrix, so
+swapping is observation-free for everyday navigation.
+
 ## Environment variables
 
 | Variable | Purpose |
 |---|---|
 | `CLOUDNAV_CONFIG` | path to config.json |
 | `CLOUDNAV_CACHE` | base directory for on-disk caches |
+| `CLOUDNAV_CACHE_BACKEND` | `sqlite` to switch from JSON files to a single SQLite DB; default JSON |
 | `CLOUDNAV_GCP_BILLING_TABLE` | GCP cost source override |
 | `CLOUDNAV_THEME` | reserved |
 | `CLOUDNAV_NO_COLOR` | disable styling |

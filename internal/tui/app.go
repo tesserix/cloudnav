@@ -361,13 +361,17 @@ func newModel() *model {
 		keys:            keys.Default(),
 		table:           t,
 		showCost:        true,
-		// 15-minute TTL is a balance: long enough that flipping between
-		// views within a session stays instant, short enough that a new
-		// purchase / new resource shows up after a refresh without the
-		// user having to press X (clear cache).
-		costCache: cache.NewStore[map[string]string](cache.Path(), "costs", 15*time.Minute),
-		pimCache:  cache.NewStore[[]provider.PIMRole](cache.Path(), "pim", 5*time.Minute),
 	}
+	// Cache backend is JSON-per-key by default; CLOUDNAV_CACHE_BACKEND=sqlite
+	// switches both stores to a single ~/Library/Caches/cloudnav/cloudnav.db
+	// file. Both stores share one backend so we open exactly one DB.
+	backend := cache.BackendFromEnv()
+	// 15-minute TTL is a balance: long enough that flipping between
+	// views within a session stays instant, short enough that a new
+	// purchase / new resource shows up after a refresh without the
+	// user having to press X (clear cache).
+	m.costCache = cache.NewStoreWithBackend[map[string]string](backend, "costs", 15*time.Minute)
+	m.pimCache = cache.NewStoreWithBackend[[]provider.PIMRole](backend, "pim", 5*time.Minute)
 	m.pushHome()
 	return m
 }

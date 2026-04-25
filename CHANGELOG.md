@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.27] — 2026-04-24
+
+### Added
+- **Pluggable cache backend with optional SQLite store.** The cache
+  layer was refactored around a `Backend` interface; the existing
+  JSON-per-key file store is now `*JSONBackend` and a new
+  `*SQLiteBackend` ships alongside it. SQLite uses WAL journaling,
+  a single `<CLOUDNAV_CACHE>/cloudnav.db` file, and a
+  `(bucket, key) WITHOUT ROWID` schema with `idx_cache_bucket` for
+  per-bucket clears. Driver: `modernc.org/sqlite` — pure Go, no CGO.
+- `CLOUDNAV_CACHE_BACKEND=sqlite` opts in. JSON remains the default
+  so existing installs see no change. Falls back to JSON with a
+  one-line stderr notice if the SQLite open fails (read-only fs,
+  locked file, missing dir).
+- Parity test matrix (`TestBackendParity`) asserts both backends
+  agree on `Get` / `Set` / `Delete` / `Clear`. SQLite-specific
+  tests cover upsert behaviour, TTL, bucket-isolated `Clear`,
+  concurrent writes, and persistence across reopen.
+
+### Changed
+- `Store[T]` now wraps a `Backend` instead of writing files directly.
+  `cache.NewStore` keeps the JSON-rooted-at-`baseDir` shape for
+  back-compat; new callers use `NewStoreWithBackend` to share one
+  open backend across multiple buckets.
+
 ## [0.22.26] — 2026-04-24
 
 ### Fixed
@@ -291,7 +316,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.26...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.27...HEAD
+[0.22.27]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.27
 [0.22.26]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.26
 [0.22.25]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.25
 [0.22.10]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.10
