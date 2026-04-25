@@ -64,34 +64,51 @@ Grab the latest from [Releases](https://github.com/tesserix/cloudnav/releases) �
 
 ## Prerequisites
 
-`cloudnav` wraps the cloud providers' own CLIs. Install whichever you need:
+cloudnav talks to each cloud's API directly via the official Go SDKs.
+Auth flows through the standard SDK credential chains, so any method
+each cloud already supports works out of the box — CLI cached tokens,
+Service Principals, federated workload identity, IAM roles, IRSA, and
+metadata servers all resolve transparently.
 
-| Provider | CLI | Auth |
-|---------|-----|------|
-| Azure | [`az`](https://learn.microsoft.com/cli/azure/install-azure-cli) | `az login` |
-| GCP | [`gcloud`](https://cloud.google.com/sdk/docs/install) | `gcloud auth login` + `gcloud auth application-default login` |
-| AWS | [`aws`](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) | `aws configure sso` or `aws configure` |
+| Provider | Common login | Other supported methods |
+|---------|------|------|
+| Azure | `az login` | Service Principal (secret / certificate), Workload Identity (federated token), Managed Identity |
+| GCP | `gcloud auth application-default login` | Service Account JSON, Workload Identity Federation, Impersonated SA, metadata server |
+| AWS | `aws configure sso` | Static IAM keys, Web Identity / OIDC (IRSA, GitHub Actions), AssumeRole profiles, ECS task role, EC2 IMDS |
 
-Run `cloudnav doctor` to verify everything is wired up.
+Full method matrix + env vars for every flow: [`docs/auth.md`](docs/auth.md).
+
+Run `cloudnav doctor` to verify each cloud is reachable and to see
+which auth method is currently active:
+
+```
+✓ azure  alice@example.com           · Azure CLI cached token
+✓ gcp    sa@my-proj.iam.gserviceaccount.com  · Service Account JSON (GOOGLE_APPLICATION_CREDENTIALS)
+✓ aws    arn:aws:iam::123:user/alice · Default profile / SSO (~/.aws/credentials)
+```
 
 ## Quickstart — step by step
 
 1. **Install the tool** (pick one of the options above).
-2. **Log in to the cloud you care about** using its own CLI:
+2. **Authenticate** to the cloud you care about. Either the CLI flow:
    ```bash
-   az login                           # Azure
-   gcloud auth login                  # GCP
-   aws configure sso                  # AWS (recommended)
+   az login                                       # Azure
+   gcloud auth application-default login          # GCP
+   aws configure sso                              # AWS (recommended)
    ```
+   …or set the env vars for any non-CLI method (Service Principal,
+   federated workload identity, IRSA, etc.) — see
+   [`docs/auth.md`](docs/auth.md).
 3. **Verify everything is wired up:**
    ```bash
    cloudnav doctor
    ```
-   Expected output:
+   Expected output (the right-hand label shows which auth method
+   resolved):
    ```
-   ✓ azure  you@example.com
-   ✓ gcp    you@example.com
-   ✓ aws    arn:aws:iam::123456789012:user/you
+   ✓ azure  you@example.com           · Azure CLI cached token
+   ✓ gcp    you@example.com           · gcloud cached ADC (`gcloud auth application-default login`)
+   ✓ aws    arn:aws:iam::123:user/you · Default profile / SSO (~/.aws/credentials)
    ```
 4. **Launch the TUI:**
    ```bash

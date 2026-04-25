@@ -26,8 +26,18 @@ cloudnav is three layers wired together by a navigation stack.
   generic `provider.Node` and `provider.Provider`. Anything
   cloud-specific lives in `internal/provider/<cloud>/`.
 - **No credentials in our process.** cloudnav never asks for tokens or
-  passwords. Auth is whatever `az login` / `gcloud auth` / `aws sso
-  login` already configured.
+  passwords. Auth flows through each cloud's standard SDK credential
+  chain — `azidentity.NewDefaultAzureCredential`,
+  `google.FindDefaultCredentials`, `config.LoadDefaultConfig` — so
+  whatever the host already supports (CLI cached tokens, Service
+  Principal env vars, federated workload identity, Managed Identity,
+  IRSA / OIDC, IAM role from instance metadata) just works. See
+  [`auth.md`](auth.md) for the full per-cloud method matrix.
+- **Auth method is observable.** Every provider implements
+  `provider.Identifier` so `cloudnav doctor` shows both the
+  authenticated principal and the credential source that resolved
+  (`Azure CLI cached token`, `Service Account JSON`, `Web Identity /
+  OIDC`, etc.).
 
 ## TUI layer
 
@@ -82,9 +92,12 @@ type Provider interface {
 ```
 
 Optional capabilities (`Coster`, `PIMer`, `Advisor`, `Billing`,
-`HealthEventer`, `Metricser`, `CostHistoryer`, `BillingSummarer`) are
-type-asserted at call sites, so providers opt in per feature. Adding a
-cloud means implementing the base + whichever optionals make sense.
+`HealthEventer`, `Metricser`, `CostHistoryer`, `BillingSummarer`,
+`Deleter`, `Locker`, `Identifier`) are type-asserted at call sites,
+so providers opt in per feature. Adding a cloud means implementing
+the base + whichever optionals make sense. Compile-time
+`var _ provider.X = (*Y)(nil)` assertions catch interface
+regressions at build time.
 
 ## Azure — SDK-first, CLI-fallback
 
@@ -93,8 +106,11 @@ for Go (`azcore`, `azidentity`, `armsubscription`) for the hottest paths
 and falls back to the `az` CLI only when the SDK credential chain can't
 resolve (no cached login, az not installed).
 
-- **Auth** — `DefaultAzureCredential` / `AzureCLICredential`. Reads the
-  `az login` cache directly, no process spawn per call.
+- **Auth** — `DefaultAzureCredential` chain. Resolves Service
+  Principal env vars / federated workload identity / Managed
+  Identity / Azure CLI cached token in that order, all transparent
+  to the rest of the codebase. See [`auth.md`](auth.md) for the
+  full method matrix.
 - **Tokens** — cached in-process per (tenant, audience) until ~2 min
   before expiry. A PIM list across N tenants acquires N tokens once per
   session instead of 2N processes per refresh.
@@ -128,19 +144,60 @@ resolve (no cached login, az not installed).
 VM start / stop / show and resource detail (`az resource show`) remain
 on `cli.Runner` — lower-traffic paths that are fine shelling out.
 
+## GCP — SDK-first, CLI-fallback
+
+GCP went through the same migration as Azure. All 12 phases are
+documented in [`gcp-sdk-migration.md`](gcp-sdk-migration.md). Resolves
+auth via `google.FindDefaultCredentials` (ADC), supporting Service
+Account JSON, Workload Identity Federation, Impersonated SA,
+metadata server, and gcloud user creds.
+
+Liens (the GCP analog to Azure management locks) intentionally stay
+on `gcloud alpha resource-manager liens` — Liens v1 has no Go SDK
+in `cloud.google.com/go`, and pulling
+`google.golang.org/api/cloudresourcemanager/v1` just for this would
+mean a second auth pool. Liens are infrequently accessed; CLI
+fallback is fine.
+
+## AWS — SDK-first, CLI-fallback
+
+Mirrors the GCP migration. Routes through the v2 SDK
+(`config.LoadDefaultConfig`) which resolves IRSA / OIDC, static
+keys, temporary creds, profiles (with AssumeRole), SSO, ECS task
+role, and EC2 IMDS — every method `aws-cli` supports works in
+cloudnav by default.
+
+Trusted Advisor stays on the CLI fallback because it's a paid
+support-plan feature few users hit. Locker is intentionally
+unimplemented — AWS has no native lock primitive; the closest
+analog is SCPs which are policy-shaped not resource-shaped.
+
 ## Caching
 
-| Layer     | Where                                   | TTL    | Purpose |
-|-----------|-----------------------------------------|--------|---------|
-| Token     | in-memory (`pim_tokens.go`)             | 58 min | avoid per-call az spawn |
-| Root      | in-memory + disk                        | 90 s / session | sub list across back/forward |
-| Cost      | in-memory + disk (`cache.Store`)        | 15 min | warm the cost column on restart |
-| Resource Health | in-memory per sub                 | 60 s   | avoid per-resource lookups |
-| Update check | disk (`updatecheck`)                 | 1 h poll / 24 h stale fallback | cheap startup |
+Every disk cache lives in a single SQLite file —
+`$XDG_CACHE_HOME/cloudnav/cloudnav.db` (or
+`~/.cache/cloudnav/cloudnav.db` / `%LOCALAPPDATA%\cloudnav\cloudnav.db`)
+— with one table-style bucket per data class. Default is SQLite as
+of 0.22.28; opt out with `CLOUDNAV_CACHE_BACKEND=json` for the
+older per-key file layout.
 
-Disk caches live under `$XDG_CACHE_HOME/cloudnav` (or
-`~/.cache/cloudnav` / `%LOCALAPPDATA%\cloudnav`). Override with
-`CLOUDNAV_CACHE`.
+| Bucket | Cloud | TTL | Purpose |
+|---|---|---|---|
+| `costs` | all | 15 min | warm the cost column on restart |
+| `pim` | all | 5 min | persist PIM eligibilities across sessions |
+| `azure-root` | Azure | 10 min | cross-tenant subscription enumeration |
+| `rgraph` | Azure | 10 min | multi-RG drill (Resource Graph KQL snapshots) |
+| `gcp-root` | GCP | 10 min | project + folder enumeration |
+| `gcp-assets` | GCP | 5 min | per-project Asset Inventory drill |
+| `aws-root` | AWS | 10 min | account list (Organizations / STS) |
+| `aws-resources` | AWS | 5 min | per-region tagging API drill |
+| `fx-rates` | currency | 24 h | frankfurter.app rate tables for `display_currency` |
+| `update-check` | self | 1 h poll / 24 h stale fallback | cheap startup |
+
+Cache key fingerprints include the active credential file (Azure az
+profile, gcloud config, AWS `~/.aws/credentials` + profile env vars)
+so a re-login or profile switch auto-invalidates the relevant rows.
+Override `CLOUDNAV_CACHE` to relocate the directory.
 
 ## Upgrade
 

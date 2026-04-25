@@ -19,12 +19,20 @@ Override with `CLOUDNAV_CONFIG=/path/to/config.json`.
   "default_provider": "azure",
   "theme": "default",
   "auto_upgrade": false,
+  "display_currency": "GBP",
   "gcp": {
     "billing_table": "my-project.billing.gcp_billing_export_v1"
   },
   "bookmarks": []
 }
 ```
+
+> **Cloud authentication is not in this file.** cloudnav never reads
+> credentials; it relies on each cloud's standard SDK auth chain
+> (Azure CLI cached token / Service Principal / Managed Identity;
+> GCP ADC; AWS profile / IRSA / static keys / SSO). See
+> [`auth.md`](auth.md) for the full method matrix and the env vars
+> for every flow.
 
 ## Fields
 
@@ -54,6 +62,26 @@ browser.
 
 Default: `false`. When unset, cloudnav shows the update pill and waits
 for you to press `U`.
+
+### `display_currency`
+
+ISO 4217 currency code (e.g. `"GBP"`, `"EUR"`, `"INR"`). When set,
+every cost rendering in cloudnav — sub / RG / resource columns, the
+`B` billing overlay, the `$` cost chart, and `cloudnav cost`
+subcommands — re-denominates from the cloud's native currency to the
+chosen one.
+
+Rates come from [frankfurter.app](https://www.frankfurter.app/)
+(free, ECB-backed, no API key) and are cached in the SQLite cache
+under the `fx-rates` bucket with a 24-hour TTL. On FX failures the
+formatters silently fall back to the cloud's native currency — cost
+rendering never blocks on the network.
+
+Override per-invocation with `cloudnav cost --currency GBP`.
+Override at runtime via the `currency.SetDefault` API (used by the
+TUI bootstrap; future hotkey hooks here).
+
+Unset (default) → each cloud renders in its own native currency.
 
 ### `gcp.billing_table`
 
