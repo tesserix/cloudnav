@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.37] — 2026-04-25
+
+### Added — GCP SDK migration phases 9-12 + Service Health + Budgets
+
+- **Phase 9 — Folders SDK.** Org-level folder traversal via
+  `resourcemanager.FoldersClient.ListFolders`; sub-projects under
+  a folder via `SearchProjects` with `parent:folders/<id>` filter.
+  Replaces three `gcloud resource-manager folders ...` shells.
+- **Phase 10 — Privileged Access Manager SDK.** PAM entitlements
+  + grants via `cloud.google.com/go/privilegedaccessmanager/apiv1`.
+  The `p` PIM overlay now talks to PAM through the typed SDK; the
+  conditional-IAM fallback path stays on gcloud since it's a
+  diagnostic, not a hot path.
+- **Phase 11 — ADC-based `LoggedIn` check.** Drops the
+  `gcloud auth list` subprocess from cloudnav startup. Uses
+  `golang.org/x/oauth2/google.FindDefaultCredentials` and mints
+  one token to verify the creds work end-to-end. ~250ms shaved
+  from every cold start.
+- **Phase 12 — Cloud Billing SDK.** `GetProjectBillingInfo` via
+  `cloudbilling.v1` for the cost auto-detect path. Used by both
+  `Costs()` and `BillingSummary()`.
+- **Service Health for GCP.** New
+  `cloud.google.com/go/servicehealth/apiv1` integration brings
+  GCP to parity with Azure / AWS on the `H` overlay. `HealthEvents`
+  now satisfies `provider.HealthEventer` across all three clouds.
+- **Cloud Billing Budgets.** `B` overlay now reads real budget caps
+  via `cloud.google.com/go/billing/budgets/apiv1.ListBudgets`
+  instead of parsing CLI JSON. Currency comes from the SDK Money
+  type — no more silent currency-mismatch bugs.
+
+### Cross-cloud navigation reference
+Documented in `docs/gcp-sdk-migration.md`:
+
+| Cloud | Hierarchy |
+|---|---|
+| Azure | Tenant → Subscription → ResourceGroup → Resource |
+| GCP   | Organization → Folder → Project → Resource |
+| AWS   | Organization → OU → Account → Region → Resource |
+
+cloudnav normalises these into the same Kind enum + drill path so
+users press the same keys for the same operations everywhere.
+
 ## [0.22.36] — 2026-04-25
 
 ### Added — GCP SDK migration, phases 5 + 6 + 7 + 8 (final batch)
@@ -577,7 +619,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.36...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.37...HEAD
+[0.22.37]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.37
 [0.22.36]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.36
 [0.22.35]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.35
 [0.22.34]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.34

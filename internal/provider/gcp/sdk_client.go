@@ -102,6 +102,21 @@ func (g *GCP) Close() error {
 	if err := closeStorageClient(); err != nil && firstErr == nil {
 		firstErr = err
 	}
+	if err := closeFoldersClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeCloudBillingClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closePAMClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeServiceHealthClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeBudgetsClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return firstErr
 }
 

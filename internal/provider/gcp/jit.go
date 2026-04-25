@@ -64,6 +64,10 @@ func (g *GCP) ListEligibleRoles(ctx context.Context) ([]provider.PIMRole, error)
 }
 
 func (g *GCP) listProjectIDs(ctx context.Context) ([]string, error) {
+	// SDK fast path — same SearchProjects iterator we use in Root().
+	if ids, sdkUsable, err := g.listProjectIDsSDK(ctx); sdkUsable && err == nil {
+		return ids, nil
+	}
 	out, err := g.gcloud.Run(ctx, "projects", "list", "--format=value(projectId)")
 	if err != nil {
 		return nil, fmt.Errorf("gcp list projects: %w", err)
@@ -83,6 +87,15 @@ func (g *GCP) listProjectIDs(ctx context.Context) ([]string, error) {
 // ACTIVE grants, so the TUI can flip the ACTIVE badge without a second
 // round trip.
 func (g *GCP) fetchPAMForProject(ctx context.Context, projectID string) ([]provider.PIMRole, map[string]string, error) {
+	// SDK fast path — Privileged Access Manager v1
+	// ListEntitlements + ListGrants in one client.
+	if roles, active, sdkUsable, err := g.fetchPAMEntitlementsSDK(ctx, projectID); sdkUsable && err == nil {
+		return roles, active, nil
+	} else if sdkUsable && isPAMNotEnabled(err) {
+		// API not enabled on this project — silent skip, matches CLI shape.
+		return nil, nil, nil
+	}
+
 	listOut, err := g.gcloud.Run(ctx,
 		"beta", "pam", "entitlements", "list",
 		"--project="+projectID,

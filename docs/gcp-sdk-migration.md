@@ -152,6 +152,46 @@ read them.
 - Cloud Run / GKE workload-level navigation (currently filtered
   out in `gcp.go` lines 173–245 by design).
 
+## Phases 9–12 + new capabilities (v0.22.37)
+
+- ✅ **Phase 9 — Folders SDK.** `resourcemanager.FoldersClient`
+  for org-level folder traversal; `SearchProjects` with
+  `parent:folders/<id>` for sub-projects.
+- ✅ **Phase 10 — Privileged Access Manager SDK.** PAM
+  entitlements + grants via
+  `cloud.google.com/go/privilegedaccessmanager/apiv1`. Conditional
+  IAM fallback stays on the gcloud path.
+- ✅ **Phase 11 — ADC-based `LoggedIn`.** Drops the `gcloud auth
+  list` subprocess from cloudnav startup. Uses
+  `golang.org/x/oauth2/google.FindDefaultCredentials` and mints
+  one access token to verify creds end-to-end.
+- ✅ **Phase 12 — Cloud Billing SDK.** `cloudbilling.v1`
+  `GetProjectBillingInfo` for the auto-detect path that resolves
+  the BQ export table from the active gcloud project.
+
+### New capabilities (not previously implemented)
+
+- ✅ **Service Health for GCP** — implements
+  `provider.HealthEventer` via
+  `cloud.google.com/go/servicehealth/apiv1.ListEvents` across all
+  accessible projects. The `H` overlay now lights up on GCP at
+  parity with Azure / AWS.
+- ✅ **Cloud Billing Budgets** — `B` overlay now reads real budget
+  caps via `cloud.google.com/go/billing/budgets/apiv1` instead of
+  parsing CLI JSON. Currency derived from the SDK Money type.
+
+## Cross-cloud navigation hierarchy reference
+
+| Cloud | Top → Bottom |
+|---|---|
+| Azure | Tenant → Subscription → ResourceGroup → Resource |
+| GCP   | Organization → Folder → Project → Resource |
+| AWS   | Organization → OU → Account → Region → Resource |
+
+cloudnav normalises these into one `Kind` enum + the same drill
+path so users press the same keys for the same operations across
+clouds.
+
 ## Tracking
 
 Each step gets a small dedicated CHANGELOG block; the per-PR

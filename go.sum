@@ -14,6 +14,8 @@ cloud.google.com/go/auth/oauth2adapt v0.2.8 h1:keo8NaayQZ6wimpNSmW5OPc283g65QNIi
 cloud.google.com/go/auth/oauth2adapt v0.2.8/go.mod h1:XQ9y31RkqZCcwJWNSx2Xvric3RrU88hAYYbjDWYDL+c=
 cloud.google.com/go/bigquery v1.76.0 h1:wnfVSXN6GEMlsAoHWdhzTC8NMsptOx2hsqPiI+lTs3I=
 cloud.google.com/go/bigquery v1.76.0/go.mod h1:J4wuqka/1hEpdJxH2oBrUR0vjTD+r7drGkpcA3yqERM=
+cloud.google.com/go/billing v1.24.0 h1:N+uNaIUT3XUy/z1x9rc3QX6gS/OkGm7KD+vaIRGEpPo=
+cloud.google.com/go/billing v1.24.0/go.mod h1:axqDO1uHegh7u5qngkTfqN1djAeLGsWAFAblERgmgEk=
 cloud.google.com/go/compute v1.60.0 h1:CqGt23ysz990ZZe1vq/9aDPKKnmwM6kcC7Y1Q05H2kI=
 cloud.google.com/go/compute v1.60.0/go.mod h1:Xm6PbsLgBpAg4va77ljbBdpMjzuU+uPp5Ze2dnZq7lw=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
@@ -28,10 +30,14 @@ cloud.google.com/go/orgpolicy v1.16.0 h1:MdF2ebs6H4CoxgrtPQ7XDvE1ACIeSQDY2a1/QwV
 cloud.google.com/go/orgpolicy v1.16.0/go.mod h1:l88jhhDM/KYN0FJF87m5Gub1qcOFkN94efA2uhy+U0s=
 cloud.google.com/go/osconfig v1.17.0 h1:e4EhWz5w7S/7fJ+rhGtyWpSls0Bxr5sxXc2PGWjiI/o=
 cloud.google.com/go/osconfig v1.17.0/go.mod h1:iveYW1fYygItJeJwbQ/fkzYAzLEbXOQnr7+eBmH9MJ0=
+cloud.google.com/go/privilegedaccessmanager v0.6.0 h1:fPBkgT1IShfqgkVRdnb9abJeGrEuBWtTD69lC29EsWY=
+cloud.google.com/go/privilegedaccessmanager v0.6.0/go.mod h1:tcFRJAnNd+6W/FoD0s9PhY7pY5PIVVYOynCDEIrU3m8=
 cloud.google.com/go/recommender v1.16.0 h1:5VCy6TBEAQ0zqHh5ROgzw+mOEB3IZs9b2qtNgpqhVIQ=
 cloud.google.com/go/recommender v1.16.0/go.mod h1:INRBLfBQJCrgPqjBVFht4OjaFq/WhB/c5V1sqBOdX8g=
 cloud.google.com/go/resourcemanager v1.13.0 h1:cc291PxLoKrHKVxqoJ2uMMzrxVJj+sRe+iEb1DFlDNA=
 cloud.google.com/go/resourcemanager v1.13.0/go.mod h1:ve0VNxPoDU6XxDuEMCjkineb0YzXQXx3mOWwnNckGDE=
+cloud.google.com/go/servicehealth v1.5.0 h1:hpFq93tDiBKXSd77oS9XJORJOKZlPTl7G/Hu8/v6WMY=
+cloud.google.com/go/servicehealth v1.5.0/go.mod h1:1fWCl3BnIozFeE/UiEFg9CsXSwMYcRzu85FPz8mIWVs=
 cloud.google.com/go/storage v1.62.1 h1:Os0G3XbUbjZumkpDUf2Y0rLoXJTCF1kU2kWUujKYXD8=
 cloud.google.com/go/storage v1.62.1/go.mod h1:cpYz/kRVZ+UQAF1uHeea10/9ewcRbxGoGNKsS9daSXA=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.1 h1:jHb/wfvRikGdxMXYV3QG/SzUOPYN9KEUUuC0Yd0/vC0=

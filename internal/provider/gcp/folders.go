@@ -45,9 +45,20 @@ func orgID() string {
 // deeper folder still appear when the user drills into whichever
 // ancestor folder owns them (via the `parent` field on the project).
 //
+// Hierarchy is GCP-specific (mirrors the cross-cloud navigation
+// matrix in docs/gcp-sdk-migration.md):
+//   - Azure: Tenant → Subscription → ResourceGroup → Resource
+//   - GCP:   Organization → Folder → Project → Resource
+//   - AWS:   Organization → OU → Account → Region → Resource
+//
 // Returns (nil, nil) on permission errors so the caller can fall back to
 // the flat project list rather than surfacing a raw IAM error.
 func (g *GCP) listFolders(ctx context.Context, org string) ([]provider.Node, error) {
+	parent := "organizations/" + org
+	// SDK fast path — Resource Manager v3 ListFolders RPC.
+	if folders, sdkUsable, err := g.listFoldersSDK(ctx, parent); sdkUsable && err == nil {
+		return folders, nil
+	}
 	out, err := g.gcloud.Run(ctx,
 		"resource-manager", "folders", "list",
 		"--organization="+org,
@@ -56,7 +67,7 @@ func (g *GCP) listFolders(ctx context.Context, org string) ([]provider.Node, err
 	if err != nil {
 		return nil, nil // silent fallback — caller uses flat projects
 	}
-	return parseFolders(out, "organizations/"+org)
+	return parseFolders(out, parent)
 }
 
 func parseFolders(data []byte, orgParent string) ([]provider.Node, error) {
@@ -105,30 +116,40 @@ func (g *GCP) folderChildren(ctx context.Context, folder provider.Node) ([]provi
 		projects   []provider.Node
 	)
 
-	// Sub-folders under this folder. Failure is non-fatal — the user
-	// might lack resourcemanager.folders.list on the nested folder; we
-	// still show projects.
-	if folders, err := g.gcloud.Run(ctx,
-		"resource-manager", "folders", "list",
-		"--folder="+folderNumberFromID(folder.ID),
-		"--format=json",
-	); err == nil {
-		subFolders, _ = parseFolders(folders, folder.ID)
+	// SDK fast path for sub-folders.
+	if subs, sdkUsable, err := g.listFoldersSDK(ctx, folder.ID); sdkUsable && err == nil {
+		subFolders = subs
+	} else {
+		// Sub-folders under this folder. Failure is non-fatal — the user
+		// might lack resourcemanager.folders.list on the nested folder; we
+		// still show projects.
+		if foldersOut, err := g.gcloud.Run(ctx,
+			"resource-manager", "folders", "list",
+			"--folder="+folderNumberFromID(folder.ID),
+			"--format=json",
+		); err == nil {
+			subFolders, _ = parseFolders(foldersOut, folder.ID)
+		}
 	}
 
-	// Projects directly under the folder. gcloud's filter syntax accepts
-	// parent.id=<num> AND parent.type=folder.
-	out, err := g.gcloud.Run(ctx,
-		"projects", "list",
-		"--filter=parent.id="+folderNumberFromID(folder.ID)+" AND parent.type=folder",
-		"--format=json",
-	)
-	if err == nil {
-		projects, _ = parseProjects(out)
-	} else if len(subFolders) == 0 {
-		// Only surface the error when there's literally nothing to show
-		// — otherwise users see folders but get a scary error banner.
-		return nil, err
+	// SDK fast path for projects under this folder.
+	if ps, sdkUsable, err := g.searchProjectsUnderFolderSDK(ctx, folder.ID); sdkUsable && err == nil {
+		projects = ps
+	} else {
+		// Projects directly under the folder. gcloud's filter syntax accepts
+		// parent.id=<num> AND parent.type=folder.
+		out, err := g.gcloud.Run(ctx,
+			"projects", "list",
+			"--filter=parent.id="+folderNumberFromID(folder.ID)+" AND parent.type=folder",
+			"--format=json",
+		)
+		if err == nil {
+			projects, _ = parseProjects(out)
+		} else if len(subFolders) == 0 {
+			// Only surface the error when there's literally nothing to show
+			// — otherwise users see folders but get a scary error banner.
+			return nil, err
+		}
 	}
 
 	combined := make([]provider.Node, 0, len(subFolders)+len(projects))

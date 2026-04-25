@@ -96,11 +96,17 @@ func (g *GCP) autoDetectBillingTable(ctx context.Context) string {
 	if project == "" {
 		return ""
 	}
-	acctOut, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
-	if err != nil {
-		return ""
+	// SDK fast path — same as primaryBillingAccount above.
+	var acct string
+	if a, sdkUsable, err := g.projectBillingAccountSDK(ctx, project); sdkUsable && err == nil {
+		acct = a
+	} else {
+		acctOut, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
+		if err != nil {
+			return ""
+		}
+		acct = strings.TrimPrefix(strings.TrimSpace(string(acctOut)), "billingAccounts/")
 	}
-	acct := strings.TrimPrefix(strings.TrimSpace(string(acctOut)), "billingAccounts/")
 	if acct == "" {
 		return ""
 	}
@@ -129,6 +135,12 @@ func (g *GCP) primaryBillingAccount(ctx context.Context) string {
 	project := strings.TrimSpace(string(projectOut))
 	if project == "" {
 		return ""
+	}
+	// SDK fast path — Cloud Billing v1 GetProjectBillingInfo. No
+	// subprocess, typed return, single client connection across
+	// the process.
+	if acct, sdkUsable, err := g.projectBillingAccountSDK(ctx, project); sdkUsable && err == nil {
+		return acct
 	}
 	out, err := g.gcloud.Run(ctx, "billing", "projects", "describe", project, "--format=value(billingAccountName)")
 	if err != nil {

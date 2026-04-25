@@ -30,6 +30,14 @@ func New() *GCP {
 func (g *GCP) Name() string { return "gcp" }
 
 func (g *GCP) LoggedIn(ctx context.Context) error {
+	// SDK fast path — Application Default Credentials. Resolves
+	// the active account from the same source `gcloud auth list`
+	// reads (gcloud-cached creds, service-account JSON, workload
+	// identity, etc.) but without forking a Python interpreter on
+	// every cloudnav startup.
+	if err := g.checkADC(ctx); err == nil {
+		return nil
+	}
 	out, err := g.gcloud.Run(ctx, "auth", "list",
 		"--filter=status:ACTIVE",
 		"--format=value(account)",

@@ -88,10 +88,15 @@ func (g *GCP) BillingSummary(ctx context.Context) (provider.BillingScope, error)
 	return scope, nil
 }
 
-// fetchBillingAccountBudget queries `gcloud billing budgets list` for the
-// account, sums the monthly ceiling(s), and returns the largest one (if
-// multiple budgets exist) along with a note about the aggregation.
+// fetchBillingAccountBudget queries the Cloud Billing Budgets API
+// for a billing account, sums the monthly ceiling(s), and returns
+// the largest one along with a note about aggregation when there
+// are multiple. Routes through the SDK first; falls back to gcloud
+// when ADC isn't usable.
 func (g *GCP) fetchBillingAccountBudget(ctx context.Context, acct string) (float64, string, string) {
+	if amt, cur, note, sdkUsable, err := g.fetchBudgetsSDK(ctx, acct); sdkUsable && err == nil {
+		return amt, cur, note
+	}
 	out, err := g.gcloud.Run(ctx,
 		"billing", "budgets", "list",
 		"--billing-account="+acct,
