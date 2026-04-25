@@ -98,13 +98,22 @@ type projectJSON struct {
 }
 
 func (g *GCP) Root(ctx context.Context) ([]provider.Node, error) {
+	// Disk-cache fast path: skip Resource Manager entirely when a
+	// fresh row exists in the SQLite cache for this (org,
+	// gcloud-fingerprint) tuple. Mirrors Azure's azure-root cache.
+	org := orgID()
+	if cached, ok := readRootDiskCacheGCP(org); ok && len(cached) > 0 {
+		return cached, nil
+	}
+
 	// Folder mode: when CLOUDNAV_GCP_ORG is set the top level becomes the
 	// folders directly under that org, and the user drills into a folder
 	// to see its projects. Any permission or lookup failure falls through
 	// to the flat project list so the TUI never breaks on standalone
 	// accounts that happen to have stale env config.
-	if org := orgID(); org != "" {
+	if org != "" {
 		if folders, _ := g.listFolders(ctx, org); len(folders) > 0 {
+			writeRootDiskCacheGCP(org, folders)
 			return folders, nil
 		}
 	}
@@ -114,13 +123,18 @@ func (g *GCP) Root(ctx context.Context) ([]provider.Node, error) {
 	// typed errors. Falls back to `gcloud projects list` when ADC isn't
 	// configured (CI, fresh machines, service-account-less hosts).
 	if nodes, sdkUsable, err := g.listProjectsSDK(ctx); sdkUsable && err == nil {
+		writeRootDiskCacheGCP(org, nodes)
 		return nodes, nil
 	}
 	out, err := g.gcloud.Run(ctx, "projects", "list", "--format=json")
 	if err != nil {
 		return nil, err
 	}
-	return parseProjects(out)
+	nodes, err := parseProjects(out)
+	if err == nil {
+		writeRootDiskCacheGCP(org, nodes)
+	}
+	return nodes, err
 }
 
 func parseProjects(data []byte) ([]provider.Node, error) {
@@ -284,13 +298,21 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
+	// SQLite cache fast path: re-drilling into the same project
+	// inside the TTL window short-circuits the SearchAllResources
+	// round trip. Mirrors the Azure rgraph cache.
+	assetTypes := resolveAssetTypes()
+	if cached, ok := readAssetCache(project.ID, assetTypes); ok {
+		return cached, nil
+	}
+
 	// SDK fast path. Cloud Asset Inventory v1 SearchAllResources via
 	// cloud.google.com/go/asset — single HTTP/2 connection reused
 	// across the process, ~3× faster than spawning gcloud per drill on
 	// a 5k-asset project. Falls through to the gcloud CLI path on any
 	// SDK failure (no ADC, API not enabled, transient network error)
 	// so the user keeps a working drill in every environment.
-	if nodes, sdkUsable, err := g.searchAssetsSDK(callCtx, project, resolveAssetTypes(), assetPageLimit); sdkUsable && err == nil {
+	if nodes, sdkUsable, err := g.searchAssetsSDK(callCtx, project, assetTypes, assetPageLimit); sdkUsable && err == nil {
 		if len(nodes) > assetPageLimit {
 			nodes = nodes[:assetPageLimit]
 			if len(nodes) > 0 {
@@ -300,6 +322,7 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 				nodes[0].Meta["partial"] = fmt.Sprintf("%d", assetPageLimit)
 			}
 		}
+		writeAssetCache(project.ID, assetTypes, nodes)
 		return nodes, nil
 	}
 	// Request limit+1 so we can tell the caller when the project has more
@@ -340,6 +363,10 @@ func (g *GCP) resources(ctx context.Context, project provider.Node) ([]provider.
 		nodes = nodes[:assetPageLimit]
 		nodes[0].Meta["partial"] = fmt.Sprintf("%d", assetPageLimit)
 	}
+	// Persist the gcloud-fallback result too so a follow-up drill
+	// inside the TTL serves from cache regardless of which path
+	// produced the data.
+	writeAssetCache(project.ID, assetTypes, nodes)
 	return nodes, nil
 }
 

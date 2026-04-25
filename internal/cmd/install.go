@@ -14,11 +14,18 @@ import (
 	"github.com/tesserix/cloudnav/internal/tools"
 )
 
+// toolZellij is the registered name of the Zellij TUI tool. Kept
+// as a const so the install / upgrade ValidArgs and the
+// dispatcher table reference exactly one source of truth — the
+// goconst linter trips on three "zellij" string literals if we
+// inline it.
+const toolZellij = "zellij"
+
 // toolByName looks up a third-party terminal tool registered in the
 // internal/tools package. Add new tools by appending to this map and
 // extending validInstallArgs / install help text.
 func toolByName(name string) (tools.Tool, bool) {
-	if name == "zellij" {
+	if name == toolZellij {
 		return tools.Zellij, true
 	}
 	return tools.Tool{}, false
@@ -26,7 +33,7 @@ func toolByName(name string) (tools.Tool, bool) {
 
 // validInstallArgs is the union of cloud names and registered TUI
 // tool names that `cloudnav install` accepts.
-var validInstallArgs = []string{cloudAzure, cloudAWS, cloudGCP, "zellij"}
+var validInstallArgs = []string{cloudAzure, cloudAWS, cloudGCP, toolZellij}
 
 var installCmd = &cobra.Command{
 	Use:       "install [target]",
@@ -92,7 +99,7 @@ var upgradeCmd = &cobra.Command{
 	Short:     "Upgrade a TUI tool (zellij) using your OS's package manager",
 	Long:      "Runs the right upgrade command for the current OS — 'brew update && brew upgrade <tool>' on Homebrew, 'cargo install --locked --force <tool>' on Cargo. Idempotent — safe to run when the tool is already at the latest version.",
 	Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-	ValidArgs: []string{"zellij"},
+	ValidArgs: []string{toolZellij},
 	RunE: func(_ *cobra.Command, args []string) error {
 		t, ok := toolByName(args[0])
 		if !ok {

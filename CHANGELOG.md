@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.38] — 2026-04-25
+
+### Added — GCP cache parity with Azure (everything in SQLite)
+
+- **`gcp-root` SQLite bucket** caches the GCP `Root()` enumeration
+  (projects, or folders when `CLOUDNAV_GCP_ORG` is set). Mirrors
+  the `azure-root` bucket; key is `(org, gcloud-cred-fingerprint)`
+  so a switch to a different gcloud account or a different org
+  invalidates the cache automatically. 10-min TTL — same as the
+  Azure side. Override via `CLOUDNAV_GCP_CACHE_TTL`; opt-out with
+  `CLOUDNAV_GCP_NO_CACHE=1`.
+- **`gcp-assets` SQLite bucket** caches per-project Asset Inventory
+  drills. Key is `(projectID, sorted asset types)` so the same
+  drill in any order is one cache hit. 5-min TTL because resources
+  churn faster than projects.
+- `InvalidateRootCache()` method on `*GCP` mirrors the Azure
+  same-named method so the TUI's `r` refresh path works
+  identically across clouds.
+- `gcloudCredFingerprint()` derives a 16-char SHA-256 prefix from
+  `~/.config/gcloud/active_config` + ADC JSON + `credentials.db`,
+  so `gcloud auth login` / `gcloud config set account ...` /
+  `gcloud config configurations activate <other>` all auto-bust
+  the cache.
+- 9 new tests in `internal/provider/gcp/cache_test.go`: round-trip,
+  org isolation, TTL expiry, opt-out flag, manual invalidation,
+  asset-cache key order-invariance, project isolation, asset
+  round-trip, and a sanity-check that `cache.Shared()` resolves to
+  `*SQLiteBackend` by default (the headline "everything in SQLite"
+  assertion).
+- E2E (`test/e2e/gcp_parity_test.sh`) now asserts
+  `<cache>/cloudnav.db` exists after the GCP CLI commands run, so
+  a future regression that silently fell back to JSON would fail
+  the build.
+
+### What this means in practice
+After this release, every GCP feature path that was hitting a wire
+or a subprocess on every launch — project list, folder traversal,
+asset drill, cost lookup, PIM list — caches into the same
+`cloudnav.db` file as the Azure caches. Second launches inside
+the TTL window are <10 ms cold-start to "table populated".
+
 ## [0.22.37] — 2026-04-25
 
 ### Added — GCP SDK migration phases 9-12 + Service Health + Budgets
@@ -619,7 +660,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.37...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.38...HEAD
+[0.22.38]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.38
 [0.22.37]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.37
 [0.22.36]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.36
 [0.22.35]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.35

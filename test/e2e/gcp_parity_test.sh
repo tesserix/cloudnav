@@ -37,6 +37,20 @@ else
   assert_regex "cost projects without billing export shows setup hint" '(billing export|CLOUDNAV_GCP_BILLING_TABLE|console.cloud.google.com)' "$out"
 fi
 
+# SQLite cache backend ships every cache row to <cache>/cloudnav.db.
+# After exercising the GCP commands above, the file must exist so we
+# know cloudnav.db is the active store (not the legacy JSON-per-key
+# layout). Skip the assertion when the cache dir is overridden to
+# stdout/null in CI.
+cache_dir="${CLOUDNAV_CACHE:-${HOME}/Library/Caches/cloudnav}"
+if [[ -d "$cache_dir" ]]; then
+  if [[ -f "$cache_dir/cloudnav.db" ]]; then
+    pass "SQLite cache file exists at $cache_dir/cloudnav.db"
+  else
+    fail "SQLite cache file missing" "expected $cache_dir/cloudnav.db; cloudnav may have fallen back to JSON"
+  fi
+fi
+
 if ! command -v tmux >/dev/null 2>&1; then
   return 0
 fi
