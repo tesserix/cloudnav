@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.44] — 2026-04-25
+
+### Changed
+- **`cloudnav workspace` now keeps Zellij looking like Zellij.**
+  The previous design themed the multiplexer to mimic the
+  cloudnav TUI palette, which blurred the line between the two
+  experiences and looked confused in practice. Reworked:
+  - Drops the custom `cloudnav` theme block entirely. Zellij
+    uses its default theme — same chrome you'd see if you
+    launched `zellij` standalone.
+  - Drops `pane_frames false`. Pane frames stay on; that's
+    Zellij's native multi-pane affordance and matters more in
+    a multi-pane layout than the visual minimalism we had.
+  - Layout is now a real workspace: 60/40 vertical split with
+    cloudnav on the left and a shell on the right (so
+    `gcloud` / `aws` / `az` / `kubectl` / `terraform` commands
+    run alongside the navigator), plus a second tab that's a
+    clean shell for ad-hoc work.
+  - Standard `zellij:tab-bar` + `zellij:status-bar` plugins
+    stay so users keep Zellij's native discoverability
+    (mode-switching hints, pane-mode shortcuts, tab labels).
+- New regression test
+  `TestEmbeddedLayoutKeepsZellijNative` pins the design choice
+  so a future PR can't reintroduce a custom theme block or
+  collapse the workspace back to a single full-screen pane.
+
+### Why
+Standalone `cloudnav` (the TUI) and `cloudnav workspace`
+(the Zellij session) are now visibly distinct. Running the TUI
+directly gives the standalone TUI experience exactly as before;
+running the workspace gives a Zellij session with cloudnav as
+one of its panes. Neither bleeds into the other.
+
 ## [0.22.43] — 2026-04-25
 
 ### Added — `Identifier` interface + `cloudnav doctor` shows active auth method
@@ -844,7 +877,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.43...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.44...HEAD
+[0.22.44]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.44
 [0.22.43]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.43
 [0.22.42]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.42
 [0.22.41]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.41

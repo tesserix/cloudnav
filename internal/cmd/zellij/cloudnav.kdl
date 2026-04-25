@@ -1,29 +1,58 @@
-// cloudnav Zellij layout — single full-width pane running the
-// cloudnav TUI, with the standard tab bar / status bar so users
-// keep Zellij's keyboard discoverability without a custom UI.
+// cloudnav Zellij layout — a real multiplexer workspace where
+// cloudnav is one pane alongside a shell, so users can drop into
+// `gcloud` / `aws` / `az` commands or `kubectl` / `terraform` /
+// anything else without leaving the session.
 //
-// Embedded into the cloudnav binary; written to
+// Shipped under
 //     <UserConfigDir>/cloudnav/zellij/cloudnav.kdl
-// at first run of `cloudnav workspace`.
+// and selected at exec time via `zellij --config-dir`, so the
+// user's own ~/.config/zellij stays untouched.
 //
-// Splitting the pane (Alt-n / Alt-+ in default mode) is left to the
-// user — we don't bake a pre-canned shell pane in because it
-// invariably collides with someone's preferred multiplexer style.
+// Design intent (per the user feedback that prompted the rewrite):
+//   - Zellij looks like Zellij. We do NOT theme it to mimic
+//     cloudnav's TUI palette. The chrome you see is Zellij's
+//     default — tab bar, status bar, pane frames, the lot.
+//   - cloudnav is one pane, not the entire session. The default
+//     split puts cloudnav on the left (60%) and a shell on the
+//     right (40%) so cloud-CLI commands run alongside the TUI.
+//   - Pane / tab mode keybindings are Zellij's defaults
+//     (Ctrl-p / Ctrl-t), so users who already know Zellij don't
+//     re-learn anything.
 
 layout {
     default_tab_template {
+        // Zellij's standard tab bar at the top.
         pane size=1 borderless=true {
             plugin location="zellij:tab-bar"
         }
         children
+        // Zellij's standard status bar at the bottom — shows the
+        // active mode (Normal / Pane / Tab / …) and the
+        // keybindings for that mode. Critical to keep so users
+        // know how to navigate.
         pane size=2 borderless=true {
             plugin location="zellij:status-bar"
         }
     }
 
+    // Tab 1 — cloudnav navigator with a shell side-pane.
     tab name="cloudnav" focus=true {
-        pane {
-            command "cloudnav"
+        pane split_direction="vertical" {
+            pane size="60%" name="navigator" {
+                command "cloudnav"
+            }
+            pane size="40%" name="shell" {
+                // Bare shell — let Zellij pick the user's
+                // default ($SHELL) instead of forcing bash.
+            }
         }
+    }
+
+    // Tab 2 — pure shell tab for users who want a clean second
+    // workspace without splitting the navigator. Zellij users
+    // are used to multi-tab workflows; this gives them one out
+    // of the box.
+    tab name="shell" {
+        pane
     }
 }

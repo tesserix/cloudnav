@@ -27,11 +27,21 @@ const envInsideZellij = "ZELLIJ"
 
 var workspaceCmd = &cobra.Command{
 	Use:   "workspace",
-	Short: "Launch cloudnav inside a Zellij workspace with a matching theme",
-	Long: `Run cloudnav inside a Zellij multiplexer session whose theme matches
-the cloudnav TUI palette. The layout puts cloudnav in the main pane;
-splitting into shell / log panes is left to Zellij's own keys
-(Alt-n / Alt-= by default) so you keep the workflow you're used to.
+	Short: "Launch cloudnav as one pane in a Zellij multi-pane workspace",
+	Long: `Run cloudnav inside a Zellij multiplexer session.
+
+The session looks and feels like Zellij — Zellij's default theme,
+its native tab bar / status bar / pane frames, its default
+keybindings (Ctrl-p for pane mode, Ctrl-t for tab mode, etc.).
+cloudnav is one of the panes inside the workspace, not a re-skin
+of the multiplexer. The TUI experience and the workspace
+experience stay deliberately distinct so neither bleeds into the
+other.
+
+Default layout: a 60/40 vertical split with cloudnav on the left
+and a shell on the right, plus a second tab that's a clean shell
+for ad-hoc cloud-CLI commands (gcloud / aws / az / kubectl /
+terraform / anything).
 
 The Zellij config + layout files are written to:
 

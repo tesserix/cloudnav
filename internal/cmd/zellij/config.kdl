@@ -1,31 +1,27 @@
 // Isolated Zellij config for `cloudnav workspace`. Shipped under
 //     <UserConfigDir>/cloudnav/zellij/config.kdl
 // and selected at exec time via `zellij --config-dir`, so the user's
-// own ~/.config/zellij stays untouched.
+// own ~/.config/zellij stays completely untouched.
 //
-// The "cloudnav" theme below mirrors the TUI palette in
-// internal/tui/styles/styles.go (ANSI-256 codes converted to hex).
-// Keep them in sync — the goal is for the Zellij chrome to be
-// indistinguishable from the standalone TUI's modal frame.
+// Design intent: when you run `cloudnav workspace`, the resulting
+// session should look and feel like Zellij — Zellij's native theme,
+// keybindings, and chrome. cloudnav is just one of the panes inside
+// the workspace, not a re-skinning of the multiplexer. We
+// intentionally do NOT define a custom theme here; Zellij ships a
+// solid default and most users have already tuned their preferred
+// palette via terminal colours / installed Zellij themes elsewhere.
+//
+// What we do set:
+//   - default_layout — points at our cloudnav.kdl multi-pane layout.
+//   - mouse_mode true — most cloudnav users expect click-to-focus
+//     across panes, matches the TUI's own click-to-select rows.
+//   - copy_on_select true — yanking a value (project ID, ARN, sub
+//     GUID) from any pane goes straight to the clipboard.
+//
+// Everything else inherits Zellij's defaults: the default theme,
+// the default keybindings (Ctrl-p for pane mode, Ctrl-t for tab
+// mode, Ctrl-h for help, etc.), the default status bar.
 
-theme "cloudnav"
 default_layout "cloudnav"
 mouse_mode true
 copy_on_select true
-pane_frames false
-
-themes {
-    cloudnav {
-        fg          "#eeeeee" // Fg / default body text
-        bg          "#121212" // HintBg / footer band
-        black       "#262626" // HeaderBg / header band
-        red         "#ff5f5f" // Err
-        green       "#87d787" // Green / falling cost
-        yellow      "#ffaf5f" // Warn (soft)
-        blue        "#5fafff" // Sky / network category
-        magenta     "#5f5fff" // Purple / modal border
-        cyan        "#5fffd7" // Accent / app title
-        white       "#ffffaf" // SelFg / selected-row text
-        orange      "#ffaf00" // Warn / rising cost
-    }
-}

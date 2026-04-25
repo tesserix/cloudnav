@@ -137,18 +137,30 @@ Use it when you know part of a name or scope but not the exact path yet.
 
 ### Zellij workspace (optional)
 
-If you live in [Zellij](https://zellij.dev/), `cloudnav workspace` launches
-the TUI inside an isolated Zellij session whose theme matches cloudnav's
-own palette:
+If you live in [Zellij](https://zellij.dev/), `cloudnav workspace`
+launches a multi-pane workspace where cloudnav is one of the panes:
 
 ```bash
 cloudnav workspace
 ```
 
-Layout + theme are written to `~/.config/cloudnav/zellij/` and selected
-via `zellij --config-dir`, so your existing `~/.config/zellij` stays
-untouched. Standalone `cloudnav` is unaffected — nothing about the
-default launch path changed. Not available on Windows.
+The session looks like **Zellij** — Zellij's default theme, its
+native tab bar / status bar / pane frames, its default keybindings
+(Ctrl-p for pane mode, Ctrl-t for tab mode). cloudnav lives inside
+the workspace; it doesn't re-skin the multiplexer. Standalone
+`cloudnav` (the TUI) is unaffected — running it directly still
+gives you the standalone TUI experience exactly as before. The two
+are deliberately distinct so neither bleeds into the other.
+
+Default layout: a 60/40 vertical split with cloudnav on the left
+and a shell on the right (so `gcloud` / `aws` / `az` / `kubectl` /
+`terraform` run alongside the navigator), plus a second tab that's
+a clean shell for ad-hoc work.
+
+Layout + config files live at `~/.config/cloudnav/zellij/` and are
+selected via `zellij --config-dir`, so your existing
+`~/.config/zellij` stays completely untouched. Not available on
+Windows.
 
 ## Keybindings
 

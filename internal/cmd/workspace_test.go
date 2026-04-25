@@ -65,21 +65,37 @@ func TestWriteWorkspaceFilesIsIdempotent(t *testing.T) {
 
 func TestEmbeddedLayoutPointsAtCloudnav(t *testing.T) {
 	if !strings.Contains(zellijLayoutKDL, `command "cloudnav"`) {
-		t.Error("layout KDL should run the cloudnav binary in the main pane")
+		t.Error("layout KDL should run the cloudnav binary in one of the panes")
 	}
 	if !strings.Contains(zellijLayoutKDL, "tab name=\"cloudnav\"") {
-		t.Error("layout KDL should name the tab 'cloudnav'")
+		t.Error("layout KDL should name the navigator tab 'cloudnav'")
 	}
 }
 
-func TestEmbeddedConfigDeclaresCloudnavTheme(t *testing.T) {
-	if !strings.Contains(zellijConfigKDL, `theme "cloudnav"`) {
-		t.Error("config KDL should select the 'cloudnav' theme")
+// TestEmbeddedLayoutKeepsZellijNative pins the design choice that
+// `cloudnav workspace` looks like Zellij — Zellij's default
+// theme, default tab/status bars, default chrome — with cloudnav
+// as one of the panes inside. Earlier iterations themed Zellij
+// to mimic the cloudnav TUI; user feedback was that the two
+// experiences should stay visually distinct.
+func TestEmbeddedLayoutKeepsZellijNative(t *testing.T) {
+	if strings.Contains(zellijConfigKDL, `theme "cloudnav"`) {
+		t.Error("config KDL must NOT force a custom theme — Zellij should look like Zellij")
 	}
-	// The cloudnav palette in styles.go uses purple as the modal
-	// border accent; that hex must appear in the theme block so the
-	// Zellij chrome visually matches.
-	if !strings.Contains(zellijConfigKDL, "#5f5fff") {
-		t.Error("config KDL should map magenta to cloudnav's purple accent (#5f5fff)")
+	if strings.Contains(zellijConfigKDL, `themes {`) {
+		t.Error("config KDL must NOT declare a themes block — let Zellij use its default")
+	}
+	// Multi-pane: a real Zellij workspace, not a re-skin of the
+	// TUI as the entire session.
+	if !strings.Contains(zellijLayoutKDL, `split_direction="vertical"`) {
+		t.Error("layout KDL should use a vertical split so cloudnav and a shell live side-by-side")
+	}
+	// Standard Zellij plugins for tab + status bars must be
+	// present so users keep Zellij's native discoverability.
+	if !strings.Contains(zellijLayoutKDL, `plugin location="zellij:tab-bar"`) {
+		t.Error("layout KDL should keep Zellij's native tab bar")
+	}
+	if !strings.Contains(zellijLayoutKDL, `plugin location="zellij:status-bar"`) {
+		t.Error("layout KDL should keep Zellij's native status bar (mode + keybinding hints)")
 	}
 }
