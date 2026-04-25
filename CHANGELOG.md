@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.33] — 2026-04-25
+
+### Added
+- **`cloudnav cost projects`** — per-project month-to-date cost for
+  GCP, sourced from the BigQuery billing-export table. Honours the
+  same `--json` / `--match <substring>` / `--limit N` flags as
+  `cost subs`. Falls back to the setup deeplink when no billing
+  export is configured. Closes the GCP gap in the cost CLI matrix
+  (Azure: `subs` / `rgs`; AWS: `regions` / `services`; GCP: now
+  `projects`).
+- `docs/gcp-sdk-migration.md` — concrete roadmap for replacing the
+  remaining `gcloud.Run` shells with the official Go SDKs
+  (`resourcemanager`, `asset`, `compute`, `recommender`, `billing`,
+  `bigquery`, `iam`, `monitoring`), plus design notes for the
+  Azure-equivalent **delete dispatcher** (per-resource-type SDK
+  calls instead of a single delete RPC) and **lock model** (project
+  liens via `Liens.Create`, scoped at the project boundary). Lays
+  out a 7-step shippable PR sequence so each session picks up at
+  the next unchecked step.
+
+### Tests
+- `internal/cmd/cost_test.go` pins the `cost projects` subcommand
+  registration, flag declarations, and help-text references to
+  BigQuery and `CLOUDNAV_GCP_BILLING_TABLE` so a future refactor
+  can't silently drop them.
+- `test/e2e/gcp_parity_test.sh` adds an e2e block for `cost
+  projects` — passes either when BigQuery export is configured
+  (table format) or when it isn't (setup-deeplink hint).
+
 ## [0.22.32] — 2026-04-25
 
 ### Changed
@@ -428,7 +457,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.32...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.33...HEAD
+[0.22.33]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.33
 [0.22.32]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.32
 [0.22.31]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.31
 [0.22.30]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.30

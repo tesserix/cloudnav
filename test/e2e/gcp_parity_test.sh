@@ -19,6 +19,24 @@ fi
 out=$("$BIN" pim --help 2>&1)
 assert_contains "pim help mentions Privileged Access Manager for GCP" "Privileged Access Manager" "$out"
 
+# CLI: cost projects (GCP) — per-project MTD report sourced from the
+# BigQuery billing-export table. Either it returns rows or it surfaces
+# the setup deeplink. Both are valid; we never want a stack trace or
+# a missing-command error.
+out=$("$BIN" cost projects --help 2>&1); rc=$?
+assert_exit "cost projects --help exits 0" 0 "$rc"
+assert_contains "cost projects --help mentions BigQuery billing-export" "BigQuery" "$out"
+assert_contains "cost projects --help documents --json flag" "json" "$out"
+
+out=$("$BIN" cost projects 2>&1); rc=$?
+if [[ $rc -eq 0 ]]; then
+  assert_contains "cost projects table shows PROJECT column" "PROJECT" "$out"
+else
+  # No billing export configured in this env — must surface the
+  # setup hint, not a panic.
+  assert_regex "cost projects without billing export shows setup hint" '(billing export|CLOUDNAV_GCP_BILLING_TABLE|console.cloud.google.com)' "$out"
+fi
+
 if ! command -v tmux >/dev/null 2>&1; then
   return 0
 fi

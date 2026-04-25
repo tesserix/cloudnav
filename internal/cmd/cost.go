@@ -15,6 +15,7 @@ import (
 	"github.com/tesserix/cloudnav/internal/provider"
 	"github.com/tesserix/cloudnav/internal/provider/aws"
 	"github.com/tesserix/cloudnav/internal/provider/azure"
+	"github.com/tesserix/cloudnav/internal/provider/gcp"
 )
 
 func println(w io.Writer, s string)          { _, _ = fmt.Fprintln(w, s) }
@@ -209,6 +210,67 @@ var costRegionsCmd = &cobra.Command{
 	},
 }
 
+var costProjectsCmd = &cobra.Command{
+	Use:   "projects",
+	Short: "Cost per project (GCP) — reads the BigQuery billing-export table",
+	Long: `Lists month-to-date cost per GCP project, sourced from the BigQuery
+billing-export table cloudnav resolves via gcp.billing_table in
+config.json or the CLOUDNAV_GCP_BILLING_TABLE env var.
+
+If neither is set cloudnav auto-detects the canonical
+'<project>.billing_export.gcp_billing_export_v1_<account>' table; if
+that's not present either, the command prints the setup deeplink so
+you can enable export from the console and re-run.`,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
+		match, _ := cmd.Flags().GetString("match")
+		limit, _ := cmd.Flags().GetInt("limit")
+
+		g := gcp.New()
+		ctx := cmd.Context()
+		// Coster on GCP keys by Kind=Cloud — root scope returns
+		// project_id → cost across the active billing account.
+		costs, err := g.Costs(ctx, provider.Node{Kind: provider.KindCloud})
+		if err != nil {
+			return err
+		}
+		// Project IDs come from the costs map; we don't ship a name
+		// here because the BQ payload doesn't carry display names —
+		// users who want names can pipe the JSON through `gcloud
+		// projects describe`.
+		type row struct {
+			ProjectID string `json:"project_id"`
+			Cost      string `json:"cost"`
+		}
+		rows := make([]row, 0, len(costs))
+		for pid, c := range costs {
+			if match != "" && !strings.Contains(strings.ToLower(pid), strings.ToLower(match)) {
+				continue
+			}
+			rows = append(rows, row{ProjectID: pid, Cost: c})
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].ProjectID < rows[j].ProjectID })
+		if limit > 0 && len(rows) > limit {
+			rows = rows[:limit]
+		}
+
+		if asJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(rows)
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		println(tw, "PROJECT\tMTD")
+		println(tw, "-------\t---")
+		for _, r := range rows {
+			printf(tw, "%s\t%s\n", r.ProjectID, r.Cost)
+		}
+		println(tw, "-------\t---")
+		printf(tw, "TOTAL (%d project(s))\t\n", len(rows))
+		return tw.Flush()
+	},
+}
+
 var costServicesCmd = &cobra.Command{
 	Use:   "services",
 	Short: "Cost per AWS service across the calling account",
@@ -322,7 +384,7 @@ func trunc(s string, n int) string {
 }
 
 func init() {
-	costCmd.AddCommand(costSubsCmd, costRgsCmd, costRegionsCmd, costServicesCmd)
+	costCmd.AddCommand(costSubsCmd, costRgsCmd, costRegionsCmd, costServicesCmd, costProjectsCmd)
 	costSubsCmd.Flags().Bool("json", false, "Emit JSON")
 	costSubsCmd.Flags().String("match", "", "Substring filter on subscription name")
 	costSubsCmd.Flags().Int("limit", 0, "Maximum subscriptions to include after filtering (0 = all)")
@@ -330,5 +392,8 @@ func init() {
 	costRgsCmd.Flags().String("subscription", "", "Azure subscription ID (required)")
 	costRegionsCmd.Flags().Bool("json", false, "Emit JSON")
 	costServicesCmd.Flags().Bool("json", false, "Emit JSON")
+	costProjectsCmd.Flags().Bool("json", false, "Emit JSON")
+	costProjectsCmd.Flags().String("match", "", "Substring filter on project ID")
+	costProjectsCmd.Flags().Int("limit", 0, "Maximum projects to include (0 = all)")
 	rootCmd.AddCommand(costCmd)
 }
