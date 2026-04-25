@@ -87,6 +87,12 @@ func (g *GCP) Close() error {
 			firstErr = err
 		}
 	}
+	if err := closeComputeClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeRecommenderClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return firstErr
 }
 

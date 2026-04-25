@@ -71,6 +71,11 @@ func (g *GCP) Recommendations(ctx context.Context, projectID string) ([]provider
 }
 
 func (g *GCP) fetchRecommender(ctx context.Context, projectID, recommenderID, category, impactedType string) ([]provider.Recommendation, error) {
+	// SDK fast path — Recommender ListRecommendations RPC. Falls back
+	// to gcloud when ADC isn't usable.
+	if recs, sdkUsable, err := g.fetchRecommenderSDK(ctx, projectID, recommenderID, category, impactedType); sdkUsable && err == nil {
+		return recs, nil
+	}
 	out, err := g.gcloud.Run(ctx,
 		"recommender", "recommendations", "list",
 		"--project="+projectID,

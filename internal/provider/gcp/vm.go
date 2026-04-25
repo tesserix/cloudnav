@@ -21,6 +21,12 @@ func (g *GCP) ListVMs(ctx context.Context, scope provider.Node) ([]provider.VM, 
 	if scope.Kind != provider.KindProject {
 		return nil, fmt.Errorf("gcp: vm list expects project scope, got %q", scope.Kind)
 	}
+	// SDK fast path — Compute Engine AggregatedList collapses every
+	// zone into a single RPC. Falls through to the gcloud CLI when
+	// ADC isn't available.
+	if vms, sdkUsable, err := g.listVMsSDK(ctx, scope); sdkUsable && err == nil {
+		return vms, nil
+	}
 	out, err := g.gcloud.Run(ctx,
 		"compute", "instances", "list",
 		"--project", scope.ID,
@@ -57,6 +63,9 @@ func (g *GCP) ShowVM(ctx context.Context, id, scope string) ([]byte, error) {
 	if project == "" || zone == "" {
 		return nil, fmt.Errorf("gcp: vm show needs scope project/zone")
 	}
+	if data, sdkUsable, err := g.showVMSDK(ctx, id, project, zone); sdkUsable && err == nil {
+		return data, nil
+	}
 	return g.gcloud.Run(ctx, "compute", "instances", "describe", id,
 		"--project", project, "--zone", zone, "--format=json")
 }
@@ -65,6 +74,9 @@ func (g *GCP) StartVM(ctx context.Context, id, scope string) error {
 	project, zone := splitGCEScope(scope)
 	if project == "" || zone == "" {
 		return fmt.Errorf("gcp: vm start needs scope project/zone")
+	}
+	if sdkUsable, err := g.startVMSDK(ctx, id, project, zone); sdkUsable {
+		return err
 	}
 	_, err := g.gcloud.Run(ctx, "compute", "instances", "start", id,
 		"--project", project, "--zone", zone)
@@ -75,6 +87,9 @@ func (g *GCP) StopVM(ctx context.Context, id, scope string) error {
 	project, zone := splitGCEScope(scope)
 	if project == "" || zone == "" {
 		return fmt.Errorf("gcp: vm stop needs scope project/zone")
+	}
+	if sdkUsable, err := g.stopVMSDK(ctx, id, project, zone); sdkUsable {
+		return err
 	}
 	_, err := g.gcloud.Run(ctx, "compute", "instances", "stop", id,
 		"--project", project, "--zone", zone)

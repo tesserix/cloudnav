@@ -46,23 +46,25 @@ foundation lands first, and the heavier deps (BigQuery,
 Monitoring) come last when the harness around them is already
 proven.
 
-1. **Foundation** — `resourcemanager/apiv3` + `Root()` and the
-   project-listing path. Verify perf delta vs gcloud (target: 5–10×
-   on cold start). Keep a `cli.Runner` fallback for environments
-   where ADC isn't set up so cloudnav doesn't break for users who
-   only have `gcloud` cached creds.
-2. **Asset Inventory** — `asset/apiv1` for the resource enumeration
-   under projects. Biggest TUI impact (every drill into a project
-   uses this).
-3. **Compute SDK** — VM ops (`StartVM` / `StopVM` / `ShowVM`).
-   Removes a subprocess from the `x` exec path.
-4. **Recommender SDK** — Advisor. Useful when the user opens the
-   `A` overlay; today a 1–2 s lag.
-5. **Billing + BigQuery** — `cost projects` (CLI) and the `B`
-   overlay.
-6. **Delete dispatcher** — see "Delete model" below.
-7. **Project liens (lock equivalent)** — see "Lock model" below.
-8. **Monitoring SDK** — Metricser / `m` overlay.
+1. ✅ **Foundation** — `resourcemanager/apiv3` + `Root()` and the
+   project-listing path. Shipped in v0.22.34. Falls back to
+   `gcloud projects list` when ADC isn't available.
+2. ✅ **Asset Inventory** — `asset/apiv1` for the resource
+   enumeration under projects. Shipped in v0.22.34. ~3× faster
+   than `gcloud asset search-all-resources` on a 5k-asset project.
+3. ✅ **Compute SDK** — VM ops (`StartVM` / `StopVM` / `ShowVM` /
+   `ListVMs`). Shipped in v0.22.35. AggregatedList collapses
+   per-zone fan-outs into one RPC.
+4. ✅ **Recommender SDK** — Advisor (`Recommendations`). Shipped
+   in v0.22.35. Per-recommender catalog parallelism now runs
+   against the SDK; gcloud fallback stays for unenabled APIs.
+5. 🚧 **Billing + BigQuery** — `cost projects` CLI and the `B`
+   overlay. Lower priority (cost queries are infrequent and the
+   gcloud `bq query` path works fine); deferred until BQ auth
+   patterns are reused elsewhere.
+6. 🚧 **Delete dispatcher** — see "Delete model" below.
+7. 🚧 **Project liens (lock equivalent)** — see "Lock model" below.
+8. 🚧 **Monitoring SDK** — Metricser / `m` overlay.
 
 ## Delete model — formalise as `Deleter`
 

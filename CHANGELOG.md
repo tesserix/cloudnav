@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.35] — 2026-04-25
+
+### Added — GCP SDK migration, phase 3 + 4 (Compute + Recommender)
+
+- **`cloud.google.com/go/compute/apiv1` SDK fast path** for VM
+  operations. `ListVMs` now uses Compute Engine's
+  `AggregatedList` RPC — one call to enumerate every zone's
+  instances instead of N per-zone fan-outs. `StartVM` / `StopVM` /
+  `ShowVM` route through the SDK with full LRO `op.Wait` so the
+  caller's status is accurate. Falls back to `gcloud compute
+  instances ...` on any SDK failure.
+- **`cloud.google.com/go/recommender/apiv1` SDK fast path** for
+  the Advisor overlay. `ListRecommendations` for each entry in
+  the per-project recommender catalog (10 IDs across cost /
+  performance / security / reliability), running in parallel
+  with the same 6-way semaphore the gcloud path uses. Priority
+  enum (`P1`/`P2`/`P3`/`P4`) maps to the high/medium/low impact
+  labels the TUI advisor card already renders.
+- Per-file lazy + cached-error pattern means a failed auth probe
+  doesn't keep re-paying latency on subsequent calls.
+- `g.Close()` now releases the Compute and Recommender clients
+  alongside Resource Manager / Asset Inventory.
+
+### Roadmap progress (`docs/gcp-sdk-migration.md`)
+- ✅ Phase 1 — Foundation (Resource Manager + project listing)
+- ✅ Phase 2 — Asset Inventory (resource enumeration)
+- ✅ Phase 3 — Compute SDK (VM ops)
+- ✅ Phase 4 — Recommender SDK (Advisor)
+- 🚧 Phase 5 — Billing + BigQuery SDK (deferred — `bq query`
+  works fine and BQ auth patterns aren't reused elsewhere yet)
+- 🚧 Phase 6 — Delete dispatcher (needs cross-cloud `Deleter`
+  interface refactor in `provider.go`)
+- 🚧 Phase 7 — Project liens (lock equivalent — depends on
+  Phase 6's refactor for the UI hook-up)
+- 🚧 Phase 8 — Monitoring SDK
+
 ## [0.22.34] — 2026-04-25
 
 ### Added — GCP SDK migration, phase 1 + 2 (foundation + Asset Inventory)
@@ -489,7 +525,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.34...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.35...HEAD
+[0.22.35]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.35
 [0.22.34]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.34
 [0.22.33]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.33
 [0.22.32]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.32
