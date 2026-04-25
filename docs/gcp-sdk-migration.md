@@ -58,13 +58,23 @@ proven.
 4. ✅ **Recommender SDK** — Advisor (`Recommendations`). Shipped
    in v0.22.35. Per-recommender catalog parallelism now runs
    against the SDK; gcloud fallback stays for unenabled APIs.
-5. 🚧 **Billing + BigQuery** — `cost projects` CLI and the `B`
-   overlay. Lower priority (cost queries are infrequent and the
-   gcloud `bq query` path works fine); deferred until BQ auth
-   patterns are reused elsewhere.
-6. 🚧 **Delete dispatcher** — see "Delete model" below.
-7. 🚧 **Project liens (lock equivalent)** — see "Lock model" below.
-8. 🚧 **Monitoring SDK** — Metricser / `m` overlay.
+5. ✅ **Billing + BigQuery** — `cost projects` CLI and the `B`
+   overlay. Shipped in v0.22.36. Typed row scanning, no
+   subprocess, `<host_project>.<dataset>.<table>` shape parses
+   the host project automatically.
+6. ✅ **Delete dispatcher** — see "Delete model" below. Shipped
+   in v0.22.36 — formal `provider.Deleter` interface, Azure
+   adapter wrapping the existing methods, GCP per-asset-type
+   dispatch (compute instances, storage buckets, projects).
+7. ✅ **Project liens (lock equivalent)** — see "Lock model"
+   below. Shipped in v0.22.36 — `provider.Locker` interface
+   plus GCP implementation via `gcloud alpha resource-manager
+   liens` (the v3 SDK doesn't expose Liens; v1 REST is the only
+   alternative and would mean a second auth pool).
+8. ✅ **Monitoring SDK** — Metricser / `m` overlay. Shipped in
+   v0.22.36 — Cloud Monitoring v3 `ListTimeSeries` with
+   AlignmentPeriod=300s, ALIGN_RATE / ALIGN_MEAN matching the
+   gcloud CLI behaviour bit-for-bit.
 
 ## Delete model — formalise as `Deleter`
 

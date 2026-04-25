@@ -89,6 +89,10 @@ func isDiskMetric(metricType string) bool {
 // matched series (e.g. multi-disk VMs); false keeps the first-series
 // behaviour used for single-series gauges like CPU utilisation.
 func (g *GCP) fetchTimeSeries(ctx context.Context, project, instance, metricType string, rate, aggregate bool) ([]float64, error) {
+	// SDK fast path — Cloud Monitoring v3 ListTimeSeries.
+	if pts, sdkUsable, err := g.fetchTimeSeriesSDK(ctx, project, instance, metricType, rate, aggregate); sdkUsable && err == nil {
+		return pts, nil
+	}
 	end := time.Now().UTC()
 	start := end.Add(-gcpMetricsWindow)
 	filter := fmt.Sprintf("metric.type=%q AND metric.labels.instance_name=%q", metricType, instance)

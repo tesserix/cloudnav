@@ -93,6 +93,15 @@ func (g *GCP) Close() error {
 	if err := closeRecommenderClient(); err != nil && firstErr == nil {
 		firstErr = err
 	}
+	if err := closeBQClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeMonitoringClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := closeStorageClient(); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return firstErr
 }
 

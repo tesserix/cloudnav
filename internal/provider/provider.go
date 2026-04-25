@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -104,6 +105,59 @@ type Recommendation struct {
 // advisor overlay is wired to this.
 type Advisor interface {
 	Recommendations(ctx context.Context, scopeID string) ([]Recommendation, error)
+}
+
+// ErrNotSupported is the canonical error every Deleter / Locker
+// implementation returns when the requested operation has no analog
+// for the target node's resource type. The TUI surfaces it as a
+// portal hand-off hint instead of a stack trace.
+var ErrNotSupported = errors.New("provider: operation not supported for this node")
+
+// Deleter is implemented by providers that can delete an arbitrary
+// node. The interface deliberately takes a single Node — every
+// cloud has its own scoping rules (Azure needs subID + type; GCP
+// needs project + zone for compute, project + name for buckets) and
+// the implementation extracts what it needs from Meta.
+//
+// Implementations must:
+//   - Treat unsupported types as ErrNotSupported, not a generic error.
+//   - Return wire errors verbatim — the TUI prefixes them with the
+//     target name when surfacing in the status bar.
+//   - Respect any provider-specific protection (Azure locks, GCP
+//     liens) by failing fast with a typed error the user can act on.
+type Deleter interface {
+	Delete(ctx context.Context, n Node) error
+}
+
+// Locker is implemented by providers that have a notion of "this
+// resource cannot be deleted" — Azure management locks, GCP
+// project liens, etc. Used by the TUI to refuse a delete before
+// firing it (see deleterefuse path) and by the L overlay.
+type Locker interface {
+	// Locks lists the locks / liens currently bound to a node.
+	// Empty slice means unlocked. Errors propagate; the TUI
+	// degrades to "could not check" rather than assuming unlocked.
+	Locks(ctx context.Context, n Node) ([]Lock, error)
+
+	// CreateLock places a delete-protection lock / lien on n. The
+	// reason string is surfaced back to anyone who tries to delete
+	// the resource and explains why it was protected.
+	CreateLock(ctx context.Context, n Node, reason string) error
+
+	// RemoveLock drops a previously-placed lock by name / lien
+	// origin. Idempotent — removing a missing lock is a no-op.
+	RemoveLock(ctx context.Context, n Node, name string) error
+}
+
+// Lock is a single delete-protection record. Semantics differ
+// across clouds — see implementing-provider docs for what each
+// field means in context — but the TUI only renders Name, Level,
+// and Reason consistently.
+type Lock struct {
+	Name   string `json:"name"`
+	Level  string `json:"level,omitempty"`  // CanNotDelete / ReadOnly / Lien
+	Reason string `json:"reason,omitempty"` // free-text origin / cause
+	Origin string `json:"origin,omitempty"` // who created it (email / SA)
 }
 
 // CostLine is a single row in the billing breakdown overlay — one service,

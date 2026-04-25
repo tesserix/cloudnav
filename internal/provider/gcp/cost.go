@@ -50,6 +50,12 @@ func (g *GCP) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 		return nil, fmt.Errorf("GCP per-project cost needs BigQuery billing export (Google doesn't expose a cost API without it).\n\n  1. enable it here: %s\n  2. wait a few hours for the first export to land\n  3. tell cloudnav where the table lives, once, with either:\n       export %s=<project>.<dataset>.<table>\n       or add {\"gcp\":{\"billing_table\":\"<project>.<dataset>.<table>\"}} to ~/.config/cloudnav/config.json",
 			setupURL, billingTableEnv)
 	}
+	// SDK fast path — BigQuery client. Single connection, typed
+	// row scanning, no subprocess. Falls through to gcloud bq query
+	// when ADC isn't configured.
+	if rows, sdkUsable, err := g.queryProjectCostsSDK(ctx, table); sdkUsable && err == nil {
+		return rows, nil
+	}
 	query := fmt.Sprintf(
 		"SELECT project.id AS project_id, ROUND(SUM(cost), 2) AS total, currency "+
 			"FROM `%s` "+

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.36] — 2026-04-25
+
+### Added — GCP SDK migration, phases 5 + 6 + 7 + 8 (final batch)
+
+- **Phase 5 — BigQuery cost SDK.** `cloud.google.com/go/bigquery`
+  now backs the per-project cost query both for the `c` column on
+  the projects view and the new `cloudnav cost projects` CLI.
+  Typed row scanning, single client connection, no subprocess.
+  Host project resolved automatically from
+  `<project>.<dataset>.<table>`. Falls back to `gcloud bq query`
+  when ADC isn't usable.
+- **Phase 6 — `provider.Deleter` cross-cloud interface.** Formal
+  shape so the TUI's `D` (delete) overlay no longer
+  type-asserts to `*azure.Azure`:
+  - Azure adapter wraps `DeleteResource` / `DeleteResourceGroup`,
+    extracting the subscription id from the Node's parent or
+    Meta. Returns `provider.ErrNotSupported` for kinds without
+    an Azure-side delete.
+  - GCP per-asset-type dispatcher: compute instances (via
+    `Instances.Delete` SDK + LRO `op.Wait`), storage buckets
+    (via `bucket.Delete` SDK), projects (via Resource Manager
+    v3 `DeleteProject`, which respects liens). Anything else
+    returns `ErrNotSupported` with a portal hand-off hint.
+- **Phase 7 — `provider.Locker` + GCP liens.** Liens are GCP's
+  closest analog to Azure management locks; project-scoped,
+  block any RPC carrying the named restricted permission.
+  cloudnav now implements:
+  - `Locks(node)` — list active liens.
+  - `CreateLock(node, reason)` — block
+    `cloudresourcemanager.projects.delete`.
+  - `RemoveLock(node, name)` — drop a lien by resource name.
+  Resources inside a project return an empty Lock list (not an
+  error) so the L overlay renders cleanly. Implemented via
+  `gcloud alpha resource-manager liens` because the v3 Go SDK
+  doesn't expose Liens (only v1 REST does, which would mean a
+  second auth pool).
+- **Phase 8 — Cloud Monitoring SDK.** `cloud.google.com/go/
+  monitoring/apiv3/v2` powers the `m` Metricser overlay.
+  Reducer / aligner choices match the gcloud CLI path verbatim
+  (`AlignmentPeriod=300s`, `ALIGN_MEAN` for gauges,
+  `ALIGN_RATE` for byte counters) so sparkline shape doesn't
+  shift between the two paths. Same lazy + cached-error
+  pattern; gcloud fallback on auth failure.
+- New compile-time assertions: `var _ provider.Deleter =
+  (*Azure)(nil)`, `(*GCP)(nil)`; same for `Locker`. A future
+  refactor that drops a method now fails the build instead of
+  silently breaking the TUI.
+
+### Roadmap progress (`docs/gcp-sdk-migration.md`)
+All 8 phases are now ✅. The migration is complete; future GCP
+work lands as feature additions on top of the SDK foundation.
+
 ## [0.22.35] — 2026-04-25
 
 ### Added — GCP SDK migration, phase 3 + 4 (Compute + Recommender)
@@ -525,7 +577,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.35...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.36...HEAD
+[0.22.36]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.36
 [0.22.35]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.35
 [0.22.34]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.34
 [0.22.33]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.33
