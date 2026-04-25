@@ -52,6 +52,12 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     needs: [lint, test]
+    # Cumulative cloud SDK deps push each per-platform link to
+    # ~1.5–2 GB peak. Building 4–5 platforms in parallel OOM-kills
+    # the 7 GB ubuntu-latest runner; the kill manifests as a silent
+    # 25-minute timeout in goreleaser logs. 60 min budget is generous;
+    # we expect 6–8 min wall-time with parallelism=2.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -61,4 +67,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
-          args: build --snapshot --clean
+          # --parallelism=2 caps simultaneous platform builds at 2
+          # (instead of goreleaser's CPU-derived default of 4) so
+          # peak memory stays under the runner ceiling.
+          args: build --snapshot --clean --parallelism=2

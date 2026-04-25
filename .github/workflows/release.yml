@@ -14,6 +14,14 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Same memory-pressure rationale as the ci.yml build job:
+    # cumulative cloud SDK deps push each per-platform link to
+    # ~1.5–2 GB peak. With 5 platforms (darwin/{amd64,arm64} +
+    # linux/{amd64,arm64} + windows/amd64) we cap parallelism at 2
+    # to avoid OOM on the 7 GB ubuntu-latest runner. Generous
+    # timeout so a hang fails fast vs the silent runner kill we
+    # used to get.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
@@ -30,7 +38,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
-          args: release --clean
+          args: release --clean --parallelism=2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
