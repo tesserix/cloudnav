@@ -74,10 +74,12 @@ func TestEmbeddedLayoutPointsAtCloudnav(t *testing.T) {
 
 // TestEmbeddedLayoutKeepsZellijNative pins the design choice that
 // `cloudnav workspace` looks like Zellij — Zellij's default
-// theme, default tab/status bars, default chrome — with cloudnav
-// as one of the panes inside. Earlier iterations themed Zellij
-// to mimic the cloudnav TUI; user feedback was that the two
-// experiences should stay visually distinct.
+// theme, default tab/status bars, default chrome — and that
+// cloudnav fills its tab rather than cramping into a side pane.
+// Earlier iterations themed Zellij to mimic the cloudnav TUI;
+// user feedback was that the two experiences should stay
+// visually distinct AND that the TUI was designed for full-width
+// rendering, so a vertical split crammed the table and breadcrumb.
 func TestEmbeddedLayoutKeepsZellijNative(t *testing.T) {
 	if strings.Contains(zellijConfigKDL, `theme "cloudnav"`) {
 		t.Error("config KDL must NOT force a custom theme — Zellij should look like Zellij")
@@ -85,10 +87,13 @@ func TestEmbeddedLayoutKeepsZellijNative(t *testing.T) {
 	if strings.Contains(zellijConfigKDL, `themes {`) {
 		t.Error("config KDL must NOT declare a themes block — let Zellij use its default")
 	}
-	// Multi-pane: a real Zellij workspace, not a re-skin of the
-	// TUI as the entire session.
-	if !strings.Contains(zellijLayoutKDL, `split_direction="vertical"`) {
-		t.Error("layout KDL should use a vertical split so cloudnav and a shell live side-by-side")
+	// cloudnav fills its tab, not 60% of a vertical split. A
+	// shell is available as a SIBLING TAB, switchable via Ctrl-t.
+	if strings.Contains(zellijLayoutKDL, `split_direction=`) {
+		t.Error("layout KDL must NOT split the navigator tab — cloudnav was designed for full width; shell lives in a sibling tab")
+	}
+	if !strings.Contains(zellijLayoutKDL, `tab name="shell"`) {
+		t.Error("layout KDL should expose a sibling 'shell' tab for ad-hoc cloud-CLI work")
 	}
 	// Standard Zellij plugins for tab + status bars must be
 	// present so users keep Zellij's native discoverability.

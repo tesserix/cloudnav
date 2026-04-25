@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.45] — 2026-04-25
+
+### Fixed
+- **`cloudnav workspace` now gives cloudnav the full tab width.**
+  The 0.22.44 layout split the navigator tab 60/40 with a shell
+  on the right; in practice the TUI table, breadcrumb, and
+  keybar were all designed for full-width rendering, and the
+  side pane crammed columns / wrapped key labels weirdly. Switch
+  to a single full-pane navigator tab plus a sibling `shell`
+  tab — same shell access, no compromised TUI layout.
+  - `Ctrl-t 2` (or arrow keys in tab mode) jumps to the shell
+    tab for ad-hoc cloud-CLI commands.
+  - Users who want a shell *alongside* the navigator split the
+    pane themselves with `Ctrl-p |` (vertical) or `Ctrl-p -`
+    (horizontal) — Zellij's native key. Personal preference,
+    no longer baked into the default layout.
+- The regression test now pins the no-split design so a future
+  PR can't reintroduce the cramped layout.
+
 ## [0.22.44] — 2026-04-25
 
 ### Changed
@@ -877,7 +896,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.44...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.45...HEAD
+[0.22.45]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.45
 [0.22.44]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.44
 [0.22.43]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.43
 [0.22.42]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.42

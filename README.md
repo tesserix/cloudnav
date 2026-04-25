@@ -152,10 +152,13 @@ the workspace; it doesn't re-skin the multiplexer. Standalone
 gives you the standalone TUI experience exactly as before. The two
 are deliberately distinct so neither bleeds into the other.
 
-Default layout: a 60/40 vertical split with cloudnav on the left
-and a shell on the right (so `gcloud` / `aws` / `az` / `kubectl` /
-`terraform` run alongside the navigator), plus a second tab that's
-a clean shell for ad-hoc work.
+Default layout: cloudnav fills its tab (the TUI was designed for
+full width — the table, breadcrumb, and keybar all assume the
+whole terminal is available). A sibling `shell` tab is one
+`Ctrl-t 2` away for ad-hoc commands (`gcloud` / `aws` / `az` /
+`kubectl` / `terraform` / anything). If you want a shell pane
+*alongside* the navigator, split with `Ctrl-p |` (vertical) or
+`Ctrl-p -` (horizontal) — Zellij's native key.
 
 Layout + config files live at `~/.config/cloudnav/zellij/` and are
 selected via `zellij --config-dir`, so your existing
