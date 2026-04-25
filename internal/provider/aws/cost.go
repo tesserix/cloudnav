@@ -45,6 +45,11 @@ func (a *AWS) Costs(ctx context.Context, parent provider.Node) (map[string]strin
 }
 
 func (a *AWS) fetchCost(ctx context.Context, from, to time.Time) (map[string]costSample, error) {
+	// SDK fast path — Cost Explorer GetCostAndUsage with REGION
+	// grouping. Same shape as the CLI fallback.
+	if res, sdkUsable, err := a.fetchCostSDK(ctx, from, to, "REGION"); sdkUsable && err == nil {
+		return res, nil
+	}
 	out, err := a.aws.Run(ctx,
 		"ce", "get-cost-and-usage",
 		"--time-period", fmt.Sprintf("Start=%s,End=%s", from.Format("2006-01-02"), to.Format("2006-01-02")),

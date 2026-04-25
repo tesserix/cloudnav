@@ -58,6 +58,11 @@ func (a *AWS) Billing(ctx context.Context) ([]provider.CostLine, error) {
 }
 
 func (a *AWS) fetchCostGroupedBy(ctx context.Context, from, to time.Time, dimension string) (map[string]costSample, error) {
+	// SDK fast path — Cost Explorer with arbitrary group-by
+	// dimension (REGION / SERVICE / LINKED_ACCOUNT / etc.).
+	if res, sdkUsable, err := a.fetchCostSDK(ctx, from, to, dimension); sdkUsable && err == nil {
+		return res, nil
+	}
 	out, err := a.aws.Run(ctx,
 		"ce", "get-cost-and-usage",
 		"--time-period", fmt.Sprintf("Start=%s,End=%s", from.Format("2006-01-02"), to.Format("2006-01-02")),

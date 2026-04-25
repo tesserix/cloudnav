@@ -54,6 +54,10 @@ func (a *AWS) fetchCostForecast(ctx context.Context) (float64, string, bool) {
 	if !now.Before(end) {
 		return 0, "", false
 	}
+	// SDK fast path — Cost Explorer GetCostForecast.
+	if v, cur, sdkUsable, err := a.fetchForecastSDK(ctx, now, end); sdkUsable && err == nil && v > 0 {
+		return v, cur, true
+	}
 	out, err := a.aws.Run(ctx,
 		"ce", "get-cost-forecast",
 		"--time-period", fmt.Sprintf("Start=%s,End=%s", now.Format("2006-01-02"), end.Format("2006-01-02")),
@@ -94,6 +98,11 @@ func (a *AWS) fetchAccountBudget(ctx context.Context) (float64, string, string, 
 	accountID, err := a.callerAccountID(ctx)
 	if err != nil || accountID == "" {
 		return 0, "", "", false
+	}
+	// SDK fast path — Budgets DescribeBudgets paginated. Same
+	// "largest monthly ceiling" pick as the CLI parser.
+	if amt, cur, sdkUsable, err := a.fetchBudgetSDK(ctx, accountID); sdkUsable && err == nil && amt > 0 {
+		return amt, cur, "", true
 	}
 	out, err := a.aws.Run(ctx,
 		"budgets", "describe-budgets",
@@ -154,6 +163,13 @@ func parseBudgets(data []byte) (float64, string, string, bool) {
 // the Budgets API. Cached in memory across BillingSummary() invocations
 // when we start calling it more than once per overlay load.
 func (a *AWS) callerAccountID(ctx context.Context) (string, error) {
+	// SDK fast path — sts:GetCallerIdentity, no subprocess.
+	if node, sdkUsable, err := a.callerIdentitySDK(ctx); sdkUsable && err == nil {
+		if id, ok := node.Meta["accountId"]; ok && id != "" {
+			return id, nil
+		}
+		return node.ID, nil
+	}
 	out, err := a.aws.Run(ctx, "sts", "get-caller-identity", "--output", "json")
 	if err != nil {
 		return "", err

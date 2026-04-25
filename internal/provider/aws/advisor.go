@@ -58,6 +58,10 @@ func (a *AWS) Recommendations(ctx context.Context, scopeID string) ([]provider.R
 // the scope — used as a cheap gate so we don't surface raw "not opted in"
 // errors for every recommendations call.
 func (a *AWS) computeOptimizerEnabled(ctx context.Context) bool {
+	// SDK fast path — Compute Optimizer GetEnrollmentStatus.
+	if active, sdkUsable := a.computeOptimizerEnabledSDK(ctx); sdkUsable {
+		return active
+	}
 	out, err := a.aws.Run(ctx, "compute-optimizer", "get-enrollment-status", "--output", "json")
 	if err != nil {
 		return false
@@ -76,6 +80,10 @@ func (a *AWS) computeOptimizerEnabled(ctx context.Context) bool {
 // (NotOptimized | Underprovisioned | Overprovisioned); "Optimized"
 // instances are expected.
 func (a *AWS) ec2Recommendations(ctx context.Context) []provider.Recommendation {
+	// SDK fast path — paginated GetEC2InstanceRecommendations.
+	if recs, sdkUsable, err := a.fetchEC2RecommendationsSDK(ctx); sdkUsable && err == nil {
+		return recs
+	}
 	out, err := a.aws.Run(ctx,
 		"compute-optimizer", "get-ec2-instance-recommendations",
 		"--output", "json",
@@ -195,6 +203,10 @@ func (a *AWS) ebsRecommendations(ctx context.Context) []provider.Recommendation 
 // Detection. The service is free and gives a high-signal alerting layer
 // on top of the other recommendations.
 func (a *AWS) costAnomalies(ctx context.Context) []provider.Recommendation {
+	// SDK fast path — Cost Explorer GetAnomalies paginated.
+	if recs, sdkUsable, err := a.fetchCostAnomaliesSDK(ctx); sdkUsable && err == nil {
+		return recs
+	}
 	end := time.Now().UTC()
 	start := end.AddDate(0, 0, -7)
 	out, err := a.aws.Run(ctx,

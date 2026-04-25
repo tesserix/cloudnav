@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.40] — 2026-04-25
+
+### Added — AWS SDK migration phases 3, 4, 5, 7, 8 (final batch)
+
+- **Phase 3 — Cost Explorer + Budgets SDK.** `cloud.aws.com/.../
+  costexplorer` powers `Costs()`, `fetchCostGroupedBy()`,
+  `fetchCostForecast()`. `budgets` powers `fetchAccountBudget()`.
+  Single client connection, typed row scanning, no subprocess.
+- **Phase 4 — CloudWatch SDK.** `cloudwatch.GetMetricData` typed
+  end-to-end. Reducer choice (`Average` over 5-min windows)
+  matches the CLI verbatim so sparkline shape doesn't shift.
+- **Phase 5 — Compute Optimizer SDK.** Enrollment status probe +
+  EC2 instance recommendations + Cost anomalies all routed
+  through the SDK with manual paginator (Compute Optimizer's API
+  shape doesn't ship a generated paginator). Trusted Advisor
+  stays on the CLI for now — it's a paid-support-plan feature
+  that few users hit.
+- **Phase 7 — `provider.CostHistoryer` for AWS.** Wires the `$`
+  overlay to AWS at parity with Azure / GCP. Daily / monthly
+  granularity via `GetCostAndUsage`; weekly bucket rolled up in
+  process because Cost Explorer doesn't expose a weekly
+  granularity natively. Single-account scope via the
+  `LINKED_ACCOUNT` dimension filter.
+- **Phase 8 — `HealthEventer` + `Deleter` for AWS.**
+  - `HealthEventer` via `health.DescribeEvents`. Lights up the
+    `H` overlay on AWS at parity with Azure / GCP. Free-tier
+    accounts get a quiet empty list (Health is paid-support).
+  - `Deleter` dispatcher routes EC2 instance terminations
+    through `ec2.TerminateInstances` and S3 bucket deletions
+    through `s3.DeleteBucket`. Other resource types return
+    `ErrNotSupported` with a portal hand-off hint — same shape
+    as the GCP per-asset-type dispatcher.
+  - Locker explicitly deferred — AWS has no built-in lock
+    primitive. The closest analog is IAM service-control
+    policies, which are policy-shaped not resource-shaped.
+    Documented as out-of-scope for this migration.
+
+### Cross-cloud capability matrix — final state
+
+| Capability | Azure | GCP | AWS |
+|---|---|---|---|
+| Provider / nav | ✅ | ✅ | ✅ |
+| Coster / Billing | ✅ | ✅ | ✅ |
+| Advisor | ✅ | ✅ | ✅ |
+| PIMer | ✅ | ✅ | ✅ |
+| Metricser | ✅ | ✅ | ✅ |
+| VMOps | ✅ | ✅ | ✅ |
+| CostHistoryer (`$`) | ✅ | ✅ | ✅ |
+| HealthEventer (`H`) | ✅ | ✅ | ✅ |
+| Deleter (`D`) | ✅ | ✅ | ✅ |
+| Locker (`L`) | ✅ | ✅ (liens) | ⚠️ deferred |
+| BillingScoped | ❌ | ✅ | ✅ |
+| Installer / Loginer | ✅ | ✅ | ✅ |
+
+Every cross-cloud capability except Locker is now at parity. The
+TUI's `D`, `H`, `$`, `B` overlays light up identically across all
+three clouds.
+
 ## [0.22.39] — 2026-04-25
 
 ### Added — GCP cost chart + AWS SDK migration begins
@@ -698,7 +756,8 @@ work lands as feature additions on top of the SDK foundation.
 ### Fixed
 - Table cell-count panic when navigating between views with different column counts — `refreshTable` now normalises every row to exactly `len(cols)` cells before calling `SetRows`.
 
-[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.39...HEAD
+[Unreleased]: https://github.com/tesserix/cloudnav/compare/v0.22.40...HEAD
+[0.22.40]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.40
 [0.22.39]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.39
 [0.22.38]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.38
 [0.22.37]: https://github.com/tesserix/cloudnav/releases/tag/v0.22.37

@@ -110,6 +110,10 @@ func catalogForAWSResource(resource provider.Node) (*dimensionSpec, []metricStat
 // GetMetricData call regardless of namespace so we stay at one API
 // request per resource.
 func (a *AWS) fetchCloudWatchMetrics(ctx context.Context, region string, spec *dimensionSpec, catalog []metricStat) ([]provider.Metric, error) {
+	// SDK fast path — CloudWatch GetMetricData via the v2 SDK.
+	if metrics, sdkUsable, err := a.fetchCloudWatchMetricsSDK(ctx, region, spec, catalog); sdkUsable && err == nil {
+		return metrics, nil
+	}
 	end := time.Now().UTC()
 	start := end.Add(-metricsWindow)
 	queries := make([]map[string]any, 0, len(catalog))
