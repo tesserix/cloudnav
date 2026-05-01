@@ -176,7 +176,11 @@ func (t *terminal) pump() tea.Cmd {
 		buf := make([]byte, 4096)
 		n, err := session.pty.Read(buf)
 		if n > 0 {
-			session.vt.Write(buf[:n])
+			// vt10x.Write only fails when the parser hits something
+			// it cannot allocate for, which doesn't happen on bytes
+			// from a real shell. Drop the error explicitly so
+			// errcheck doesn't flag the call.
+			_, _ = session.vt.Write(buf[:n])
 		}
 		if err != nil {
 			// io.EOF / "input/output error" both mean the master
@@ -217,7 +221,8 @@ func (t *terminal) Update(msg tea.Msg) (*terminal, tea.Cmd) {
 		// terminal page without killing the shell underneath, except
 		// that we always tear it down so the session doesn't leak.
 		if msg.String() == "ctrl+q" {
-			return nil, t.terminate()
+			t.terminate()
+			return nil, nil
 		}
 		bytes := keyToBytes(msg)
 		if len(bytes) == 0 {
@@ -240,16 +245,19 @@ func (t *terminal) Update(msg tea.Msg) (*terminal, tea.Cmd) {
 	return t, nil
 }
 
-// terminate sends SIGHUP to the child, closes the PTY master, and
-// returns a no-op tea.Cmd. Used by Ctrl-q.
-func (t *terminal) terminate() tea.Cmd {
-	if t.session != nil {
-		if t.session.cmd != nil && t.session.cmd.Process != nil {
-			_ = t.session.cmd.Process.Signal(os.Interrupt)
-		}
-		_ = t.session.pty.Close()
+// terminate sends SIGINT to the child and closes the PTY. Used by
+// Ctrl-q so a user can leave the terminal page without typing `exit`
+// inside the shell — the close goroutine will reap the child and
+// surface a termExitMsg, but by then the model has already dropped
+// the page so the message is harmless.
+func (t *terminal) terminate() {
+	if t.session == nil {
+		return
 	}
-	return nil
+	if t.session.cmd != nil && t.session.cmd.Process != nil {
+		_ = t.session.cmd.Process.Signal(os.Interrupt)
+	}
+	_ = t.session.pty.Close()
 }
 
 // View renders the chrome (header + frame + status bar) plus the

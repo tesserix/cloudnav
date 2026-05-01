@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-05-01
+
+### Added
+- **Embedded PTY terminal with per-cloud themes (`x` key).** Pressing
+  `x` from anywhere in the TUI now opens a real pseudo-terminal
+  rendered inside bubbletea — no more suspending the alt-screen and
+  shelling out. Each cloud paints the frame, header, prompt, and
+  status bar in its own brand palette so the user always knows which
+  cloud they're shelled into:
+  - **GCP** — Google blue (`#4285F4`) on red / yellow / green accents.
+  - **AWS** — Amazon orange (`#FF9900`) on slate (`#232F3E`).
+  - **Azure** — Azure blue (`#0078D4`) on cyan (`#00BCF2`) / navy.
+  - **cloudnav default** — violet on teal at the cloud-list level.
+- The terminal pre-loads the row's cloud context as env vars: Azure
+  exports `AZURE_SUBSCRIPTION_ID` / `CLOUDNAV_RG`, GCP exports
+  `GOOGLE_CLOUD_PROJECT` / `CLOUDSDK_CORE_PROJECT`, AWS exports
+  `AWS_PROFILE` / `AWS_REGION` / `CLOUDNAV_AWS_ACCOUNT`. The shell
+  inherits all of `os.Environ()` plus those, so `gcloud`, `aws`, `az`,
+  `kubectl`, and friends pick up the right scope automatically.
+- Cross-platform PTY via `aymanbagabas/go-pty` — POSIX pty pair on
+  macOS / Linux, ConPTY on Windows. The same `x` keybinding works on
+  every supported OS.
+- Header pill ("GCP terminal" / "AWS terminal" / "Azure terminal")
+  plus a context line so users never lose track of which scope the
+  shell is bound to. Status bar surfaces `ctrl+d / exit close`,
+  `ctrl+q back to navigator`, `ctrl+l clear`, and a live `cols×rows`
+  indicator.
+- `internal/tui/styles/themes.go` plus `themes_test.go` cover theme
+  resolution and palette completeness so a future provider drop-in
+  can't ship a half-built brand.
+
+### Removed
+- **`cloudnav workspace`** and the embedded Zellij layout / config
+  files. The new in-TUI PTY replaces what the workspace did and
+  works the same on every platform (no more "Zellij isn't supported
+  on Windows"). `internal/cmd/workspace.go`, `workspace_test.go`,
+  and `internal/cmd/zellij/*.kdl` are gone.
+- **`cloudnav upgrade zellij`** and the `internal/tools` package.
+  Cloud-CLI upgrades stay on each provider's own self-update path
+  (`gcloud components update`, `brew upgrade awscli`, etc.).
+- **`cloudnav install zellij`** target. `cloudnav install` now only
+  accepts cloud names (`azure` / `gcp` / `aws`).
+
+### Changed
+- README and the in-TUI help screen describe `x` as the embedded
+  terminal entry point (was "exec provider CLI in current context").
+- The keybar surfaces `<x> <cloud> term` whenever a cloud is active
+  so the shortcut is discoverable without opening help.
+
 ## [0.22.45] — 2026-04-25
 
 ### Fixed
