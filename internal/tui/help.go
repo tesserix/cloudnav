@@ -22,7 +22,8 @@ func (m *model) helpView() string {
 		styles.Header.Render("Upgrade") + " U upgrade cloudnav when a newer release is available on GitHub",
 		styles.Header.Render("PIM") + "    p open — Azure / Entra / Groups / GCP PAM   0/1/2/3/4 filter source",
 		"         / filter   a activate   +/- duration   j/k move",
-		styles.Header.Render("Misc") + "   x exec   ? help   q quit",
+		styles.Header.Render("Term") + "   x open embedded terminal (themed per active cloud — ctrl-q back, ctrl-d/exit close)",
+		styles.Header.Render("Misc") + "   ? help   q quit",
 		"",
 		styles.ModalHint.Render("press any key to close"),
 	}, "\n")

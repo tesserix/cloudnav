@@ -307,6 +307,10 @@ type model struct {
 	// one the user initiated. On success the silent path re-execs
 	// automatically so the user never sees the pill.
 	autoUpgrading bool
+	// term is the embedded PTY terminal page. Non-nil while the user
+	// is shelled in via `x`. View() routes to it before any other
+	// overlay so the terminal owns the whole screen.
+	term *terminal
 }
 
 // newPromptInput builds a textinput with the shared theme. All prompts
@@ -423,6 +427,42 @@ func (m *model) Init() tea.Cmd {
 // still triggers Root() which surfaces fresh errors.
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Terminal page owns the screen while it's open. We still let the
+	// window-size message fall through to the navigator below so the
+	// cached width/height stay in sync — the terminal forwards its
+	// own copy via tea.WindowSizeMsg too.
+	if m.term != nil {
+		switch msg := msg.(type) {
+		case termPaintMsg, termExitMsg:
+			next, cmd := m.term.Update(msg)
+			m.term = next
+			if next == nil {
+				m.status = "✓ terminal closed"
+			}
+			return m, cmd
+		case tea.KeyMsg:
+			next, cmd := m.term.Update(msg)
+			m.term = next
+			if next == nil {
+				m.status = "✓ terminal closed"
+			}
+			return m, cmd
+		case tea.WindowSizeMsg:
+			next, cmd := m.term.Update(msg)
+			m.term = next
+			// Fall through so navigator chrome stays sized too.
+			m.width, m.height = msg.Width, msg.Height
+			if w := msg.Width; w > 0 {
+				m.table.SetWidth(w)
+				m.search.Width = w - 4
+				m.detail.Width = w
+			}
+			m.applyChromeHeight()
+			m.refreshTable()
+			return m, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -1807,6 +1847,11 @@ func (m *model) listBackground() string {
 }
 
 func (m *model) View() string {
+	// Embedded terminal owns the whole screen — no navigator chrome,
+	// no overlays. The terminal renders its own per-cloud frame.
+	if m.term != nil {
+		return m.term.View()
+	}
 	if m.deleteMode {
 		return m.deleteConfirmView()
 	}
@@ -2096,6 +2141,11 @@ func (m *model) keybar() string {
 	}
 	if _, ok := m.active.(provider.CostHistoryer); ok && m.active != nil {
 		pairs = append(pairs, pair{"$", "cost chart"})
+	}
+	if m.active != nil {
+		// `x` opens a themed PTY scoped to the active cloud — surface
+		// it in the keybar so users discover it without the help screen.
+		pairs = append(pairs, pair{"x", m.active.Name() + " term"})
 	}
 	if m.updateAvailable {
 		// Bump the upgrade hint to the front of the keybar so it reads

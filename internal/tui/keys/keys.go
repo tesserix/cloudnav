@@ -50,7 +50,7 @@ func Default() Map {
 		Advisor:     key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "advisor")),
 		Billing:     key.NewBinding(key.WithKeys("B"), key.WithHelp("B", "billing")),
 		CostHistory: key.NewBinding(key.WithKeys("$"), key.WithHelp("$", "cost history")),
-		Exec:        key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "exec")),
+		Exec:        key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "terminal")),
 		Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 		Sort:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Flag:        key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "flag")),

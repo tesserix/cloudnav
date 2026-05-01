@@ -152,41 +152,38 @@ func (m *model) loginTargetProvider() provider.Provider {
 	return m.active
 }
 
+// execShell opens the embedded PTY terminal page, themed to the
+// active cloud, with the row's context (subscription / project /
+// account / resource group) exported as env vars. Replaces the old
+// "suspend the TUI and exec a real shell" flow — keeps the user
+// inside cloudnav's chrome and brand colours.
 func (m *model) execShell() tea.Cmd {
 	if m.active == nil {
+		m.status = "drill into a cloud first — `x` opens a terminal scoped to the active cloud"
 		return nil
 	}
 	c := m.table.Cursor()
-	if c < 0 || c >= len(m.visibleNodes) {
+	var cur provider.Node
+	if c >= 0 && c < len(m.visibleNodes) {
+		cur = m.visibleNodes[c]
+	}
+	cloud := m.active.Name()
+	context, env := buildTermContext(cloud, cur)
+	if context == "" {
+		// At the cloud level, with nothing under the cursor, we still
+		// open a terminal — but flag in the chrome that no per-row
+		// context is set so users know to drill in for a scoped one.
+		context = "no row context — drill into a sub / project / account for env vars"
+	}
+	if m.width <= 0 || m.height <= 0 {
+		m.status = "terminal needs a sized window — try resizing"
 		return nil
 	}
-	cur := m.visibleNodes[c]
-	subID := contextSubID(cur)
-	if subID == "" {
-		m.status = "no subscription context at this level"
+	t, cmd, err := startTerminal(cloud, context, env, m.width, m.height)
+	if err != nil {
+		m.status = "open terminal failed: " + err.Error()
 		return nil
 	}
-	rg := contextRG(cur)
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-
-	banner := fmt.Sprintf("cloudnav exec  sub=%s  rg=%s  —  exit to return\n", truncID(subID), rg)
-	script := fmt.Sprintf("printf %%s %q; exec %q", banner, shell)
-	shellCmd := exec.Command("sh", "-c", script)
-	shellCmd.Env = append(os.Environ(),
-		"CLOUDNAV_SUB="+subID,
-		"CLOUDNAV_SUB_NAME="+cur.Name,
-		"AZURE_SUBSCRIPTION_ID="+subID,
-	)
-	if rg != "" {
-		shellCmd.Env = append(shellCmd.Env, "CLOUDNAV_RG="+rg)
-	}
-	return tea.ExecProcess(shellCmd, func(err error) tea.Msg {
-		if err != nil {
-			return errMsg{err}
-		}
-		return nil
-	})
+	m.term = t
+	return cmd
 }

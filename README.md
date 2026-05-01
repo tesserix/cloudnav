@@ -135,35 +135,17 @@ cloudnav ls azure resources --subscription <id> --resource-group my-rg --json
 Use it when you know part of a name or scope but not the exact path yet.
 `cloudnav ls` is still there as the lower-level, script-friendly primitive.
 
-### Zellij workspace (optional)
+### Embedded terminal (`x`)
 
-If you live in [Zellij](https://zellij.dev/), `cloudnav workspace`
-launches a multi-pane workspace where cloudnav is one of the panes:
-
-```bash
-cloudnav workspace
-```
-
-The session looks like **Zellij** — Zellij's default theme, its
-native tab bar / status bar / pane frames, its default keybindings
-(Ctrl-p for pane mode, Ctrl-t for tab mode). cloudnav lives inside
-the workspace; it doesn't re-skin the multiplexer. Standalone
-`cloudnav` (the TUI) is unaffected — running it directly still
-gives you the standalone TUI experience exactly as before. The two
-are deliberately distinct so neither bleeds into the other.
-
-Default layout: cloudnav fills its tab (the TUI was designed for
-full width — the table, breadcrumb, and keybar all assume the
-whole terminal is available). A sibling `shell` tab is one
-`Ctrl-t 2` away for ad-hoc commands (`gcloud` / `aws` / `az` /
-`kubectl` / `terraform` / anything). If you want a shell pane
-*alongside* the navigator, split with `Ctrl-p |` (vertical) or
-`Ctrl-p -` (horizontal) — Zellij's native key.
-
-Layout + config files live at `~/.config/cloudnav/zellij/` and are
-selected via `zellij --config-dir`, so your existing
-`~/.config/zellij` stays completely untouched. Not available on
-Windows.
+Press `x` from anywhere in the TUI to open an embedded shell that
+inherits the active row's cloud context (subscription / project /
+account / resource group exported as env vars). The terminal is a
+real PTY rendered inside bubbletea, so `gcloud`, `aws`, `az`,
+`kubectl`, `terraform` — anything you'd run in a shell — works
+without leaving cloudnav. Each cloud has its own theme: GCP shows
+in blue / red / yellow, AWS in orange / slate, Azure in cyan / blue.
+`Ctrl-d` (or `exit`) closes the terminal and returns to the
+navigator.
 
 ## Keybindings
 
@@ -179,7 +161,7 @@ Windows.
 | `o` | Open selected resource in cloud portal |
 | `i` | Show full JSON detail |
 | `p` | PIM — list/activate eligible roles (Azure) |
-| `x` | Exec provider CLI in current context |
+| `x` | Open embedded terminal (themed per active cloud, with row context as env vars) |
 | `r` | Refresh |
 | `f` | Bookmark current view |
 | `?` | Help |
