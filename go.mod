@@ -9,7 +9,7 @@ require (
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/monitoring v1.27.0
 	cloud.google.com/go/privilegedaccessmanager v0.6.0
-	cloud.google.com/go/recommender v1.16.0
+	cloud.google.com/go/recommender v1.17.0
 	cloud.google.com/go/resourcemanager v1.13.0
 	cloud.google.com/go/servicehealth v1.5.0
 	cloud.google.com/go/storage v1.62.1
