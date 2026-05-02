@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/tesserix/cloudnav/internal/config"
@@ -57,6 +58,38 @@ func (m *model) rebuildPalette() {
 			label:  "★ " + bm.Label,
 			action: "open-bookmark",
 			arg:    bm.Label,
+		})
+	}
+	// UI themes — surfaces every named theme as a palette pick. The
+	// active theme is marked so the user can see what they're on
+	// without dismissing the overlay.
+	currentTheme := styles.Active().Name
+	for _, t := range styles.UIThemes {
+		marker := "  "
+		if t.Name == currentTheme {
+			marker = "● "
+		}
+		all = append(all, paletteItem{
+			label:  "🎨 " + marker + "theme: " + t.Name,
+			action: "set-theme",
+			arg:    t.Name,
+		})
+	}
+	// Spinner styles from bubbles. Same pattern — current is marked
+	// so users can audit their preference.
+	currentSpinner := m.cfg.Spinner
+	if currentSpinner == "" {
+		currentSpinner = "dot"
+	}
+	for _, opt := range styles.Spinners() {
+		marker := "  "
+		if opt.Name == currentSpinner {
+			marker = "● "
+		}
+		all = append(all, paletteItem{
+			label:  "⏳ " + marker + "spinner: " + opt.Name,
+			action: "set-spinner",
+			arg:    opt.Name,
 		})
 	}
 	for _, p := range m.providers {
@@ -126,6 +159,40 @@ func (m *model) updatePalette(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) runPaletteItem(it paletteItem) tea.Cmd {
 	switch it.action {
+	case "set-theme":
+		t, ok := styles.UIThemeByName(it.arg)
+		if !ok {
+			m.status = "unknown theme: " + it.arg
+			return nil
+		}
+		styles.Apply(t)
+		// bubbles components cache styles internally — push fresh
+		// values so the new palette renders on the next View pass.
+		ts := table.DefaultStyles()
+		ts.Header, ts.Selected, ts.Cell = styles.TableStyles()
+		m.table.SetStyles(ts)
+		m.spinner.Style = styles.Spinner
+		m.cfg.Theme = it.arg
+		if err := config.Save(m.cfg); err != nil {
+			m.status = "theme: " + it.arg + " (save failed: " + err.Error() + ")"
+		} else {
+			m.status = "🎨 theme: " + it.arg
+		}
+		return nil
+	case "set-spinner":
+		s, ok := styles.SpinnerByName(it.arg)
+		if !ok {
+			m.status = "unknown spinner: " + it.arg
+			return nil
+		}
+		m.spinner.Spinner = s
+		m.cfg.Spinner = it.arg
+		if err := config.Save(m.cfg); err != nil {
+			m.status = "spinner: " + it.arg + " (save failed: " + err.Error() + ")"
+		} else {
+			m.status = "⏳ spinner: " + it.arg
+		}
+		return nil
 	case "switch-cloud":
 		for _, p := range m.providers {
 			if p.Name() == it.arg {

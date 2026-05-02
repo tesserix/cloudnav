@@ -25,10 +25,19 @@ type Crumb struct {
 }
 
 type Config struct {
-	DefaultProvider string     `json:"default_provider,omitempty"`
-	Theme           string     `json:"theme,omitempty"`
-	Bookmarks       []Bookmark `json:"bookmarks,omitempty"`
-	GCP             GCPConfig  `json:"gcp,omitempty"`
+	DefaultProvider string `json:"default_provider,omitempty"`
+	// Theme picks the navigator UI palette. One of "default" (the
+	// original ANSI-256 dark scheme), "dracula", "nord",
+	// "solarized-dark", "solarized-light", "monochrome". Empty falls
+	// back to "default". Set via the `:` palette ("theme: …") and
+	// persisted automatically.
+	Theme string `json:"theme,omitempty"`
+	// Spinner picks the loading-footer animation. One of the names in
+	// styles.Spinners() — "dot", "line", "globe", etc. Empty falls
+	// back to "dot".
+	Spinner   string     `json:"spinner,omitempty"`
+	Bookmarks []Bookmark `json:"bookmarks,omitempty"`
+	GCP       GCPConfig  `json:"gcp,omitempty"`
 	// AutoUpgrade, when true, lets cloudnav upgrade itself silently at startup
 	// whenever a newer release is detected on GitHub. Off by default — users
 	// opt in explicitly so a background TUI never surprises them with a

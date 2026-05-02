@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-05-02
+
+### Added
+- **User-selectable UI themes via the `:` palette.** Pick from six
+  built-in palettes — `default` (the original ANSI-256 dark scheme),
+  `dracula`, `nord`, `solarized-dark`, `solarized-light`, and
+  `monochrome`. Open the palette with `:`, type `theme` to filter the
+  picker, and Enter applies the new palette instantly — no restart.
+  The active theme is marked with `●` so users can see what they're
+  on. Selection is persisted to `~/.config/cloudnav/config.json`
+  under the existing `theme` field, so the choice survives across
+  sessions.
+- **Spinner picker for the loading footer.** The bubbles spinner
+  registry (`dot`, `line`, `minidot`, `jump`, `pulse`, `points`,
+  `globe`, `moon`, `meter`, `hamburger`, `ellipsis`) is exposed via
+  the same palette. `:` → type `spinner` → Enter to apply. Persists
+  to `cfg.Spinner` so cloudnav comes back wearing the same
+  animation next launch.
+- New `internal/tui/styles/uitheme.go` — `UITheme` struct,
+  `UIThemeByName(name)`, `UIThemes` ordered registry. Tests in
+  `uitheme_test.go` pin the public surface so a stale palette can
+  never silently pick the wrong colours.
+- Help screen now describes both palette commands so users can
+  discover the new pickers without reading the changelog.
+
+### Changed
+- **`internal/tui/styles/styles.go` is now theme-driven.** Every
+  exported `Color` and `Style` var is rebuilt by `styles.Apply(t)`
+  so a runtime palette pick repaints the whole TUI on the next
+  `View()` pass. Per-cloud terminal accents (GCP / AWS / Azure
+  brand chrome around the embedded PTY) stay independent — those
+  encode "which cloud am I in", not user aesthetics, so flipping
+  to Dracula doesn't repaint the GCP terminal in purple.
+- `newModel()` now reads `cfg.Theme` and `cfg.Spinner` at startup
+  before any styled object is built, so persisted preferences land
+  before the first paint.
+
 ## [0.23.0] — 2026-05-01
 
 ### Added

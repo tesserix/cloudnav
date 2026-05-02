@@ -325,8 +325,26 @@ func newPromptInput(prompt, placeholder string, charLimit int, promptStyle lipgl
 }
 
 func newModel() *model {
+	// Load config first so the user's stored theme + spinner choice
+	// applies before any styled object is built. Theme switches at
+	// runtime call styles.Apply() again; this is the bootstrap pass.
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	if cfg.Theme != "" {
+		if t, ok := styles.UIThemeByName(cfg.Theme); ok {
+			styles.Apply(t)
+		}
+	}
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	if cfg.Spinner != "" {
+		if s, ok := styles.SpinnerByName(cfg.Spinner); ok {
+			sp.Spinner = s
+		}
+	}
 	sp.Style = styles.Spinner
 
 	t := table.New(
@@ -346,10 +364,6 @@ func newModel() *model {
 
 	vp := viewport.New(80, 20)
 
-	cfg, _ := config.Load()
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
 	// Install the FX converter once at bootstrap. nil-safe — when
 	// the user hasn't set display_currency the converter is still
 	// constructed but every Convert call passes the amount through
