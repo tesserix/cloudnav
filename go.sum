@@ -32,8 +32,8 @@ cloud.google.com/go/orgpolicy v1.16.0 h1:MdF2ebs6H4CoxgrtPQ7XDvE1ACIeSQDY2a1/QwV
 cloud.google.com/go/orgpolicy v1.16.0/go.mod h1:l88jhhDM/KYN0FJF87m5Gub1qcOFkN94efA2uhy+U0s=
 cloud.google.com/go/osconfig v1.17.0 h1:e4EhWz5w7S/7fJ+rhGtyWpSls0Bxr5sxXc2PGWjiI/o=
 cloud.google.com/go/osconfig v1.17.0/go.mod h1:iveYW1fYygItJeJwbQ/fkzYAzLEbXOQnr7+eBmH9MJ0=
-cloud.google.com/go/privilegedaccessmanager v0.6.0 h1:fPBkgT1IShfqgkVRdnb9abJeGrEuBWtTD69lC29EsWY=
-cloud.google.com/go/privilegedaccessmanager v0.6.0/go.mod h1:tcFRJAnNd+6W/FoD0s9PhY7pY5PIVVYOynCDEIrU3m8=
+cloud.google.com/go/privilegedaccessmanager v0.7.0 h1:hj13TczwphDLpONm3Tg4XCM9t5pKgscJ9K1sJ0OmC2E=
+cloud.google.com/go/privilegedaccessmanager v0.7.0/go.mod h1:tcFRJAnNd+6W/FoD0s9PhY7pY5PIVVYOynCDEIrU3m8=
 cloud.google.com/go/recommender v1.16.0 h1:5VCy6TBEAQ0zqHh5ROgzw+mOEB3IZs9b2qtNgpqhVIQ=
 cloud.google.com/go/recommender v1.16.0/go.mod h1:INRBLfBQJCrgPqjBVFht4OjaFq/WhB/c5V1sqBOdX8g=
 cloud.google.com/go/resourcemanager v1.13.0 h1:cc291PxLoKrHKVxqoJ2uMMzrxVJj+sRe+iEb1DFlDNA=
