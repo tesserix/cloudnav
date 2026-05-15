@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	cloud.google.com/go/asset v1.25.0
 	cloud.google.com/go/bigquery v1.76.0
-	cloud.google.com/go/billing v1.24.0
+	cloud.google.com/go/billing v1.26.0
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/monitoring v1.27.0
 	cloud.google.com/go/privilegedaccessmanager v0.6.0
