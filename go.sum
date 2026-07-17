@@ -102,8 +102,8 @@ github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2 h1:AEdVlfaKtqjQgnAZ71TAg
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2/go.mod h1:/s52Xxp5LWbfLCWtelG67FDNtpoOoxdnZEzcixGQwcM=
 github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0 h1:EKeXNj8orPXhrKC+rse6+ngz1OHLbAYHpd0Cb6KsVAs=
 github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0/go.mod h1:EgYxzBhZ3iVHkKCze+CFQWGlgzARVQjyaRpJA7dJd2Y=
-github.com/aws/aws-sdk-go-v2/service/costexplorer v1.63.7 h1:A7AX1wxp1iuvjRyXIseqW3aW1++Kn9C5f8ocH5O8R/s=
-github.com/aws/aws-sdk-go-v2/service/costexplorer v1.63.7/go.mod h1:2CxAXozqpRW2Mn3gmh292lNumU7yS7iUWkusTUCQZtg=
+github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1 h1:Z4kguu8ouGQuRmjBkn5euGgIT0q6gLp9hf4vGpYL8sM=
+github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1/go.mod h1:VxTOTlVMfxNZbg2L7dBXv0gdmR73HK7T5yrKISfZTz4=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.1 h1:x3XE3BMK8aUpGx/m4CwmCmxc1LnN6saZujJ5K6pIFXU=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.1/go.mod h1:eoF0SIRbTgKWnTcTPYckiURPba/7ilfEkvwL4V1iHK4=
 github.com/aws/aws-sdk-go-v2/service/health v1.37.5 h1:VMIMQu9kQ9pL5Ga1flk0rEPwyjBQOE/U6zu6XrMTfNw=
