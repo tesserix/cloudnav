@@ -34,8 +34,8 @@ cloud.google.com/go/osconfig v1.17.0 h1:e4EhWz5w7S/7fJ+rhGtyWpSls0Bxr5sxXc2PGWji
 cloud.google.com/go/osconfig v1.17.0/go.mod h1:iveYW1fYygItJeJwbQ/fkzYAzLEbXOQnr7+eBmH9MJ0=
 cloud.google.com/go/privilegedaccessmanager v1.1.0 h1:EH4oX3XXtj17sEl+Qo2DjbJH5H974lghO6DMz1BTFh4=
 cloud.google.com/go/privilegedaccessmanager v1.1.0/go.mod h1:Yi2AnoUGD+Ze16bXyZ0ePwwPTeq+5QUR2PmuAKTl46c=
-cloud.google.com/go/recommender v1.17.0 h1:pvtOLPVTCwMoG8FIQcvsCu9KeHXEIASPFXFoM/iaIqw=
-cloud.google.com/go/recommender v1.17.0/go.mod h1:INRBLfBQJCrgPqjBVFht4OjaFq/WhB/c5V1sqBOdX8g=
+cloud.google.com/go/recommender v1.19.0 h1:fJ6oO/7Ta/yzfRHcuJUln9iCeo6FDb5yIi2L7eLldzs=
+cloud.google.com/go/recommender v1.19.0/go.mod h1:LRh+1HJjLx2kDE3S65AIlG/lvwA0llEFWYPD/QtgoaU=
 cloud.google.com/go/resourcemanager v1.13.0 h1:cc291PxLoKrHKVxqoJ2uMMzrxVJj+sRe+iEb1DFlDNA=
 cloud.google.com/go/resourcemanager v1.13.0/go.mod h1:ve0VNxPoDU6XxDuEMCjkineb0YzXQXx3mOWwnNckGDE=
 cloud.google.com/go/servicehealth v1.5.0 h1:hpFq93tDiBKXSd77oS9XJORJOKZlPTl7G/Hu8/v6WMY=
