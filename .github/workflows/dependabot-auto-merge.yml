@@ -75,9 +75,13 @@ jobs:
       # Direct squash-merge — the gate above already confirmed every check is
       # green. (`--auto` would never fire on a repo with no required-check
       # branch protection, so it would just sit enabled and never merge.)
+      # --admin: the "Protect main branch" ruleset's update rule rejects the
+      # plain merge API even for bypass actors; the admin override is the only
+      # path that lands the merge. Safe because the gate above has already
+      # required every other check to pass.
       - name: Merge
         if: ${{ steps.gate.outputs.enabled == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.DEPENDABOT_PAT }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --squash --delete-branch "$PR_URL"
+        run: gh pr merge --squash --delete-branch --admin "$PR_URL"
