@@ -22,7 +22,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/service/budgets v1.43.5
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.1
 	github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0
 	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.63.7
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.1
