@@ -24,7 +24,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/budgets v1.43.5
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.1
 	github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0
-	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1
+	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.67.0
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.0
 	github.com/aws/aws-sdk-go-v2/service/health v1.37.5
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.52.1
