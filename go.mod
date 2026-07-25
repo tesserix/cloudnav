@@ -26,7 +26,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0
 	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.0
-	github.com/aws/aws-sdk-go-v2/service/health v1.37.5
+	github.com/aws/aws-sdk-go-v2/service/health v1.40.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0
 	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.11
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0

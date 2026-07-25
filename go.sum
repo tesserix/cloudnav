@@ -106,8 +106,8 @@ github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1 h1:Z4kguu8ouGQuRmjBkn5
 github.com/aws/aws-sdk-go-v2/service/costexplorer v1.66.1/go.mod h1:VxTOTlVMfxNZbg2L7dBXv0gdmR73HK7T5yrKISfZTz4=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.0 h1:IkqA16g2hkQntk/K5+srT65TueoTDa7vGhZwqG9w6T4=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.0/go.mod h1:dmz3SHr11/hwUijR6xfE/xDRNHcjJwJWZ9ASZdkjGeg=
-github.com/aws/aws-sdk-go-v2/service/health v1.37.5 h1:VMIMQu9kQ9pL5Ga1flk0rEPwyjBQOE/U6zu6XrMTfNw=
-github.com/aws/aws-sdk-go-v2/service/health v1.37.5/go.mod h1:GOPFr+YzYwDTxrtp+siOLpr4rO8d0GYDzmK+uDer16A=
+github.com/aws/aws-sdk-go-v2/service/health v1.40.0 h1:unbY32+TiXfy+VAKG2B4mo4mtmhJt6a+/kEYsxagxQo=
+github.com/aws/aws-sdk-go-v2/service/health v1.40.0/go.mod h1:s+KHCNtF9cAat62BhDHcUiQb1tjAzvXjNRWjjnrkTts=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13 h1:mbRIur/BiHK6SKPjoBIXSE/hJ6g6JGRLuxQy1jGjlN4=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.13/go.mod h1:ITg9em2KbJx1s0y4aqRX5OYWG6HBZ5TVR//OdpEZ2CQ=
 github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.24 h1:mdPwDQPqxlw9Sc62Nt15yjEcARaDbPXkjRYtXsUripo=
