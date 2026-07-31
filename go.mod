@@ -28,7 +28,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.317.1
 	github.com/aws/aws-sdk-go-v2/service/health v1.40.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.53.0
-	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.31.11
+	github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi v1.35.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.0
 	github.com/aymanbagabas/go-pty v0.2.2
