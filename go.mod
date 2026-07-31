@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/asset v1.25.0
 	cloud.google.com/go/bigquery v1.76.0
 	cloud.google.com/go/billing v1.26.0
-	cloud.google.com/go/compute v1.60.0
+	cloud.google.com/go/compute v1.65.0
 	cloud.google.com/go/monitoring v1.27.0
 	cloud.google.com/go/privilegedaccessmanager v1.1.0
 	cloud.google.com/go/recommender v1.19.0
