@@ -98,8 +98,8 @@ github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.32 h1:0MrUL35H/Y4kdFfItoR5jCgtDQ4
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.32/go.mod h1:2tNZkuWz54arj8mHVf+8Y7cKkcD8Wr/fBpENgEXpjLc=
 github.com/aws/aws-sdk-go-v2/service/budgets v1.43.5 h1:AgNvV0oC5PB40t4XyYaIGczyw48G9iwtpduFYTqc2Rk=
 github.com/aws/aws-sdk-go-v2/service/budgets v1.43.5/go.mod h1:rytb8MiRMNTh9a2x3QE/GEdzUdOMOZteLIRVsr21z+Q=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.1 h1:KmShXFvPzgolFsYnnDErV+Sj1/orgDaf4tbz+9N+d78=
-github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.63.1/go.mod h1:lipiF9DI3EmTTkEn2sgLug3iEO1dXM50FDFooey6vYU=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.0 h1:9Ri19b5uDkOBCVzeWMflnuLUcSp+ZAgwZ1ZTWmUVwoA=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.66.0/go.mod h1:Fusf5168QfJba4PLmfjaOny543jmTnLZVwqXDPJdrWE=
 github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0 h1:EKeXNj8orPXhrKC+rse6+ngz1OHLbAYHpd0Cb6KsVAs=
 github.com/aws/aws-sdk-go-v2/service/computeoptimizer v1.50.0/go.mod h1:EgYxzBhZ3iVHkKCze+CFQWGlgzARVQjyaRpJA7dJd2Y=
 github.com/aws/aws-sdk-go-v2/service/costexplorer v1.67.0 h1:Ur5JnKAuwdlQa8qe0u1x6G2oLoWJgZft5oCGX3KmMHY=
