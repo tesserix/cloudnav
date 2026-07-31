@@ -11,7 +11,7 @@ require (
 	cloud.google.com/go/privilegedaccessmanager v1.1.0
 	cloud.google.com/go/recommender v1.19.0
 	cloud.google.com/go/resourcemanager v1.13.0
-	cloud.google.com/go/servicehealth v1.5.0
+	cloud.google.com/go/servicehealth v1.7.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0

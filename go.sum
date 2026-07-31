@@ -38,8 +38,8 @@ cloud.google.com/go/recommender v1.19.0 h1:fJ6oO/7Ta/yzfRHcuJUln9iCeo6FDb5yIi2L7
 cloud.google.com/go/recommender v1.19.0/go.mod h1:LRh+1HJjLx2kDE3S65AIlG/lvwA0llEFWYPD/QtgoaU=
 cloud.google.com/go/resourcemanager v1.13.0 h1:cc291PxLoKrHKVxqoJ2uMMzrxVJj+sRe+iEb1DFlDNA=
 cloud.google.com/go/resourcemanager v1.13.0/go.mod h1:ve0VNxPoDU6XxDuEMCjkineb0YzXQXx3mOWwnNckGDE=
-cloud.google.com/go/servicehealth v1.5.0 h1:hpFq93tDiBKXSd77oS9XJORJOKZlPTl7G/Hu8/v6WMY=
-cloud.google.com/go/servicehealth v1.5.0/go.mod h1:1fWCl3BnIozFeE/UiEFg9CsXSwMYcRzu85FPz8mIWVs=
+cloud.google.com/go/servicehealth v1.7.0 h1:kACe7KDNkcKGTxYmtG3jPzSWWuoCK//xX00qtbOplZU=
+cloud.google.com/go/servicehealth v1.7.0/go.mod h1:1fWCl3BnIozFeE/UiEFg9CsXSwMYcRzu85FPz8mIWVs=
 cloud.google.com/go/storage v1.62.1 h1:Os0G3XbUbjZumkpDUf2Y0rLoXJTCF1kU2kWUujKYXD8=
 cloud.google.com/go/storage v1.62.1/go.mod h1:cpYz/kRVZ+UQAF1uHeea10/9ewcRbxGoGNKsS9daSXA=
 cloud.google.com/go/trace v1.11.7 h1:kDNDX8JkaAG3R2nq1lIdkb7FCSi1rCmsEtKVsty7p+U=
