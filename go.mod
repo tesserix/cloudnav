@@ -3,7 +3,7 @@ module github.com/tesserix/cloudnav
 go 1.26.0
 
 require (
-	cloud.google.com/go/asset v1.25.0
+	cloud.google.com/go/asset v1.28.0
 	cloud.google.com/go/bigquery v1.76.0
 	cloud.google.com/go/billing v1.26.0
 	cloud.google.com/go/compute v1.65.0
@@ -47,14 +47,14 @@ require (
 require (
 	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
-	cloud.google.com/go/accesscontextmanager v1.10.0 // indirect
+	cloud.google.com/go/accesscontextmanager v1.14.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	cloud.google.com/go/iam v1.7.0 // indirect
+	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/longrunning v1.2.0 // indirect
-	cloud.google.com/go/orgpolicy v1.16.0 // indirect
-	cloud.google.com/go/osconfig v1.17.0 // indirect
+	cloud.google.com/go/orgpolicy v1.20.0 // indirect
+	cloud.google.com/go/osconfig v1.21.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
